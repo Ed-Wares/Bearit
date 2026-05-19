@@ -9,21 +9,33 @@ import java.io.File;
 import java.io.IOException;
 
 public class TextEditorFrame extends JFrame {
-    private static final int SCROLL_RESOLUTION = 10000; // Granularity for the global scroll thumb
+    private static final int SCROLL_RESOLUTION = 10000;
 
     private final JTextArea textArea;
     private final JFileChooser fileChooser;
     private final LineNumberPanel lineNumberPanel;
     private final JScrollPane scrollPane;
-    private final JLabel lblStatus;
     
-    // Unified Global Scrolling Components
+    private final JLabel lblStatus;
+    private final JLabel lblLoadingStatus;
+    private final JLabel lblCursorInfo;
+    
     private final JScrollBar globalScrollBar;
     private boolean isSyncingScroll = false;
+    private boolean isLoadingChunk = false;
 
     private final LargeFileManager fileManager;
     private boolean isDirty = false;
-    private boolean isNavigating = false;
+    private boolean isNavigating = false; 
+
+    private int loadedChunkIndex = 0;
+    private int pendingTargetChunk = -1;
+    private double pendingLocalPercent = -1;
+    private boolean pendingPreviewRequest = false;
+    
+    private boolean isCurrentlyPreview = false;
+    private double lastRequestedLocalPercent = -1;
+    private final Timer settleTimer; 
 
     public TextEditorFrame() {
         this.fileManager = new LargeFileManager();
@@ -33,11 +45,35 @@ public class TextEditorFrame extends JFrame {
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
 
+        settleTimer = new Timer(350, e -> {
+            if (isCurrentlyPreview && !isLoadingChunk && !isNavigating) {
+                triggerAsyncLoad(loadedChunkIndex, 0, lastRequestedLocalPercent, false);
+            }
+        });
+        settleTimer.setRepeats(false);
+
         JPanel mainPanel = new JPanel(new BorderLayout());
 
-        textArea = new JTextArea();
+        textArea = new JTextArea() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                g.setColor(getBackground());
+                g.fillRect(0, 0, getWidth(), getHeight());
+                try {
+                    Rectangle r = modelToView2D(getCaretPosition()).getBounds();
+                    g.setColor(new Color(235, 245, 255)); 
+                    g.fillRect(0, r.y, getWidth(), r.height);
+                } catch (Exception e) {}
+                
+                setOpaque(false);
+                super.paintComponent(g);
+                setOpaque(true);
+            }
+        };
         textArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
         textArea.setLineWrap(false);
+
+        lineNumberPanel = new LineNumberPanel(textArea);
 
         textArea.getDocument().addDocumentListener(new DocumentListener() {
             public void insertUpdate(DocumentEvent e) { registerEdit(); }
@@ -45,26 +81,36 @@ public class TextEditorFrame extends JFrame {
             public void changedUpdate(DocumentEvent e) { registerEdit(); }
             
             private void registerEdit() {
-                if (!isNavigating) isDirty = true;
+                if (!isNavigating && !isCurrentlyPreview) isDirty = true;
                 lineNumberPanel.adjustMetricSizing();
-                syncLocalToGlobalScroll();
+                if (!isNavigating) syncLocalToGlobalScroll();
             }
+        });
+
+        textArea.addCaretListener(e -> {
+            if (isNavigating) return;
+            updateCursorStatus();
+            try {
+                int line = textArea.getLineOfOffset(textArea.getCaretPosition());
+                lineNumberPanel.setCurrentLine(line);
+            } catch (Exception ex) {}
+            textArea.repaint(); 
         });
 
         setupKeyboardShortcuts();
 
         scrollPane = new JScrollPane(textArea);
-        // Hide the local scrollbar and implement our own global track
         scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_NEVER);
-        lineNumberPanel = new LineNumberPanel(textArea);
         scrollPane.setRowHeaderView(lineNumberPanel);
         
-        // Sync local scrolling events (mouse wheel, arrow keys) to the global scrollbar
         scrollPane.getVerticalScrollBar().addAdjustmentListener(e -> {
-            if (!isSyncingScroll) syncLocalToGlobalScroll();
+            if (!isSyncingScroll && !isNavigating && !isLoadingChunk) {
+                syncLocalToGlobalScroll();
+            }
         });
 
         scrollPane.addMouseWheelListener(e -> {
+            if (isLoadingChunk || isNavigating) return;
             JScrollBar vBar = scrollPane.getVerticalScrollBar();
             if (e.getWheelRotation() > 0 && vBar.getValue() + vBar.getVisibleAmount() >= vBar.getMaximum()) {
                 triggerAutoNavigate(1);
@@ -75,16 +121,30 @@ public class TextEditorFrame extends JFrame {
 
         mainPanel.add(scrollPane, BorderLayout.CENTER);
 
-        // --- Custom Global Scrollbar Setup ---
         globalScrollBar = new JScrollBar(JScrollBar.VERTICAL, 0, 1, 0, SCROLL_RESOLUTION);
         globalScrollBar.addAdjustmentListener(e -> {
-            if (!isSyncingScroll) syncGlobalToLocalScroll();
+            if (!isSyncingScroll && !isNavigating) {
+                syncGlobalToLocalScroll();
+            }
         });
         mainPanel.add(globalScrollBar, BorderLayout.EAST);
 
-        JPanel statusBar = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        JPanel statusBar = new JPanel(new BorderLayout());
+        statusBar.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
+        
+        JPanel leftStatusPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 0));
         lblStatus = new JLabel("No file active.");
-        statusBar.add(lblStatus);
+        lblLoadingStatus = new JLabel("");
+        lblLoadingStatus.setFont(lblLoadingStatus.getFont().deriveFont(Font.BOLD));
+        lblLoadingStatus.setForeground(new Color(220, 100, 0)); 
+        
+        leftStatusPanel.add(lblStatus);
+        leftStatusPanel.add(lblLoadingStatus);
+        
+        lblCursorInfo = new JLabel("Line: 1 | Pos: 0");
+        
+        statusBar.add(leftStatusPanel, BorderLayout.WEST);
+        statusBar.add(lblCursorInfo, BorderLayout.EAST);
         mainPanel.add(statusBar, BorderLayout.SOUTH);
 
         add(mainPanel);
@@ -92,154 +152,277 @@ public class TextEditorFrame extends JFrame {
         setupMenuBar();
     }
 
+    private void updateCursorStatus() {
+        if (isCurrentlyPreview) return;
+        try {
+            int dot = textArea.getCaret().getDot();
+            int mark = textArea.getCaret().getMark();
+            int localLine = textArea.getLineOfOffset(dot);
+            long absoluteLine = lineNumberPanel.getStartLine() + localLine;
+
+            if (dot == mark) {
+                lblCursorInfo.setText(String.format("Line: %d | Pos: %d", absoluteLine, dot));
+            } else {
+                int selStart = Math.min(dot, mark);
+                int selEnd = Math.max(dot, mark);
+                lblCursorInfo.setText(String.format("Line: %d | Sel: %d - %d", absoluteLine, selStart, selEnd));
+            }
+        } catch (Exception e) {}
+    }
+
     private void setupKeyboardShortcuts() {
-        InputMap im = textArea.getInputMap();
+        InputMap im = textArea.getInputMap(JComponent.WHEN_FOCUSED);
         ActionMap am = textArea.getActionMap();
 
-        // CTRL + HOME
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_HOME, InputEvent.CTRL_DOWN_MASK), "none");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_END, InputEvent.CTRL_DOWN_MASK), "none");
+
+        // --- UPDATED JUMP LOGIC: Handles local chunk repositioning ---
         im.put(KeyStroke.getKeyStroke(KeyEvent.VK_HOME, InputEvent.CTRL_DOWN_MASK), "jumpStart");
         am.put("jumpStart", new AbstractAction() {
             public void actionPerformed(ActionEvent e) {
-                jumpToBoundary(0, true);
+                if (loadedChunkIndex == 0 && !isCurrentlyPreview) {
+                    // Already in the first chunk, just snap to the top locally
+                    SwingUtilities.invokeLater(() -> {
+                        textArea.setCaretPosition(0); 
+                        scrollPane.getVerticalScrollBar().setValue(0);
+                        lineNumberPanel.setCurrentLine(0);
+                        syncLocalToGlobalScroll();
+                    });
+                } else {
+                    triggerAsyncLoad(0, 1, -1, false);
+                }
             }
         });
 
-        // CTRL + END
         im.put(KeyStroke.getKeyStroke(KeyEvent.VK_END, InputEvent.CTRL_DOWN_MASK), "jumpEnd");
         am.put("jumpEnd", new AbstractAction() {
             public void actionPerformed(ActionEvent e) {
-                jumpToBoundary(fileManager.getTotalChunks() - 1, false);
+                int targetChunk = Math.max(0, fileManager.getTotalChunks() - 1);
+                if (loadedChunkIndex == targetChunk && !isCurrentlyPreview) {
+                    // Already in the last chunk, just snap to the bottom locally
+                    SwingUtilities.invokeLater(() -> {
+                        textArea.setCaretPosition(textArea.getDocument().getLength());
+                        JScrollBar vbar = scrollPane.getVerticalScrollBar();
+                        vbar.setValue(vbar.getMaximum());
+                        lineNumberPanel.setCurrentLine(textArea.getLineCount() - 1);
+                        syncLocalToGlobalScroll();
+                    });
+                } else {
+                    triggerAsyncLoad(targetChunk, -1, -1, false);
+                }
             }
         });
     }
 
+    private void triggerAsyncLoad(int targetChunk, int direction, double localPercentForScroll, boolean requestPreview) {
+        if (isNavigating) return;
+        settleTimer.stop(); 
+
+        int total = Math.max(1, fileManager.getTotalChunks());
+        if (targetChunk >= total) targetChunk = total - 1;
+        if (targetChunk < 0) targetChunk = 0;
+
+        // The abort guard that was ignoring your shortcut when inside the chunk
+        if (targetChunk == loadedChunkIndex && !isCurrentlyPreview && !requestPreview) return; 
+
+        isLoadingChunk = true;
+        textArea.setEditable(false); 
+        lastRequestedLocalPercent = localPercentForScroll;
+        
+        if (requestPreview) {
+            lblLoadingStatus.setText("Previewing chunk " + (targetChunk + 1) + "...");
+        } else {
+            lblLoadingStatus.setText("Loading full chunk " + (targetChunk + 1) + "...");
+        }
+        lblStatus.setText(String.format("Chunk %d of %d", targetChunk + 1, total));
+
+        String currentText = textArea.getText();
+        boolean wasDirty = isDirty;
+        isDirty = false;
+
+        final int finalTarget = targetChunk;
+        new SwingWorker<LargeFileManager.ChunkState, Void>() {
+            @Override
+            protected LargeFileManager.ChunkState doInBackground() throws Exception {
+                if (wasDirty && !isCurrentlyPreview) {
+                    fileManager.commitCurrentChunk(currentText);
+                }
+                return fileManager.navigateToIndex(finalTarget, requestPreview);
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    LargeFileManager.ChunkState state = get();
+                    if (state != null) {
+                        applyStateUpdates(state, direction, localPercentForScroll);
+                    } else {
+                        isLoadingChunk = false;
+                        textArea.setEditable(!isCurrentlyPreview);
+                    }
+                } catch (Exception e) {
+                    showError("Chunk load failure: " + e.getMessage());
+                    isLoadingChunk = false;
+                    lblLoadingStatus.setText("");
+                    textArea.setEditable(!isCurrentlyPreview);
+                }
+            }
+        }.execute();
+    }
+
     private void syncLocalToGlobalScroll() {
+        if (isNavigating || isLoadingChunk) return;
         isSyncingScroll = true;
         try {
-            int currentChunk = fileManager.getTotalChunks() == 0 ? 0 : Math.max(0, fileManager.getTotalChunks() - 1);
-            if (currentChunk == 0 && fileManager.getTotalChunks() <= 1) {
-                globalScrollBar.setMaximum(SCROLL_RESOLUTION);
-                currentChunk = 0;
-            } else {
-                globalScrollBar.setMaximum(fileManager.getTotalChunks() * SCROLL_RESOLUTION);
-                currentChunk = Integer.parseInt(lblStatus.getText().split(" ")[1]) - 1; // Extract index safely from status
-            }
+            int totalChunks = fileManager.getTotalChunks();
+            int maxScrollRange = Math.max(1, totalChunks) * SCROLL_RESOLUTION;
+            globalScrollBar.setMaximum(maxScrollRange + globalScrollBar.getVisibleAmount());
 
             JScrollBar localBar = scrollPane.getVerticalScrollBar();
             double localMax = localBar.getMaximum() - localBar.getVisibleAmount();
             double localPercent = localMax == 0 ? 0 : localBar.getValue() / localMax;
 
-            int globalValue = (currentChunk * SCROLL_RESOLUTION) + (int)(localPercent * SCROLL_RESOLUTION);
+            int globalValue = (loadedChunkIndex * SCROLL_RESOLUTION) + (int)(localPercent * SCROLL_RESOLUTION);
             globalScrollBar.setValue(globalValue);
         } catch (Exception ex) {
-            // Ignore format exceptions during UI transitioning
         } finally {
             isSyncingScroll = false;
         }
     }
 
     private void syncGlobalToLocalScroll() {
+        if (isNavigating) return; 
         isSyncingScroll = true;
         try {
             int globalValue = globalScrollBar.getValue();
             int targetChunk = globalValue / SCROLL_RESOLUTION;
             double localPercent = (globalValue % SCROLL_RESOLUTION) / (double) SCROLL_RESOLUTION;
-
-            int currentChunk = Integer.parseInt(lblStatus.getText().split(" ")[1]) - 1;
-
-            if (targetChunk != currentChunk && targetChunk < fileManager.getTotalChunks()) {
-                commitIfDirty();
-                LargeFileManager.ChunkState state = fileManager.navigateToIndex(targetChunk);
-                applyStateUpdates(state, 0); // Applies update but doesn't set caret
+            
+            int total = Math.max(1, fileManager.getTotalChunks());
+            if (targetChunk >= total) {
+                targetChunk = total - 1;
+                localPercent = 1.0;
             }
 
-            SwingUtilities.invokeLater(() -> {
+            lblStatus.setText(String.format("Chunk %d of %d", targetChunk + 1, total));
+
+            if (isLoadingChunk) {
+                pendingTargetChunk = targetChunk;
+                pendingLocalPercent = localPercent;
+                pendingPreviewRequest = true; 
+            } else if (targetChunk != loadedChunkIndex) {
+                isSyncingScroll = false; 
+                triggerAsyncLoad(targetChunk, 0, localPercent, true); 
+            } else {
                 JScrollBar localBar = scrollPane.getVerticalScrollBar();
                 int targetLocalValue = (int)(localPercent * (localBar.getMaximum() - localBar.getVisibleAmount()));
                 localBar.setValue(targetLocalValue);
-                isSyncingScroll = false;
-            });
+                
+                lastRequestedLocalPercent = localPercent;
+                if (isCurrentlyPreview) settleTimer.restart();
+            }
         } catch (Exception ex) {
+        } finally {
             isSyncingScroll = false;
-        }
-    }
-
-    private void jumpToBoundary(int targetIndex, boolean isStart) {
-        try {
-            commitIfDirty();
-            LargeFileManager.ChunkState state = fileManager.navigateToIndex(targetIndex);
-            applyStateUpdates(state, isStart ? 1 : -1);
-            syncLocalToGlobalScroll();
-        } catch (IOException ex) {
-            showError("Boundary navigation failure: " + ex.getMessage());
         }
     }
 
     public void loadInitialFile(File file) {
         fileManager.setFile(file);
         isDirty = false;
+        loadedChunkIndex = 0;
+        pendingTargetChunk = -1;
         try {
-            applyStateUpdates(fileManager.loadCurrentChunk(), 1);
-            syncLocalToGlobalScroll();
+            applyStateUpdates(fileManager.loadCurrentChunk(false), 1, -1);
         } catch (IOException ex) {
             showError("Failed to open command line file argument: " + ex.getMessage());
         }
     }
 
-    private void applyStateUpdates(LargeFileManager.ChunkState state, int direction) {
+    private void applyStateUpdates(LargeFileManager.ChunkState state, int direction, double localPercentForScroll) {
         isNavigating = true; 
+        loadedChunkIndex = state.chunkIndex();
+        isCurrentlyPreview = state.isPreview();
+        
+        textArea.setEditable(!isCurrentlyPreview);
         textArea.setText(state.content());
         lineNumberPanel.setStartLine(state.startLine());
-        lblStatus.setText(state.statusText());
-        setTitle("Bearit Text Editor - " + state.fileName());
-        globalScrollBar.setMaximum(state.totalChunks() * SCROLL_RESOLUTION);
+        setTitle("Bearit Text Editor - " + state.fileName() + (isCurrentlyPreview ? " [PREVIEW]" : ""));
+        
+        int maxScrollRange = state.totalChunks() * SCROLL_RESOLUTION;
+        globalScrollBar.setMaximum(maxScrollRange + globalScrollBar.getVisibleAmount());
+        
+        if (pendingTargetChunk == -1) {
+            lblStatus.setText(state.statusText());
+        }
         
         SwingUtilities.invokeLater(() -> {
-            if (direction > 0) {
+            if (localPercentForScroll >= 0) {
+                JScrollBar localBar = scrollPane.getVerticalScrollBar();
+                int targetLocalValue = (int)(localPercentForScroll * (localBar.getMaximum() - localBar.getVisibleAmount()));
+                localBar.setValue(targetLocalValue);
+            } else if (direction > 0) {
                 textArea.setCaretPosition(0); 
                 scrollPane.getVerticalScrollBar().setValue(0);
+                lineNumberPanel.setCurrentLine(0);
             } else if (direction < 0) {
                 textArea.setCaretPosition(textArea.getDocument().getLength());
                 JScrollBar vbar = scrollPane.getVerticalScrollBar();
                 vbar.setValue(vbar.getMaximum());
+                lineNumberPanel.setCurrentLine(textArea.getLineCount() - 1);
             }
+            
+            updateCursorStatus();
+            
+            if (isCurrentlyPreview) {
+                lblLoadingStatus.setText("Preview Active");
+                settleTimer.restart(); 
+            } else {
+                lblLoadingStatus.setText("");
+                settleTimer.stop();
+            }
+
             isNavigating = false;
-            syncLocalToGlobalScroll();
+            isLoadingChunk = false;
+            
+            if (pendingTargetChunk != -1) {
+                if (pendingTargetChunk != loadedChunkIndex) {
+                    int nextTarget = pendingTargetChunk;
+                    double nextPercent = pendingLocalPercent;
+                    boolean nextPreview = pendingPreviewRequest;
+                    
+                    pendingTargetChunk = -1; 
+                    triggerAsyncLoad(nextTarget, 0, nextPercent, nextPreview);
+                } else {
+                    pendingTargetChunk = -1;
+                    syncLocalToGlobalScroll(); 
+                }
+            } else {
+                syncLocalToGlobalScroll();
+            }
         });
     }
 
-    private void commitIfDirty() throws IOException {
-        if (isDirty) {
-            fileManager.commitCurrentChunk(textArea.getText());
-            isDirty = false;
-        }
-    }
-
     private void triggerAutoNavigate(int direction) {
-        try {
-            commitIfDirty();
-            int currentIdx = Integer.parseInt(lblStatus.getText().split(" ")[1]) - 1;
-            LargeFileManager.ChunkState state = fileManager.navigateToIndex(currentIdx + direction);
-            
-            if (state.chunkIndex() != currentIdx) {
-                applyStateUpdates(state, direction);
-            }
-        } catch (Exception ex) {
-            // Ignore silent boundary constraints
-        }
+        if (isLoadingChunk || isNavigating) return;
+        triggerAsyncLoad(loadedChunkIndex + direction, direction, -1, false);
     }
 
     private void performNew() {
         fileManager.setNewFile();
         isDirty = false;
         isNavigating = true;
+        loadedChunkIndex = 0;
+        pendingTargetChunk = -1;
         textArea.setText("");
         isNavigating = false;
         lblStatus.setText("New file creation mode.");
         lineNumberPanel.setStartLine(1);
         setTitle("Bearit Text Editor - Untitled");
         globalScrollBar.setValue(0);
-        globalScrollBar.setMaximum(SCROLL_RESOLUTION);
+        globalScrollBar.setMaximum(SCROLL_RESOLUTION + globalScrollBar.getVisibleAmount());
+        updateCursorStatus();
     }
 
     private void performOpen() {
@@ -259,13 +442,28 @@ public class TextEditorFrame extends JFrame {
             }
         }
 
-        try {
-            LargeFileManager.ChunkState state = fileManager.saveAll(textArea.getText());
-            isDirty = false;
-            applyStateUpdates(state, 0);
-        } catch (IOException ex) {
-            showError("Streaming save operation failure: " + ex.getMessage());
-        }
+        lblLoadingStatus.setText("Saving file...");
+        isNavigating = true; 
+        new SwingWorker<LargeFileManager.ChunkState, Void>() {
+            @Override
+            protected LargeFileManager.ChunkState doInBackground() throws Exception {
+                String saveText = isCurrentlyPreview ? "" : textArea.getText();
+                return fileManager.saveAll(saveText);
+            }
+            @Override
+            protected void done() {
+                try {
+                    isDirty = false;
+                    pendingTargetChunk = -1;
+                    applyStateUpdates(get(), 0, -1);
+                } catch (Exception ex) {
+                    showError("Streaming save operation failure: " + ex.getMessage());
+                } finally {
+                    lblLoadingStatus.setText("");
+                    isNavigating = false;
+                }
+            }
+        }.execute();
     }
 
     private void setupMenuBar() {
@@ -298,6 +496,7 @@ public class TextEditorFrame extends JFrame {
     private static class LineNumberPanel extends JPanel {
         private final JTextArea textArea;
         private long startLine = 1;
+        private int currentLocalLine = 0;
 
         public LineNumberPanel(JTextArea textArea) {
             this.textArea = textArea;
@@ -309,6 +508,15 @@ public class TextEditorFrame extends JFrame {
         public void setStartLine(long startLine) {
             this.startLine = startLine;
             adjustMetricSizing();
+        }
+
+        public long getStartLine() { return this.startLine; }
+
+        public void setCurrentLine(int line) {
+            if (this.currentLocalLine != line) {
+                this.currentLocalLine = line;
+                repaint();
+            }
         }
 
         public void adjustMetricSizing() {
@@ -324,10 +532,8 @@ public class TextEditorFrame extends JFrame {
         @Override
         protected void paintComponent(Graphics g) {
             super.paintComponent(g);
-            g.setFont(textArea.getFont());
-            g.setColor(new Color(110, 110, 110));
             
-            FontMetrics fm = g.getFontMetrics();
+            FontMetrics fm = g.getFontMetrics(textArea.getFont());
             int lineHeight = fm.getHeight();
             int localLineCount = textArea.getLineCount();
 
@@ -340,6 +546,15 @@ public class TextEditorFrame extends JFrame {
                 if (computedY + lineHeight >= startingY && computedY <= boundingY) {
                     String stringLabel = String.valueOf(startLine + i);
                     int alignedX = getWidth() - fm.stringWidth(stringLabel) - 6;
+                    
+                    if (i == currentLocalLine) {
+                        g.setFont(textArea.getFont().deriveFont(Font.BOLD));
+                        g.setColor(new Color(40, 40, 40));
+                    } else {
+                        g.setFont(textArea.getFont());
+                        g.setColor(new Color(110, 110, 110));
+                    }
+                    
                     g.drawString(stringLabel, alignedX, computedY + 2);
                 }
                 computedY += lineHeight;
