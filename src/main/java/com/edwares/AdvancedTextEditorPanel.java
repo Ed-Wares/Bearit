@@ -43,13 +43,17 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     private String currentTitle = "Untitled";
 
+    private JDialog searchDialog;
+    private JTextField txtSearch;
+    private JTextField txtReplace;
+
     public AdvancedTextEditorPanel() {
         setLayout(new BorderLayout());
         this.fileManager = new LargeFileManager();
 
         settleTimer = new Timer(350, e -> {
             if (isCurrentlyPreview && !isLoadingChunk && !isNavigating) {
-                triggerAsyncLoad(loadedChunkIndex, 0, lastRequestedLocalPercent, false);
+                triggerAsyncLoad(loadedChunkIndex, 0, lastRequestedLocalPercent, false, null);
             }
         });
         settleTimer.setRepeats(false);
@@ -148,7 +152,211 @@ public class AdvancedTextEditorPanel extends JPanel {
         add(statusBar, BorderLayout.SOUTH);
     }
 
-    // --- Public Component API ---
+    public void showSearchDialog() {
+        if (searchDialog == null) {
+            Window parentWindow = SwingUtilities.getWindowAncestor(this);
+            searchDialog = new JDialog(parentWindow, "Search & Replace");
+            searchDialog.setModal(false);
+            searchDialog.setAlwaysOnTop(true);
+            searchDialog.setLayout(new GridLayout(3, 1, 5, 5));
+            searchDialog.getRootPane().setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+            
+            JPanel pnlSearch = new JPanel(new BorderLayout());
+            pnlSearch.add(new JLabel("Find:     "), BorderLayout.WEST);
+            txtSearch = new JTextField(25);
+            pnlSearch.add(txtSearch, BorderLayout.CENTER);
+            
+            JPanel pnlReplace = new JPanel(new BorderLayout());
+            pnlReplace.add(new JLabel("Replace: "), BorderLayout.WEST);
+            txtReplace = new JTextField(25);
+            pnlReplace.add(txtReplace, BorderLayout.CENTER);
+            
+            JPanel pnlBtns = new JPanel(new FlowLayout());
+            JButton btnFind = new JButton("Find Next");
+            JButton btnCount = new JButton("Count Matches");
+            JButton btnReplaceAll = new JButton("Replace All");
+            
+            btnFind.addActionListener(e -> performFindNext(txtSearch.getText()));
+            btnCount.addActionListener(e -> performCountMatches(txtSearch.getText()));
+            btnReplaceAll.addActionListener(e -> performReplaceAll(txtSearch.getText(), txtReplace.getText()));
+            
+            pnlBtns.add(btnFind);
+            pnlBtns.add(btnCount);
+            pnlBtns.add(btnReplaceAll);
+            
+            searchDialog.add(pnlSearch);
+            searchDialog.add(pnlReplace);
+            searchDialog.add(pnlBtns);
+            searchDialog.pack();
+            searchDialog.setLocationRelativeTo(this);
+        }
+        searchDialog.setVisible(true);
+        txtSearch.requestFocus();
+    }
+
+    public void showGotoLineDialog() {
+        String input = JOptionPane.showInputDialog(this, "Enter Destination Line Number:", "Go To Line", JOptionPane.QUESTION_MESSAGE);
+        if (input != null && !input.trim().isEmpty()) {
+            try {
+                long targetLine = Long.parseLong(input.trim());
+                lblLoadingStatus.setText("Searching for line position...");
+                new SwingWorker<Integer, Void>() {
+                    @Override
+                    protected Integer doInBackground() throws Exception {
+                        if (isDirty && !isCurrentlyPreview) {
+                            fileManager.commitCurrentChunk(textArea.getText());
+                            isDirty = false;
+                        }
+                        return fileManager.getChunkForLine(targetLine);
+                    }
+
+                    @Override
+                    protected void done() {
+                        try {
+                            int targetChunk = get();
+                            if (targetChunk == loadedChunkIndex) {
+                                jumpToLocalLine(targetLine);
+                                lblLoadingStatus.setText("");
+                            } else {
+                                triggerAsyncLoad(targetChunk, 0, -1, false, () -> jumpToLocalLine(targetLine));
+                            }
+                        } catch (Exception e) {
+                            lblLoadingStatus.setText("");
+                        }
+                    }
+                }.execute();
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(this, "Please enter a valid numeric line value.", "Invalid Input", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
+
+    private void jumpToLocalLine(long absoluteTargetLine) {
+        long startLine = lineNumberPanel.getStartLine();
+        int localLine = (int) (absoluteTargetLine - startLine);
+        
+        if (localLine >= 0 && localLine < textArea.getLineCount()) {
+            try {
+                int offset = textArea.getLineStartOffset(localLine);
+                textArea.setCaretPosition(offset);
+                textArea.requestFocus();
+            } catch (Exception e) {}
+        }
+    }
+
+    private Component getDialogParent() {
+        return (searchDialog != null && searchDialog.isVisible()) ? searchDialog : this;
+    }
+
+    private void performFindNext(String target) {
+        if (target == null || target.isEmpty()) return;
+
+        int caret = textArea.getCaretPosition();
+        String text = textArea.getText();
+        int idx = text.indexOf(target, caret);
+        
+        if (idx != -1) {
+            textArea.setCaretPosition(idx);
+            textArea.moveCaretPosition(idx + target.length());
+            textArea.requestFocus();
+            return;
+        }
+        
+        lblLoadingStatus.setText("Scanning file for next match...");
+        new SwingWorker<Integer, Void>() {
+            int foundIdx = -1;
+            
+            @Override
+            protected Integer doInBackground() throws Exception {
+                if (isDirty && !isCurrentlyPreview) {
+                    fileManager.commitCurrentChunk(textArea.getText());
+                    isDirty = false;
+                }
+                int total = fileManager.getTotalChunks();
+                for (int i = loadedChunkIndex + 1; i < total; i++) {
+                    String content = fileManager.getChunkContent(i);
+                    int match = content.indexOf(target);
+                    if (match != -1) {
+                        foundIdx = match;
+                        return i;
+                    }
+                }
+                return -1;
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    int targetChunk = get();
+                    lblLoadingStatus.setText("");
+                    if (targetChunk != -1) {
+                        triggerAsyncLoad(targetChunk, 0, -1, false, () -> {
+                            textArea.setCaretPosition(foundIdx);
+                            textArea.moveCaretPosition(foundIdx + target.length());
+                            textArea.requestFocus();
+                        });
+                    } else {
+                        JOptionPane.showMessageDialog(getDialogParent(), "No more matches found in the file.", "Search Complete", JOptionPane.INFORMATION_MESSAGE);
+                    }
+                } catch (Exception e) {}
+            }
+        }.execute();
+    }
+
+    private void performCountMatches(String target) {
+        if (target == null || target.isEmpty()) return;
+        lblLoadingStatus.setText("Running full file match count...");
+        new SwingWorker<Long, Void>() {
+            @Override
+            protected Long doInBackground() throws Exception {
+                if (isDirty && !isCurrentlyPreview) {
+                    fileManager.commitCurrentChunk(textArea.getText());
+                    isDirty = false;
+                }
+                return fileManager.countGlobalMatches(target);
+            }
+            @Override
+            protected void done() {
+                try {
+                    lblLoadingStatus.setText("");
+                    JOptionPane.showMessageDialog(getDialogParent(), "Total occurrences found: " + get(), "Match Count", JOptionPane.INFORMATION_MESSAGE);
+                } catch (Exception e) {}
+            }
+        }.execute();
+    }
+
+    private void performReplaceAll(String target, String replacement) {
+        if (target == null || target.isEmpty()) return;
+        
+        if (!fileManager.hasFile()) {
+            textArea.setText(textArea.getText().replace(target, replacement));
+            return;
+        }
+        
+        lblLoadingStatus.setText("Replacing occurrences globally...");
+        new SwingWorker<Void, Void>() {
+            @Override
+            protected Void doInBackground() throws Exception {
+                if (isDirty && !isCurrentlyPreview) {
+                    fileManager.commitCurrentChunk(textArea.getText());
+                    isDirty = false;
+                }
+                fileManager.replaceAllGlobal(target, replacement);
+                return null;
+            }
+            @Override
+            protected void done() {
+                triggerAsyncLoad(loadedChunkIndex, 0, -1, false, () -> {
+                    lblLoadingStatus.setText("");
+                    JOptionPane.showMessageDialog(getDialogParent(), "Global replacement complete.", "Replace All", JOptionPane.INFORMATION_MESSAGE);
+                });
+            }
+        }.execute();
+    }
+
+    public void cut() { if (!isCurrentlyPreview) textArea.cut(); }
+    public void copy() { textArea.copy(); }
+    public void paste() { if (!isCurrentlyPreview) textArea.paste(); }
 
     public void createNewDocument() {
         fileManager.setNewFile();
@@ -174,7 +382,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         loadedChunkIndex = 0;
         pendingTargetChunk = -1;
         try {
-            applyStateUpdates(fileManager.loadCurrentChunk(false), 1, -1);
+            applyStateUpdates(fileManager.loadCurrentChunk(false), 1, -1, null);
         } catch (IOException ex) {
             showError("Failed to open file: " + ex.getMessage());
         }
@@ -205,17 +413,6 @@ public class AdvancedTextEditorPanel extends JPanel {
         return currentTitle;
     }
 
-    public void cut() {
-        if (!isCurrentlyPreview) textArea.cut();
-    }
-
-    public void copy() {
-        textArea.copy();
-    }
-
-    public void paste() {
-        if (!isCurrentlyPreview) textArea.paste();
-    }    
     // ----------------------------
 
     private void executeSaveRoutine() {
@@ -232,7 +429,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                 try {
                     isDirty = false;
                     pendingTargetChunk = -1;
-                    applyStateUpdates(get(), 0, -1);
+                    applyStateUpdates(get(), 0, -1, null);
                 } catch (Exception ex) {
                     showError("Streaming save operation failure: " + ex.getMessage());
                 } finally {
@@ -286,7 +483,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                         syncLocalToGlobalScroll();
                     });
                 } else {
-                    triggerAsyncLoad(0, 1, -1, false);
+                    triggerAsyncLoad(0, 1, -1, false, null);
                 }
             }
         });
@@ -304,13 +501,29 @@ public class AdvancedTextEditorPanel extends JPanel {
                         syncLocalToGlobalScroll();
                     });
                 } else {
-                    triggerAsyncLoad(targetChunk, -1, -1, false);
+                    triggerAsyncLoad(targetChunk, -1, -1, false, null);
                 }
+            }
+        });
+
+        // Add Ctrl+F (Search) shortcut
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK), "showSearch");
+        am.put("showSearch", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                showSearchDialog();
+            }
+        });
+
+        // Add Ctrl+G (Go To Line) shortcut
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_G, InputEvent.CTRL_DOWN_MASK), "showGotoLine");
+        am.put("showGotoLine", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                showGotoLineDialog();
             }
         });
     }
 
-    private void triggerAsyncLoad(int targetChunk, int direction, double localPercentForScroll, boolean requestPreview) {
+    private void triggerAsyncLoad(int targetChunk, int direction, double localPercentForScroll, boolean requestPreview, Runnable postLoadAction) {
         if (isNavigating) return;
         settleTimer.stop(); 
 
@@ -318,7 +531,10 @@ public class AdvancedTextEditorPanel extends JPanel {
         if (targetChunk >= total) targetChunk = total - 1;
         if (targetChunk < 0) targetChunk = 0;
 
-        if (targetChunk == loadedChunkIndex && !isCurrentlyPreview && !requestPreview) return; 
+        if (targetChunk == loadedChunkIndex && !isCurrentlyPreview && !requestPreview) {
+            if (postLoadAction != null) postLoadAction.run();
+            return; 
+        }
 
         isLoadingChunk = true;
         textArea.setEditable(false); 
@@ -350,7 +566,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                 try {
                     LargeFileManager.ChunkState state = get();
                     if (state != null) {
-                        applyStateUpdates(state, direction, localPercentForScroll);
+                        applyStateUpdates(state, direction, localPercentForScroll, postLoadAction);
                     } else {
                         isLoadingChunk = false;
                         textArea.setEditable(!isCurrentlyPreview);
@@ -407,7 +623,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                 pendingPreviewRequest = true; 
             } else if (targetChunk != loadedChunkIndex) {
                 isSyncingScroll = false; 
-                triggerAsyncLoad(targetChunk, 0, localPercent, true); 
+                triggerAsyncLoad(targetChunk, 0, localPercent, true, null); 
             } else {
                 JScrollBar localBar = scrollPane.getVerticalScrollBar();
                 int targetLocalValue = (int)(localPercent * (localBar.getMaximum() - localBar.getVisibleAmount()));
@@ -422,7 +638,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
     }
 
-    private void applyStateUpdates(LargeFileManager.ChunkState state, int direction, double localPercentForScroll) {
+    private void applyStateUpdates(LargeFileManager.ChunkState state, int direction, double localPercentForScroll, Runnable postLoadAction) {
         isNavigating = true; 
         loadedChunkIndex = state.chunkIndex();
         isCurrentlyPreview = state.isPreview();
@@ -476,20 +692,22 @@ public class AdvancedTextEditorPanel extends JPanel {
                     boolean nextPreview = pendingPreviewRequest;
                     
                     pendingTargetChunk = -1; 
-                    triggerAsyncLoad(nextTarget, 0, nextPercent, nextPreview);
+                    triggerAsyncLoad(nextTarget, 0, nextPercent, nextPreview, postLoadAction);
                 } else {
                     pendingTargetChunk = -1;
-                    syncLocalToGlobalScroll(); 
+                    syncLocalToGlobalScroll();
+                    if (postLoadAction != null) postLoadAction.run();
                 }
             } else {
                 syncLocalToGlobalScroll();
+                if (postLoadAction != null) postLoadAction.run();
             }
         });
     }
 
     private void triggerAutoNavigate(int direction) {
         if (isLoadingChunk || isNavigating) return;
-        triggerAsyncLoad(loadedChunkIndex + direction, direction, -1, false);
+        triggerAsyncLoad(loadedChunkIndex + direction, direction, -1, false, null);
     }
 
     private void showError(String message) {

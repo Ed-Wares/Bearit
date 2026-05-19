@@ -48,6 +48,8 @@ public class TextEditorFrame extends JFrame {
         JButton btnCut = new JButton("✂ Cut");
         JButton btnCopy = new JButton("📋 Copy");
         JButton btnPaste = new JButton("📝 Paste");
+        JButton btnSearch = new JButton("🔍 Search");
+        JButton btnGoto = new JButton("📍 Go To Line");
 
         // Tooltip text for better UX
         btnNew.setToolTipText("Create a new document");
@@ -56,6 +58,8 @@ public class TextEditorFrame extends JFrame {
         btnCut.setToolTipText("Cut selected text");
         btnCopy.setToolTipText("Copy selected text");
         btnPaste.setToolTipText("Paste text from clipboard");
+        btnSearch.setToolTipText("Search and Replace across full file");
+        btnGoto.setToolTipText("Jump to specific line number");
 
         // Action routing
         btnNew.addActionListener(e -> performNew());
@@ -65,6 +69,8 @@ public class TextEditorFrame extends JFrame {
         btnCut.addActionListener(e -> editorPanel.cut());
         btnCopy.addActionListener(e -> editorPanel.copy());
         btnPaste.addActionListener(e -> editorPanel.paste());
+        btnSearch.addActionListener(e -> editorPanel.showSearchDialog());
+        btnGoto.addActionListener(e -> editorPanel.showGotoLineDialog());
 
         toolBar.add(btnNew);
         toolBar.add(btnOpen);
@@ -74,6 +80,9 @@ public class TextEditorFrame extends JFrame {
         toolBar.add(btnCut);
         toolBar.add(btnCopy);
         toolBar.add(btnPaste);
+        toolBar.addSeparator();
+        toolBar.add(btnSearch);
+        toolBar.add(btnGoto);
 
         return toolBar;
     }
@@ -107,14 +116,21 @@ public class TextEditorFrame extends JFrame {
         JMenuItem cutItem = new JMenuItem("Cut");
         JMenuItem copyItem = new JMenuItem("Copy");
         JMenuItem pasteItem = new JMenuItem("Paste");
+        JMenuItem searchItem = new JMenuItem("Search & Replace...");
+        JMenuItem gotoItem = new JMenuItem("Go To Line...");
 
         cutItem.addActionListener(e -> editorPanel.cut());
         copyItem.addActionListener(e -> editorPanel.copy());
         pasteItem.addActionListener(e -> editorPanel.paste());
+        searchItem.addActionListener(e -> editorPanel.showSearchDialog());
+        gotoItem.addActionListener(e -> editorPanel.showGotoLineDialog());
 
         editMenu.add(cutItem);
         editMenu.add(copyItem);
         editMenu.add(pasteItem);
+        editMenu.addSeparator();
+        editMenu.add(searchItem);
+        editMenu.add(gotoItem);
 
         // --- Help Menu ---
         JMenu helpMenu = new JMenu("Help");

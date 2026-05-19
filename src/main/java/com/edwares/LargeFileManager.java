@@ -10,7 +10,7 @@ import java.util.concurrent.*;
 
 public class LargeFileManager {
     private static final int CHUNK_SIZE = 25 * 1024 * 1024; 
-    private static final int PREVIEW_SIZE = 10 * 1024; // 10KB Preview limit
+    private static final int PREVIEW_SIZE = 10 * 1024; 
 
     private File currentFile;
     private int currentChunkIndex = 0;
@@ -21,7 +21,6 @@ public class LargeFileManager {
     private final ExecutorService preloader = Executors.newSingleThreadExecutor();
     private final Map<Integer, ChunkState> preloadCache = new ConcurrentHashMap<>();
 
-    // ADDED: isPreview boolean flag to the state record
     public record ChunkState(
         String content, 
         long startLine, 
@@ -110,7 +109,6 @@ public class LargeFileManager {
         preloadCache.remove(currentChunkIndex); 
     }
 
-    // UPDATED: Now accepts preview flag
     public ChunkState navigateToIndex(int index, boolean requestPreview) throws IOException {
         int virtualTotalChunks = getTotalChunks();
         if (index < 0) index = 0;
@@ -119,7 +117,6 @@ public class LargeFileManager {
         currentChunkIndex = index;
         ChunkState state = loadCurrentChunk(requestPreview);
         
-        // Background preloader should always pull FULL chunks
         final int targetNext = index + 1;
         final int targetPrev = index - 1;
         preloader.submit(() -> preloadChunk(targetNext));
@@ -137,7 +134,6 @@ public class LargeFileManager {
         } catch (IOException e) { }
     }
 
-    // UPDATED: Fetches preview or full block
     public ChunkState loadCurrentChunk(boolean requestPreview) throws IOException {
         if (!requestPreview && preloadCache.containsKey(currentChunkIndex)) {
             return preloadCache.get(currentChunkIndex);
@@ -145,7 +141,96 @@ public class LargeFileManager {
         return generateChunkState(currentChunkIndex, requestPreview);
     }
 
-    // UPDATED: Safely truncates the buffer if preview is requested
+    // --- NEW: Expose raw chunk content extraction for background Find Next loops ---
+    public String getChunkContent(int index) throws IOException {
+        if (dirtyChunks.containsKey(index)) {
+            return Files.readString(dirtyChunks.get(index).toPath(), StandardCharsets.UTF_8);
+        } else if (currentFile != null && currentFile.exists()) {
+            long[] boundaries = getChunkBoundaries(index);
+            long bytesToRead = boundaries[1] - boundaries[0];
+            if (bytesToRead > 0) {
+                try (FileChannel channel = FileChannel.open(currentFile.toPath(), StandardOpenOption.READ)) {
+                    ByteBuffer buffer = ByteBuffer.allocate((int) bytesToRead);
+                    channel.position(boundaries[0]);
+                    channel.read(buffer);
+                    return new String(buffer.array(), StandardCharsets.UTF_8);
+                }
+            }
+        }
+        return "";
+    }
+
+    // --- NEW: Memory-safe File-wide Global Counting ---
+    public long countGlobalMatches(String target) throws IOException {
+        long count = 0;
+        int virtualTotalChunks = getTotalChunks();
+        for (int i = 0; i < virtualTotalChunks; i++) {
+            String chunkContent = getChunkContent(i);
+            int index = 0;
+            while ((index = chunkContent.indexOf(target, index)) != -1) {
+                count++;
+                index += target.length();
+            }
+        }
+        return count;
+    }
+
+    // --- NEW: Global Streaming File Replacements ---
+    public void replaceAllGlobal(String target, String replacement) throws IOException {
+        if (currentFile == null) return;
+        
+        Path path = currentFile.toPath();
+        Path tempPath = path.resolveSibling(path.getFileName() + ".tmp");
+        int virtualTotalChunks = getTotalChunks();
+
+        try (FileChannel destChannel = FileChannel.open(tempPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+            for (int i = 0; i < virtualTotalChunks; i++) {
+                String chunkContent = getChunkContent(i);
+                String replaced = chunkContent.replace(target, replacement);
+                destChannel.write(ByteBuffer.wrap(replaced.getBytes(StandardCharsets.UTF_8)));
+            }
+        }
+
+        try {
+            Files.move(tempPath, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException ioEx) {
+            Files.move(tempPath, path, StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        clearDirtyChunks();
+        updateFileMetrics();
+    }
+
+    // --- NEW: Calculate chunk locations dynamically for Go-To-Line ---
+    public int getChunkForLine(long targetLine) throws IOException {
+        if (targetLine <= 1) return 0;
+        long currentLine = 1;
+        int virtualTotalChunks = getTotalChunks();
+        
+        for (int i = 0; i < virtualTotalChunks; i++) {
+            long linesInChunk = 0;
+            if (dirtyChunks.containsKey(i)) {
+                linesInChunk = countLinesInStream(new FileInputStream(dirtyChunks.get(i)));
+            } else if (currentFile != null && currentFile.exists()) {
+                long[] boundaries = getChunkBoundaries(i);
+                long bytesToRead = boundaries[1] - boundaries[0];
+                if (bytesToRead > 0) {
+                    try (FileChannel channel = FileChannel.open(currentFile.toPath(), StandardOpenOption.READ)) {
+                        channel.position(boundaries[0]);
+                        InputStream stream = java.nio.channels.Channels.newInputStream(channel);
+                        linesInChunk = countLinesInLimitedStream(stream, bytesToRead);
+                    }
+                }
+            }
+            
+            if (currentLine + linesInChunk > targetLine) {
+                return i;
+            }
+            currentLine += linesInChunk;
+        }
+        return virtualTotalChunks - 1;
+    }
+
     private ChunkState generateChunkState(int index, boolean isPreview) throws IOException {
         if (currentFile == null && dirtyChunks.isEmpty()) {
             return new ChunkState("", 1, index, 1, false, false, "New file creation mode.", "Untitled", false);
@@ -155,7 +240,7 @@ public class LargeFileManager {
         
         if (dirtyChunks.containsKey(index)) {
             content = Files.readString(dirtyChunks.get(index).toPath(), StandardCharsets.UTF_8);
-            isPreview = false; // Edited chunks are small/fast enough in RAM, no preview needed
+            isPreview = false; 
         } else if (currentFile != null && currentFile.exists()) {
             long[] boundaries = getChunkBoundaries(index);
             long bytesToRead = boundaries[1] - boundaries[0];
@@ -254,7 +339,7 @@ public class LargeFileManager {
 
         clearDirtyChunks();
         updateFileMetrics();
-        return loadCurrentChunk(false); // Return full chunk on save
+        return loadCurrentChunk(false); 
     }
 
     private void clearDirtyChunks() {
