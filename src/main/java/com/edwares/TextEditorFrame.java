@@ -4,19 +4,26 @@ import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
+import java.awt.event.*;
 import java.io.File;
 import java.io.IOException;
 
 public class TextEditorFrame extends JFrame {
+    private static final int SCROLL_RESOLUTION = 10000; // Granularity for the global scroll thumb
+
     private final JTextArea textArea;
     private final JFileChooser fileChooser;
     private final LineNumberPanel lineNumberPanel;
-    
-    private final JButton btnPrev;
-    private final JButton btnNext;
+    private final JScrollPane scrollPane;
     private final JLabel lblStatus;
+    
+    // Unified Global Scrolling Components
+    private final JScrollBar globalScrollBar;
+    private boolean isSyncingScroll = false;
 
     private final LargeFileManager fileManager;
+    private boolean isDirty = false;
+    private boolean isNavigating = false;
 
     public TextEditorFrame() {
         this.fileManager = new LargeFileManager();
@@ -32,87 +39,207 @@ public class TextEditorFrame extends JFrame {
         textArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
         textArea.setLineWrap(false);
 
-        JScrollPane scrollPane = new JScrollPane(textArea);
+        textArea.getDocument().addDocumentListener(new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) { registerEdit(); }
+            public void removeUpdate(DocumentEvent e) { registerEdit(); }
+            public void changedUpdate(DocumentEvent e) { registerEdit(); }
+            
+            private void registerEdit() {
+                if (!isNavigating) isDirty = true;
+                lineNumberPanel.adjustMetricSizing();
+                syncLocalToGlobalScroll();
+            }
+        });
+
+        setupKeyboardShortcuts();
+
+        scrollPane = new JScrollPane(textArea);
+        // Hide the local scrollbar and implement our own global track
+        scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_NEVER);
         lineNumberPanel = new LineNumberPanel(textArea);
         scrollPane.setRowHeaderView(lineNumberPanel);
+        
+        // Sync local scrolling events (mouse wheel, arrow keys) to the global scrollbar
+        scrollPane.getVerticalScrollBar().addAdjustmentListener(e -> {
+            if (!isSyncingScroll) syncLocalToGlobalScroll();
+        });
+
+        scrollPane.addMouseWheelListener(e -> {
+            JScrollBar vBar = scrollPane.getVerticalScrollBar();
+            if (e.getWheelRotation() > 0 && vBar.getValue() + vBar.getVisibleAmount() >= vBar.getMaximum()) {
+                triggerAutoNavigate(1);
+            } else if (e.getWheelRotation() < 0 && vBar.getValue() <= 0) {
+                triggerAutoNavigate(-1);
+            }
+        });
+
         mainPanel.add(scrollPane, BorderLayout.CENTER);
 
-        JPanel pagerPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        btnPrev = new JButton("◀ Previous Chunk");
-        btnNext = new JButton("Next Chunk ▶");
+        // --- Custom Global Scrollbar Setup ---
+        globalScrollBar = new JScrollBar(JScrollBar.VERTICAL, 0, 1, 0, SCROLL_RESOLUTION);
+        globalScrollBar.addAdjustmentListener(e -> {
+            if (!isSyncingScroll) syncGlobalToLocalScroll();
+        });
+        mainPanel.add(globalScrollBar, BorderLayout.EAST);
+
+        JPanel statusBar = new JPanel(new FlowLayout(FlowLayout.LEFT));
         lblStatus = new JLabel("No file active.");
-        
-        btnPrev.setEnabled(false);
-        btnNext.setEnabled(false);
-
-        btnPrev.addActionListener(e -> navigate(-1));
-        btnNext.addActionListener(e -> navigate(1));
-
-        pagerPanel.add(btnPrev);
-        pagerPanel.add(btnNext);
-        pagerPanel.add(lblStatus);
-        mainPanel.add(pagerPanel, BorderLayout.SOUTH);
+        statusBar.add(lblStatus);
+        mainPanel.add(statusBar, BorderLayout.SOUTH);
 
         add(mainPanel);
         fileChooser = new JFileChooser();
         setupMenuBar();
     }
 
-    // --- NEW: Expose programmatic initialization for CLI arguments ---
+    private void setupKeyboardShortcuts() {
+        InputMap im = textArea.getInputMap();
+        ActionMap am = textArea.getActionMap();
+
+        // CTRL + HOME
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_HOME, InputEvent.CTRL_DOWN_MASK), "jumpStart");
+        am.put("jumpStart", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                jumpToBoundary(0, true);
+            }
+        });
+
+        // CTRL + END
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_END, InputEvent.CTRL_DOWN_MASK), "jumpEnd");
+        am.put("jumpEnd", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                jumpToBoundary(fileManager.getTotalChunks() - 1, false);
+            }
+        });
+    }
+
+    private void syncLocalToGlobalScroll() {
+        isSyncingScroll = true;
+        try {
+            int currentChunk = fileManager.getTotalChunks() == 0 ? 0 : Math.max(0, fileManager.getTotalChunks() - 1);
+            if (currentChunk == 0 && fileManager.getTotalChunks() <= 1) {
+                globalScrollBar.setMaximum(SCROLL_RESOLUTION);
+                currentChunk = 0;
+            } else {
+                globalScrollBar.setMaximum(fileManager.getTotalChunks() * SCROLL_RESOLUTION);
+                currentChunk = Integer.parseInt(lblStatus.getText().split(" ")[1]) - 1; // Extract index safely from status
+            }
+
+            JScrollBar localBar = scrollPane.getVerticalScrollBar();
+            double localMax = localBar.getMaximum() - localBar.getVisibleAmount();
+            double localPercent = localMax == 0 ? 0 : localBar.getValue() / localMax;
+
+            int globalValue = (currentChunk * SCROLL_RESOLUTION) + (int)(localPercent * SCROLL_RESOLUTION);
+            globalScrollBar.setValue(globalValue);
+        } catch (Exception ex) {
+            // Ignore format exceptions during UI transitioning
+        } finally {
+            isSyncingScroll = false;
+        }
+    }
+
+    private void syncGlobalToLocalScroll() {
+        isSyncingScroll = true;
+        try {
+            int globalValue = globalScrollBar.getValue();
+            int targetChunk = globalValue / SCROLL_RESOLUTION;
+            double localPercent = (globalValue % SCROLL_RESOLUTION) / (double) SCROLL_RESOLUTION;
+
+            int currentChunk = Integer.parseInt(lblStatus.getText().split(" ")[1]) - 1;
+
+            if (targetChunk != currentChunk && targetChunk < fileManager.getTotalChunks()) {
+                commitIfDirty();
+                LargeFileManager.ChunkState state = fileManager.navigateToIndex(targetChunk);
+                applyStateUpdates(state, 0); // Applies update but doesn't set caret
+            }
+
+            SwingUtilities.invokeLater(() -> {
+                JScrollBar localBar = scrollPane.getVerticalScrollBar();
+                int targetLocalValue = (int)(localPercent * (localBar.getMaximum() - localBar.getVisibleAmount()));
+                localBar.setValue(targetLocalValue);
+                isSyncingScroll = false;
+            });
+        } catch (Exception ex) {
+            isSyncingScroll = false;
+        }
+    }
+
+    private void jumpToBoundary(int targetIndex, boolean isStart) {
+        try {
+            commitIfDirty();
+            LargeFileManager.ChunkState state = fileManager.navigateToIndex(targetIndex);
+            applyStateUpdates(state, isStart ? 1 : -1);
+            syncLocalToGlobalScroll();
+        } catch (IOException ex) {
+            showError("Boundary navigation failure: " + ex.getMessage());
+        }
+    }
+
     public void loadInitialFile(File file) {
         fileManager.setFile(file);
+        isDirty = false;
         try {
-            LargeFileManager.ChunkState state = fileManager.loadCurrentChunk();
-            applyStateUpdates(state);
+            applyStateUpdates(fileManager.loadCurrentChunk(), 1);
+            syncLocalToGlobalScroll();
         } catch (IOException ex) {
             showError("Failed to open command line file argument: " + ex.getMessage());
         }
     }
-    // ----------------------------------------------------------------
 
-    private void setupMenuBar() {
-        JMenuBar menuBar = new JMenuBar();
-        JMenu fileMenu = new JMenu("File");
-
-        JMenuItem newItem = new JMenuItem("New");
-        JMenuItem openItem = new JMenuItem("Open...");
-        JMenuItem saveItem = new JMenuItem("Save Current Chunk");
-        JMenuItem exitItem = new JMenuItem("Exit");
-
-        newItem.addActionListener(e -> performNew());
-        openItem.addActionListener(e -> performOpen());
-        saveItem.addActionListener(e -> performSave());
-        exitItem.addActionListener(e -> System.exit(0));
-
-        fileMenu.add(newItem);
-        fileMenu.add(openItem);
-        fileMenu.add(saveItem);
-        fileMenu.addSeparator();
-        fileMenu.add(exitItem);
-        menuBar.add(fileMenu);
-        setJMenuBar(menuBar);
-    }
-
-    private void applyStateUpdates(LargeFileManager.ChunkState state) {
+    private void applyStateUpdates(LargeFileManager.ChunkState state, int direction) {
+        isNavigating = true; 
         textArea.setText(state.content());
         lineNumberPanel.setStartLine(state.startLine());
-        btnPrev.setEnabled(state.hasPrev());
-        btnNext.setEnabled(state.hasNext());
         lblStatus.setText(state.statusText());
         setTitle("Bearit Text Editor - " + state.fileName());
+        globalScrollBar.setMaximum(state.totalChunks() * SCROLL_RESOLUTION);
         
-        // Return caret to the top of the loaded chunk for UX ease
-        textArea.setCaretPosition(0); 
+        SwingUtilities.invokeLater(() -> {
+            if (direction > 0) {
+                textArea.setCaretPosition(0); 
+                scrollPane.getVerticalScrollBar().setValue(0);
+            } else if (direction < 0) {
+                textArea.setCaretPosition(textArea.getDocument().getLength());
+                JScrollBar vbar = scrollPane.getVerticalScrollBar();
+                vbar.setValue(vbar.getMaximum());
+            }
+            isNavigating = false;
+            syncLocalToGlobalScroll();
+        });
+    }
+
+    private void commitIfDirty() throws IOException {
+        if (isDirty) {
+            fileManager.commitCurrentChunk(textArea.getText());
+            isDirty = false;
+        }
+    }
+
+    private void triggerAutoNavigate(int direction) {
+        try {
+            commitIfDirty();
+            int currentIdx = Integer.parseInt(lblStatus.getText().split(" ")[1]) - 1;
+            LargeFileManager.ChunkState state = fileManager.navigateToIndex(currentIdx + direction);
+            
+            if (state.chunkIndex() != currentIdx) {
+                applyStateUpdates(state, direction);
+            }
+        } catch (Exception ex) {
+            // Ignore silent boundary constraints
+        }
     }
 
     private void performNew() {
         fileManager.setNewFile();
+        isDirty = false;
+        isNavigating = true;
         textArea.setText("");
-        btnPrev.setEnabled(false);
-        btnNext.setEnabled(false);
+        isNavigating = false;
         lblStatus.setText("New file creation mode.");
         lineNumberPanel.setStartLine(1);
         setTitle("Bearit Text Editor - Untitled");
+        globalScrollBar.setValue(0);
+        globalScrollBar.setMaximum(SCROLL_RESOLUTION);
     }
 
     private void performOpen() {
@@ -133,20 +260,35 @@ public class TextEditorFrame extends JFrame {
         }
 
         try {
-            LargeFileManager.ChunkState state = fileManager.saveCurrentChunk(textArea.getText());
-            applyStateUpdates(state);
+            LargeFileManager.ChunkState state = fileManager.saveAll(textArea.getText());
+            isDirty = false;
+            applyStateUpdates(state, 0);
         } catch (IOException ex) {
             showError("Streaming save operation failure: " + ex.getMessage());
         }
     }
 
-    private void navigate(int direction) {
-        try {
-            LargeFileManager.ChunkState state = fileManager.navigateChunk(direction);
-            applyStateUpdates(state);
-        } catch (IOException ex) {
-            showError("Chunk navigation failure: " + ex.getMessage());
-        }
+    private void setupMenuBar() {
+        JMenuBar menuBar = new JMenuBar();
+        JMenu fileMenu = new JMenu("File");
+
+        JMenuItem newItem = new JMenuItem("New");
+        JMenuItem openItem = new JMenuItem("Open...");
+        JMenuItem saveItem = new JMenuItem("Save Current File");
+        JMenuItem exitItem = new JMenuItem("Exit");
+
+        newItem.addActionListener(e -> performNew());
+        openItem.addActionListener(e -> performOpen());
+        saveItem.addActionListener(e -> performSave());
+        exitItem.addActionListener(e -> System.exit(0));
+
+        fileMenu.add(newItem);
+        fileMenu.add(openItem);
+        fileMenu.add(saveItem);
+        fileMenu.addSeparator();
+        fileMenu.add(exitItem);
+        menuBar.add(fileMenu);
+        setJMenuBar(menuBar);
     }
 
     private void showError(String message) {
@@ -161,12 +303,6 @@ public class TextEditorFrame extends JFrame {
             this.textArea = textArea;
             setBackground(new Color(245, 245, 245));
             setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, Color.LIGHT_GRAY));
-
-            textArea.getDocument().addDocumentListener(new DocumentListener() {
-                public void insertUpdate(DocumentEvent e) { adjustMetricSizing(); }
-                public void removeUpdate(DocumentEvent e) { adjustMetricSizing(); }
-                public void changedUpdate(DocumentEvent e) { adjustMetricSizing(); }
-            });
             adjustMetricSizing();
         }
 
@@ -175,7 +311,7 @@ public class TextEditorFrame extends JFrame {
             adjustMetricSizing();
         }
 
-        private void adjustMetricSizing() {
+        public void adjustMetricSizing() {
             FontMetrics fm = textArea.getFontMetrics(textArea.getFont());
             int totalLines = textArea.getLineCount();
             int maximumDigits = String.valueOf(startLine + totalLines).length();

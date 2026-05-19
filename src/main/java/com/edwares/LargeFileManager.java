@@ -1,33 +1,39 @@
 package com.edwares;
 
-import java.io.BufferedInputStream;
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
+import java.nio.file.*;
+import java.util.Map;
+import java.util.concurrent.*;
 
 public class LargeFileManager {
-    private static final int CHUNK_SIZE = 25 * 1024 * 1024; // 25MB Chunks
+    private static final int CHUNK_SIZE = 25 * 1024 * 1024; // 25MB Base Target
 
     private File currentFile;
-    private long currentChunkStartByte = 0;
-    private int currentChunkLoadedSize = 0;
+    private int currentChunkIndex = 0;
+    private int totalChunks = 1;
+    private long totalFileSize = 0;
+
+    private final Map<Integer, File> dirtyChunks = new ConcurrentHashMap<>();
+    
+    // Asynchronous Preloading Architecture
+    private final ExecutorService preloader = Executors.newSingleThreadExecutor();
+    private final Map<Integer, ChunkState> preloadCache = new ConcurrentHashMap<>();
 
     public record ChunkState(
         String content, 
         long startLine, 
+        int chunkIndex,
+        int totalChunks,
         boolean hasPrev, 
         boolean hasNext, 
         String statusText, 
         String fileName
     ) {}
 
-    // --- NEW: Test File Generation Routine ---
+
     public static void generateTestFile(double sizeInGb) throws IOException {
         long totalBytesTarget = (long) (sizeInGb * 1024L * 1024L * 1024L);
         File targetFile = new File(String.format("bearit_test_file_%.2fGB.txt", sizeInGb));
@@ -67,14 +73,19 @@ public class LargeFileManager {
 
     public void setNewFile() {
         this.currentFile = null;
-        this.currentChunkStartByte = 0;
-        this.currentChunkLoadedSize = 0;
+        this.currentChunkIndex = 0;
+        this.totalChunks = 1;
+        this.totalFileSize = 0;
+        clearDirtyChunks();
+        preloadCache.clear();
     }
 
     public void setFile(File file) {
         this.currentFile = file;
-        this.currentChunkStartByte = 0;
-        this.currentChunkLoadedSize = 0;
+        this.currentChunkIndex = 0;
+        clearDirtyChunks();
+        preloadCache.clear();
+        updateFileMetrics();
     }
 
     public boolean hasFile() {
@@ -85,117 +96,231 @@ public class LargeFileManager {
         this.currentFile = file;
     }
 
-    public ChunkState loadCurrentChunk() throws IOException {
-        if (currentFile == null) {
-            return new ChunkState("", 1, false, false, "New file creation mode.", "Untitled");
-        }
+    public int getTotalChunks() {
+        return Math.max(totalChunks, dirtyChunks.keySet().stream().max(Integer::compare).orElse(0) + 1);
+    }
 
-        Path path = currentFile.toPath();
-        long totalFileSize = Files.size(path);
-        long bytesToRead = Math.min(CHUNK_SIZE, totalFileSize - currentChunkStartByte);
+    private void updateFileMetrics() {
+        if (currentFile != null && currentFile.exists()) {
+            totalFileSize = currentFile.length();
+            totalChunks = (int) Math.ceil((double) totalFileSize / CHUNK_SIZE);
+            if (totalChunks == 0) totalChunks = 1;
+        }
+    }
+
+    public void commitCurrentChunk(String text) throws IOException {
+        File tempFile = Files.createTempFile("bearit_chunk_" + currentChunkIndex + "_", ".tmp").toFile();
+        tempFile.deleteOnExit();
+        Files.writeString(tempFile.toPath(), text, StandardCharsets.UTF_8);
+        dirtyChunks.put(currentChunkIndex, tempFile);
+        preloadCache.remove(currentChunkIndex); // Invalidate cache on edit
+    }
+
+    public ChunkState navigateToIndex(int index) throws IOException {
+        int virtualTotalChunks = getTotalChunks();
+        if (index < 0) index = 0;
+        if (index >= virtualTotalChunks) index = virtualTotalChunks - 1;
+        
+        currentChunkIndex = index;
+        ChunkState state = loadCurrentChunk();
+        
+        // Trigger background preloading for adjacent chunks
+        final int targetNext = index + 1;
+        final int targetPrev = index - 1;
+        preloader.submit(() -> preloadChunk(targetNext));
+        preloader.submit(() -> preloadChunk(targetPrev));
+        
+        // Cleanup distant cache objects to maintain strict memory footprint
+        preloadCache.keySet().removeIf(key -> Math.abs(key - currentChunkIndex) > 1);
+        
+        return state;
+    }
+
+    private void preloadChunk(int index) {
+        if (index < 0 || index >= getTotalChunks() || preloadCache.containsKey(index)) return;
+        try {
+            preloadCache.put(index, generateChunkState(index));
+        } catch (IOException e) {
+            // Background read failure silently ignored, will retry on synchronous foreground request
+        }
+    }
+
+    public ChunkState loadCurrentChunk() throws IOException {
+        if (preloadCache.containsKey(currentChunkIndex)) {
+            return preloadCache.get(currentChunkIndex);
+        }
+        return generateChunkState(currentChunkIndex);
+    }
+
+    private ChunkState generateChunkState(int index) throws IOException {
+        if (currentFile == null && dirtyChunks.isEmpty()) {
+            return new ChunkState("", 1, index, 1, false, false, "New file creation mode.", "Untitled");
+        }
 
         String content = "";
-        if (bytesToRead > 0) {
-            try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) {
-                ByteBuffer buffer = ByteBuffer.allocate((int) bytesToRead);
-                channel.position(currentChunkStartByte);
-                channel.read(buffer);
-                content = new String(buffer.array(), StandardCharsets.UTF_8);
-                currentChunkLoadedSize = buffer.array().length;
+        
+        if (dirtyChunks.containsKey(index)) {
+            content = Files.readString(dirtyChunks.get(index).toPath(), StandardCharsets.UTF_8);
+        } else if (currentFile != null && currentFile.exists()) {
+            long[] boundaries = getChunkBoundaries(index);
+            long bytesToRead = boundaries[1] - boundaries[0];
+
+            if (bytesToRead > 0) {
+                try (FileChannel channel = FileChannel.open(currentFile.toPath(), StandardOpenOption.READ)) {
+                    ByteBuffer buffer = ByteBuffer.allocate((int) bytesToRead);
+                    channel.position(boundaries[0]);
+                    channel.read(buffer);
+                    content = new String(buffer.array(), StandardCharsets.UTF_8);
+                }
             }
-        } else {
-            currentChunkLoadedSize = 0;
         }
 
-        long absoluteStartLine = computeAbsoluteLineOffset(path, currentChunkStartByte);
-        boolean hasPrev = currentChunkStartByte > 0;
-        boolean hasNext = (currentChunkStartByte + currentChunkLoadedSize) < totalFileSize;
+        long absoluteStartLine = computeAbsoluteLineOffset(index);
+        int virtualTotalChunks = getTotalChunks();
+        
+        boolean hasPrev = index > 0;
+        boolean hasNext = index < virtualTotalChunks - 1;
 
-        double displayedMB = (double) (currentChunkStartByte + currentChunkLoadedSize) / (1024 * 1024);
-        double totalMB = (double) totalFileSize / (1024 * 1024);
-        String statusText = String.format("Offset: %.2f MB / Total File Size: %.2f MB", displayedMB, totalMB);
+        String dirtyIndicator = dirtyChunks.isEmpty() ? "" : " [Unsaved Edits Pending]";
+        String statusText = String.format("Chunk %d of %d %s", index + 1, virtualTotalChunks, dirtyIndicator);
+        String fName = currentFile == null ? "Untitled" : currentFile.getName();
 
-        return new ChunkState(content, absoluteStartLine, hasPrev, hasNext, statusText, currentFile.getName());
+        return new ChunkState(content, absoluteStartLine, index, virtualTotalChunks, hasPrev, hasNext, statusText, fName);
     }
 
-    public ChunkState navigateChunk(int direction) throws IOException {
-        if (direction > 0) {
-            currentChunkStartByte += currentChunkLoadedSize;
-        } else {
-            currentChunkStartByte = Math.max(0, currentChunkStartByte - CHUNK_SIZE);
-        }
-        return loadCurrentChunk();
+    // --- Dynamic Line Boundary Calculation ---
+    private long[] getChunkBoundaries(int index) throws IOException {
+        if (currentFile == null || !currentFile.exists()) return new long[]{0, 0};
+        
+        long theoreticalStart = (long) index * CHUNK_SIZE;
+        long actualStart = findLineStartBoundary(theoreticalStart);
+        
+        long theoreticalEnd = (long) (index + 1) * CHUNK_SIZE;
+        long actualEnd = theoreticalEnd >= totalFileSize ? totalFileSize : findLineStartBoundary(theoreticalEnd);
+        
+        return new long[]{actualStart, actualEnd};
     }
 
-    public ChunkState saveCurrentChunk(String text) throws IOException {
-        if (currentFile == null) {
-            throw new IllegalStateException("No file target open to run save processing.");
+    private long findLineStartBoundary(long offset) throws IOException {
+        if (offset <= 0) return 0;
+        if (offset >= totalFileSize) return totalFileSize;
+        
+        try (FileChannel channel = FileChannel.open(currentFile.toPath(), StandardOpenOption.READ)) {
+            // Check if the previous byte was a newline
+            ByteBuffer checkBuffer = ByteBuffer.allocate(1);
+            channel.position(offset - 1);
+            channel.read(checkBuffer);
+            checkBuffer.flip();
+            if (checkBuffer.get() == '\n') return offset;
+
+            // Otherwise, scan forward for the next newline to prevent fracturing lines
+            ByteBuffer scanBuf = ByteBuffer.allocate(4096);
+            channel.position(offset);
+            while (channel.read(scanBuf) > 0) {
+                scanBuf.flip();
+                for (int i = 0; i < scanBuf.limit(); i++) {
+                    if (scanBuf.get(i) == '\n') {
+                        return offset + i + 1; 
+                    }
+                }
+                offset += scanBuf.limit();
+                scanBuf.clear();
+            }
         }
+        return totalFileSize;
+    }
+
+    public ChunkState saveAll(String currentText) throws IOException {
+        if (currentFile == null) throw new IllegalStateException("No valid target file to apply save operation.");
+
+        commitCurrentChunk(currentText);
 
         Path path = currentFile.toPath();
         Path tempPath = path.resolveSibling(path.getFileName() + ".tmp");
-        byte[] textBytes = text.getBytes(StandardCharsets.UTF_8);
+        int virtualTotalChunks = getTotalChunks();
 
-        try {
-            long totalFileSize = Files.exists(path) ? Files.size(path) : 0;
+        try (FileChannel destChannel = FileChannel.open(tempPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
+             FileChannel srcChannel = Files.exists(path) ? FileChannel.open(path, StandardOpenOption.READ) : null) {
 
-            try (FileChannel srcChannel = Files.exists(path) ? FileChannel.open(path, StandardOpenOption.READ) : null;
-                 FileChannel destChannel = FileChannel.open(tempPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
-
-                if (srcChannel != null && currentChunkStartByte > 0) {
-                    long pos = 0;
-                    while (pos < currentChunkStartByte) {
-                        pos += srcChannel.transferTo(pos, currentChunkStartByte - pos, destChannel);
-                    }
-                }
-
-                destChannel.write(ByteBuffer.wrap(textBytes));
-
-                if (srcChannel != null) {
-                    long oldChunkEndByte = currentChunkStartByte + currentChunkLoadedSize;
-                    long pos = oldChunkEndByte;
-                    while (pos < totalFileSize) {
-                        pos += srcChannel.transferTo(pos, totalFileSize - pos, destChannel);
+            for (int i = 0; i < virtualTotalChunks; i++) {
+                if (dirtyChunks.containsKey(i)) {
+                    byte[] bytes = Files.readAllBytes(dirtyChunks.get(i).toPath());
+                    destChannel.write(ByteBuffer.wrap(bytes));
+                } else if (srcChannel != null) {
+                    long[] boundaries = getChunkBoundaries(i);
+                    long bytesToTransfer = boundaries[1] - boundaries[0];
+                    if (bytesToTransfer > 0) {
+                        srcChannel.transferTo(boundaries[0], bytesToTransfer, destChannel);
                     }
                 }
             }
-
-            try {
-                Files.move(tempPath, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-            } catch (IOException ioEx) {
-                Files.move(tempPath, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            }
-
-            currentChunkLoadedSize = textBytes.length;
-        } finally {
-            Files.deleteIfExists(tempPath);
         }
 
+        try {
+            Files.move(tempPath, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException ioEx) {
+            Files.move(tempPath, path, StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        clearDirtyChunks();
+        updateFileMetrics();
         return loadCurrentChunk();
     }
 
-    private long computeAbsoluteLineOffset(Path path, long endOffset) throws IOException {
-        if (endOffset <= 0) return 1;
+    private void clearDirtyChunks() {
+        dirtyChunks.values().forEach(File::delete);
+        dirtyChunks.clear();
+    }
+
+    private long computeAbsoluteLineOffset(int targetIndex) throws IOException {
+        if (targetIndex == 0) return 1;
         long lineCounter = 1;
 
-        try (InputStream in = Files.newInputStream(path);
-             BufferedInputStream bin = new BufferedInputStream(in)) {
-            byte[] streamBuffer = new byte[16384];
-            long overallBytesRead = 0;
-            int bytesRead;
-
-            while ((bytesRead = bin.read(streamBuffer)) != -1) {
-                for (int i = 0; i < bytesRead; i++) {
-                    if (overallBytesRead + i >= endOffset) {
-                        return lineCounter;
-                    }
-                    if (streamBuffer[i] == '\n') {
-                        lineCounter++;
+        for (int i = 0; i < targetIndex; i++) {
+            if (dirtyChunks.containsKey(i)) {
+                lineCounter += countLinesInStream(new FileInputStream(dirtyChunks.get(i)));
+            } else if (currentFile != null && currentFile.exists()) {
+                long[] boundaries = getChunkBoundaries(i);
+                long bytesToRead = boundaries[1] - boundaries[0];
+                if (bytesToRead > 0) {
+                    try (FileChannel channel = FileChannel.open(currentFile.toPath(), StandardOpenOption.READ)) {
+                        channel.position(boundaries[0]);
+                        InputStream stream = java.nio.channels.Channels.newInputStream(channel);
+                        lineCounter += countLinesInLimitedStream(stream, bytesToRead);
                     }
                 }
-                overallBytesRead += bytesRead;
             }
         }
         return lineCounter;
+    }
+
+    private long countLinesInStream(InputStream in) throws IOException {
+        long count = 0;
+        try (BufferedInputStream bin = new BufferedInputStream(in)) {
+            byte[] c = new byte[16384];
+            int readChars;
+            while ((readChars = bin.read(c)) != -1) {
+                for (int i = 0; i < readChars; ++i) {
+                    if (c[i] == '\n') ++count;
+                }
+            }
+        }
+        return count;
+    }
+
+    private long countLinesInLimitedStream(InputStream in, long limit) throws IOException {
+        long count = 0;
+        try (BufferedInputStream bin = new BufferedInputStream(in)) {
+            byte[] c = new byte[16384];
+            long bytesReadTotal = 0;
+            int readChars;
+            while (bytesReadTotal < limit && (readChars = bin.read(c, 0, (int) Math.min(c.length, limit - bytesReadTotal))) != -1) {
+                for (int i = 0; i < readChars; ++i) {
+                    if (c[i] == '\n') ++count;
+                }
+                bytesReadTotal += readChars;
+            }
+        }
+        return count;
     }
 }

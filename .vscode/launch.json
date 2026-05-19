@@ -1,0 +1,28 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "Run Bearit (UI Mode)",
+            "request": "launch",
+            "mainClass": "com.edwares.BearitApp",
+            "projectName": "bearit"
+        },
+        {
+            "type": "java",
+            "name": "Run Bearit (Generate 1GB Test File)",
+            "request": "launch",
+            "mainClass": "com.edwares.BearitApp",
+            "projectName": "bearit",
+            "args": ["-g", "1"]
+        },
+        {
+            "type": "java",
+            "name": "Run Bearit (Show Help)",
+            "request": "launch",
+            "mainClass": "com.edwares.BearitApp",
+            "projectName": "bearit",
+            "args": ["-?"]
+        }
+    ]
+}
