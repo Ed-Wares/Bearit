@@ -3,10 +3,18 @@ package com.edwares;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import javax.swing.text.Document;
+import javax.swing.text.PlainDocument;
+import javax.swing.undo.CannotRedoException;
+import javax.swing.undo.CannotUndoException;
+import javax.swing.undo.UndoManager;
+import javax.swing.undo.UndoableEdit;
 import java.awt.*;
 import java.awt.event.*;
 import java.io.File;
 import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * A highly scalable, reusable text editor component designed to handle massive files 
@@ -26,6 +34,22 @@ public class AdvancedTextEditorPanel extends JPanel {
     
     private final LargeFileManager fileManager;
     private File activeFile = null;
+
+    // --- Global Undo Architecture ---
+    private final GlobalUndoManager globalUndoManager = new GlobalUndoManager();
+    
+    // LRU Cache: Keeps up to 40 Documents (1GB max) in RAM to preserve their Undo history safely
+    private final Map<Integer, Document> documentCache = new LinkedHashMap<Integer, Document>(64, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<Integer, Document> eldest) {
+            if (size() > 40) {
+                // If we exceed 40 edited chunks, we clear global history to prevent a 4GB OOM crash
+                globalUndoManager.discardAllEdits();
+                return true; 
+            }
+            return false;
+        }
+    };
 
     private boolean isSyncingScroll = false;
     private boolean isLoadingChunk = false;
@@ -47,9 +71,23 @@ public class AdvancedTextEditorPanel extends JPanel {
     private JTextField txtSearch;
     private JTextField txtReplace;
 
+    private final DocumentListener editorDocumentListener = new DocumentListener() {
+        public void insertUpdate(DocumentEvent e) { registerEdit(); }
+        public void removeUpdate(DocumentEvent e) { registerEdit(); }
+        public void changedUpdate(DocumentEvent e) { registerEdit(); }
+        
+        private void registerEdit() {
+            if (!isNavigating && !isCurrentlyPreview) isDirty = true;
+            lineNumberPanel.adjustMetricSizing();
+            if (!isNavigating) syncLocalToGlobalScroll();
+        }
+    };
+
     public AdvancedTextEditorPanel() {
         setLayout(new BorderLayout());
         this.fileManager = new LargeFileManager();
+        
+        globalUndoManager.setLimit(2500);
 
         settleTimer = new Timer(350, e -> {
             if (isCurrentlyPreview && !isLoadingChunk && !isNavigating) {
@@ -76,20 +114,15 @@ public class AdvancedTextEditorPanel extends JPanel {
         };
         textArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
         textArea.setLineWrap(false);
-
-        lineNumberPanel = new LineNumberPanel(textArea);
-
-        textArea.getDocument().addDocumentListener(new DocumentListener() {
-            public void insertUpdate(DocumentEvent e) { registerEdit(); }
-            public void removeUpdate(DocumentEvent e) { registerEdit(); }
-            public void changedUpdate(DocumentEvent e) { registerEdit(); }
-            
-            private void registerEdit() {
-                if (!isNavigating && !isCurrentlyPreview) isDirty = true;
-                lineNumberPanel.adjustMetricSizing();
-                if (!isNavigating) syncLocalToGlobalScroll();
+        
+        textArea.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent e) {
+                textArea.getCaret().setSelectionVisible(true);
             }
         });
+
+        lineNumberPanel = new LineNumberPanel(textArea);
 
         textArea.addCaretListener(e -> {
             if (isNavigating) return;
@@ -155,43 +188,64 @@ public class AdvancedTextEditorPanel extends JPanel {
     public void showSearchDialog() {
         if (searchDialog == null) {
             Window parentWindow = SwingUtilities.getWindowAncestor(this);
-            searchDialog = new JDialog(parentWindow, "Search & Replace");
+            searchDialog = new JDialog(parentWindow, "🔍 Search & Replace");
             searchDialog.setModal(false);
             searchDialog.setAlwaysOnTop(true);
-            searchDialog.setLayout(new GridLayout(3, 1, 5, 5));
-            searchDialog.getRootPane().setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+            searchDialog.setResizable(false); 
+            searchDialog.setLayout(new BorderLayout());
             
-            JPanel pnlSearch = new JPanel(new BorderLayout());
-            pnlSearch.add(new JLabel("Find:     "), BorderLayout.WEST);
+            JPanel inputPanel = new JPanel(new GridBagLayout());
+            inputPanel.setBorder(BorderFactory.createEmptyBorder(15, 15, 10, 15));
+            GridBagConstraints gbc = new GridBagConstraints();
+            gbc.fill = GridBagConstraints.HORIZONTAL;
+            gbc.insets = new Insets(5, 5, 5, 5);
+            
+            gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0;
+            inputPanel.add(new JLabel("Find:"), gbc);
+            
+            gbc.gridx = 1; gbc.gridy = 0; gbc.weightx = 1.0;
             txtSearch = new JTextField(25);
-            pnlSearch.add(txtSearch, BorderLayout.CENTER);
+            inputPanel.add(txtSearch, gbc);
             
-            JPanel pnlReplace = new JPanel(new BorderLayout());
-            pnlReplace.add(new JLabel("Replace: "), BorderLayout.WEST);
+            gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0;
+            inputPanel.add(new JLabel("Replace:"), gbc);
+            
+            gbc.gridx = 1; gbc.gridy = 1; gbc.weightx = 1.0;
             txtReplace = new JTextField(25);
-            pnlReplace.add(txtReplace, BorderLayout.CENTER);
+            inputPanel.add(txtReplace, gbc);
             
-            JPanel pnlBtns = new JPanel(new FlowLayout());
-            JButton btnFind = new JButton("Find Next");
+            JPanel pnlBtns = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+            JButton btnFindPrev = new JButton("⬆ Previous");
+            JButton btnFindNext = new JButton("⬇ Next");
+            JButton btnReplace = new JButton("Replace");
             JButton btnCount = new JButton("Count Matches");
             JButton btnReplaceAll = new JButton("Replace All");
             
-            btnFind.addActionListener(e -> performFindNext(txtSearch.getText()));
+            txtSearch.addActionListener(e -> performFindNext(txtSearch.getText()));
+            txtReplace.addActionListener(e -> performReplace(txtSearch.getText(), txtReplace.getText()));
+            
+            btnFindPrev.addActionListener(e -> performFindPrevious(txtSearch.getText()));
+            btnFindNext.addActionListener(e -> performFindNext(txtSearch.getText()));
+            btnReplace.addActionListener(e -> performReplace(txtSearch.getText(), txtReplace.getText()));
             btnCount.addActionListener(e -> performCountMatches(txtSearch.getText()));
             btnReplaceAll.addActionListener(e -> performReplaceAll(txtSearch.getText(), txtReplace.getText()));
             
-            pnlBtns.add(btnFind);
+            pnlBtns.add(btnFindPrev);
+            pnlBtns.add(btnFindNext);
+            pnlBtns.add(btnReplace);
             pnlBtns.add(btnCount);
             pnlBtns.add(btnReplaceAll);
             
-            searchDialog.add(pnlSearch);
-            searchDialog.add(pnlReplace);
-            searchDialog.add(pnlBtns);
+            searchDialog.add(inputPanel, BorderLayout.CENTER);
+            searchDialog.add(pnlBtns, BorderLayout.SOUTH);
             searchDialog.pack();
             searchDialog.setLocationRelativeTo(this);
         }
         searchDialog.setVisible(true);
         txtSearch.requestFocus();
+        if (!txtSearch.getText().isEmpty()) {
+            txtSearch.selectAll();
+        }
     }
 
     public void showGotoLineDialog() {
@@ -209,7 +263,6 @@ public class AdvancedTextEditorPanel extends JPanel {
                         }
                         return fileManager.getChunkForLine(targetLine);
                     }
-
                     @Override
                     protected void done() {
                         try {
@@ -252,20 +305,22 @@ public class AdvancedTextEditorPanel extends JPanel {
         if (target == null || target.isEmpty()) return;
 
         int caret = textArea.getCaretPosition();
+        if (textArea.getSelectedText() != null && textArea.getSelectedText().equalsIgnoreCase(target)) {
+            caret = textArea.getSelectionEnd();
+        }
+
         String text = textArea.getText();
         int idx = text.indexOf(target, caret);
         
         if (idx != -1) {
             textArea.setCaretPosition(idx);
             textArea.moveCaretPosition(idx + target.length());
-            textArea.requestFocus();
             return;
         }
         
         lblLoadingStatus.setText("Scanning file for next match...");
         new SwingWorker<Integer, Void>() {
             int foundIdx = -1;
-            
             @Override
             protected Integer doInBackground() throws Exception {
                 if (isDirty && !isCurrentlyPreview) {
@@ -283,7 +338,6 @@ public class AdvancedTextEditorPanel extends JPanel {
                 }
                 return -1;
             }
-
             @Override
             protected void done() {
                 try {
@@ -293,14 +347,93 @@ public class AdvancedTextEditorPanel extends JPanel {
                         triggerAsyncLoad(targetChunk, 0, -1, false, () -> {
                             textArea.setCaretPosition(foundIdx);
                             textArea.moveCaretPosition(foundIdx + target.length());
-                            textArea.requestFocus();
                         });
                     } else {
-                        JOptionPane.showMessageDialog(getDialogParent(), "No more matches found in the file.", "Search Complete", JOptionPane.INFORMATION_MESSAGE);
+                        int response = JOptionPane.showConfirmDialog(getDialogParent(), 
+                            "Reached end of file. Start again from the top?", 
+                            "Search Wrap Around", 
+                            JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+                            
+                        if (response == JOptionPane.YES_OPTION) {
+                            triggerAsyncLoad(0, 1, -1, false, () -> {
+                                textArea.setCaretPosition(0);
+                                performFindNext(target);
+                            });
+                        }
                     }
                 } catch (Exception e) {}
             }
         }.execute();
+    }
+
+    private void performFindPrevious(String target) {
+        if (target == null || target.isEmpty()) return;
+
+        int caret = textArea.getSelectionStart();
+        String text = textArea.getText().substring(0, caret);
+        int idx = text.lastIndexOf(target);
+        
+        if (idx != -1) {
+            textArea.setCaretPosition(idx);
+            textArea.moveCaretPosition(idx + target.length());
+            return;
+        }
+        
+        lblLoadingStatus.setText("Scanning file for previous match...");
+        new SwingWorker<Integer, Void>() {
+            int foundIdx = -1;
+            @Override
+            protected Integer doInBackground() throws Exception {
+                if (isDirty && !isCurrentlyPreview) {
+                    fileManager.commitCurrentChunk(textArea.getText());
+                    isDirty = false;
+                }
+                for (int i = loadedChunkIndex - 1; i >= 0; i--) {
+                    String content = fileManager.getChunkContent(i);
+                    int match = content.lastIndexOf(target);
+                    if (match != -1) {
+                        foundIdx = match;
+                        return i;
+                    }
+                }
+                return -1;
+            }
+            @Override
+            protected void done() {
+                try {
+                    int targetChunk = get();
+                    lblLoadingStatus.setText("");
+                    if (targetChunk != -1) {
+                        triggerAsyncLoad(targetChunk, 0, -1, false, () -> {
+                            textArea.setCaretPosition(foundIdx);
+                            textArea.moveCaretPosition(foundIdx + target.length());
+                        });
+                    } else {
+                        int response = JOptionPane.showConfirmDialog(getDialogParent(), 
+                            "Reached beginning of file. Search again from the bottom?", 
+                            "Search Wrap Around", 
+                            JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+                            
+                        if (response == JOptionPane.YES_OPTION) {
+                            int lastChunk = Math.max(0, fileManager.getTotalChunks() - 1);
+                            triggerAsyncLoad(lastChunk, -1, -1, false, () -> {
+                                textArea.setCaretPosition(textArea.getDocument().getLength());
+                                performFindPrevious(target);
+                            });
+                        }
+                    }
+                } catch (Exception e) {}
+            }
+        }.execute();
+    }
+
+    private void performReplace(String target, String replacement) {
+        if (target == null || target.isEmpty()) return;
+        String selected = textArea.getSelectedText();
+        if (selected != null && selected.equalsIgnoreCase(target) && !isCurrentlyPreview) {
+            textArea.replaceSelection(replacement);
+        }
+        performFindNext(target);
     }
 
     private void performCountMatches(String target) {
@@ -346,6 +479,8 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
             @Override
             protected void done() {
+                documentCache.clear(); 
+                globalUndoManager.discardAllEdits();
                 triggerAsyncLoad(loadedChunkIndex, 0, -1, false, () -> {
                     lblLoadingStatus.setText("");
                     JOptionPane.showMessageDialog(getDialogParent(), "Global replacement complete.", "Replace All", JOptionPane.INFORMATION_MESSAGE);
@@ -358,6 +493,34 @@ public class AdvancedTextEditorPanel extends JPanel {
     public void copy() { textArea.copy(); }
     public void paste() { if (!isCurrentlyPreview) textArea.paste(); }
 
+    public void undo() { 
+        if (!globalUndoManager.canUndo()) return;
+        int targetChunk = globalUndoManager.getUndoChunk();
+        if (targetChunk != -1 && targetChunk != loadedChunkIndex) {
+            triggerAsyncLoad(targetChunk, 0, -1, false, () -> {
+                globalUndoManager.undo();
+                textArea.requestFocus();
+            });
+        } else {
+            globalUndoManager.undo();
+            textArea.requestFocus();
+        }
+    }
+
+    public void redo() { 
+        if (!globalUndoManager.canRedo()) return;
+        int targetChunk = globalUndoManager.getRedoChunk();
+        if (targetChunk != -1 && targetChunk != loadedChunkIndex) {
+            triggerAsyncLoad(targetChunk, 0, -1, false, () -> {
+                globalUndoManager.redo();
+                textArea.requestFocus();
+            });
+        } else {
+            globalUndoManager.redo();
+            textArea.requestFocus();
+        }
+    }
+
     public void createNewDocument() {
         fileManager.setNewFile();
         activeFile = null;
@@ -365,7 +528,19 @@ public class AdvancedTextEditorPanel extends JPanel {
         isNavigating = true;
         loadedChunkIndex = 0;
         pendingTargetChunk = -1;
-        textArea.setText("");
+        
+        documentCache.clear();
+        globalUndoManager.discardAllEdits();
+        Document newDoc = new PlainDocument();
+        newDoc.addDocumentListener(editorDocumentListener);
+        newDoc.addUndoableEditListener(e -> {
+            if (!isNavigating && !isCurrentlyPreview) {
+                globalUndoManager.addEdit(new ChunkAwareEdit(loadedChunkIndex, e.getEdit()));
+            }
+        });
+        textArea.setDocument(newDoc);
+        documentCache.put(0, newDoc);
+
         isNavigating = false;
         lblStatus.setText("New file creation mode.");
         lineNumberPanel.setStartLine(1);
@@ -381,6 +556,10 @@ public class AdvancedTextEditorPanel extends JPanel {
         isDirty = false;
         loadedChunkIndex = 0;
         pendingTargetChunk = -1;
+        
+        documentCache.clear();
+        globalUndoManager.discardAllEdits();
+        
         try {
             applyStateUpdates(fileManager.loadCurrentChunk(false), 1, -1, null);
         } catch (IOException ex) {
@@ -401,19 +580,9 @@ public class AdvancedTextEditorPanel extends JPanel {
         executeSaveRoutine();
     }
 
-    public boolean hasActiveFile() {
-        return fileManager.hasFile();
-    }
-    
-    public File getActiveFile() {
-        return activeFile;
-    }
-
-    public String getCurrentTitle() {
-        return currentTitle;
-    }
-
-    // ----------------------------
+    public boolean hasActiveFile() { return fileManager.hasFile(); }
+    public File getActiveFile() { return activeFile; }
+    public String getCurrentTitle() { return currentTitle; }
 
     private void executeSaveRoutine() {
         lblLoadingStatus.setText("Saving file...");
@@ -506,20 +675,24 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
         });
 
-        // Add Ctrl+F (Search) shortcut
         im.put(KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK), "showSearch");
         am.put("showSearch", new AbstractAction() {
-            public void actionPerformed(ActionEvent e) {
-                showSearchDialog();
-            }
+            public void actionPerformed(ActionEvent e) { showSearchDialog(); }
         });
 
-        // Add Ctrl+G (Go To Line) shortcut
         im.put(KeyStroke.getKeyStroke(KeyEvent.VK_G, InputEvent.CTRL_DOWN_MASK), "showGotoLine");
         am.put("showGotoLine", new AbstractAction() {
-            public void actionPerformed(ActionEvent e) {
-                showGotoLineDialog();
-            }
+            public void actionPerformed(ActionEvent e) { showGotoLineDialog(); }
+        });
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_Z, InputEvent.CTRL_DOWN_MASK), "undo");
+        am.put("undo", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) { undo(); }
+        });
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_Y, InputEvent.CTRL_DOWN_MASK), "redo");
+        am.put("redo", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) { redo(); }
         });
     }
 
@@ -643,8 +816,31 @@ public class AdvancedTextEditorPanel extends JPanel {
         loadedChunkIndex = state.chunkIndex();
         isCurrentlyPreview = state.isPreview();
         
+        Document doc = documentCache.get(loadedChunkIndex);
+        
+        if (doc != null && !isCurrentlyPreview) {
+            textArea.setDocument(doc);
+        } else {
+            Document newDoc = new PlainDocument();
+            try {
+                newDoc.insertString(0, state.content(), null);
+            } catch (Exception ex) {}
+            
+            newDoc.addDocumentListener(editorDocumentListener);
+            newDoc.addUndoableEditListener(e -> {
+                if (!isNavigating && !isCurrentlyPreview) {
+                    globalUndoManager.addEdit(new ChunkAwareEdit(loadedChunkIndex, e.getEdit()));
+                }
+            });
+            
+            textArea.setDocument(newDoc);
+            
+            if (!isCurrentlyPreview) {
+                documentCache.put(loadedChunkIndex, newDoc);
+            }
+        }
+        
         textArea.setEditable(!isCurrentlyPreview);
-        textArea.setText(state.content());
         lineNumberPanel.setStartLine(state.startLine());
         
         updateTitle(state.fileName() + (isCurrentlyPreview ? " [PREVIEW]" : ""));
@@ -714,7 +910,66 @@ public class AdvancedTextEditorPanel extends JPanel {
         JOptionPane.showMessageDialog(this, message, "System IO Exception Error", JOptionPane.ERROR_MESSAGE);
     }
 
-    // --- Embedded Components ---
+    // --- Embedded Global Undo Handlers ---
+
+    private static class ChunkAwareEdit implements UndoableEdit {
+        final int chunkIndex;
+        final UndoableEdit inner;
+
+        public ChunkAwareEdit(int chunkIndex, UndoableEdit inner) {
+            this.chunkIndex = chunkIndex;
+            this.inner = inner;
+        }
+
+        @Override public void undo() throws CannotUndoException { inner.undo(); }
+        @Override public boolean canUndo() { return inner.canUndo(); }
+        @Override public void redo() throws CannotRedoException { inner.redo(); }
+        @Override public boolean canRedo() { return inner.canRedo(); }
+        @Override public void die() { inner.die(); }
+        
+        @Override public boolean addEdit(UndoableEdit anEdit) {
+            if (anEdit instanceof ChunkAwareEdit) {
+                ChunkAwareEdit other = (ChunkAwareEdit) anEdit;
+                if (this.chunkIndex == other.chunkIndex) {
+                    return inner.addEdit(other.inner);
+                }
+            }
+            return false;
+        }
+        
+        @Override public boolean replaceEdit(UndoableEdit anEdit) {
+            if (anEdit instanceof ChunkAwareEdit) {
+                ChunkAwareEdit other = (ChunkAwareEdit) anEdit;
+                if (this.chunkIndex == other.chunkIndex) {
+                    return inner.replaceEdit(other.inner);
+                }
+            }
+            return false;
+        }
+        
+        @Override public boolean isSignificant() { return inner.isSignificant(); }
+        @Override public String getPresentationName() { return inner.getPresentationName(); }
+        @Override public String getUndoPresentationName() { return inner.getUndoPresentationName(); }
+        @Override public String getRedoPresentationName() { return inner.getRedoPresentationName(); }
+    }
+
+    private static class GlobalUndoManager extends UndoManager {
+        public int getUndoChunk() {
+            UndoableEdit edit = editToBeUndone();
+            if (edit instanceof ChunkAwareEdit) {
+                return ((ChunkAwareEdit)edit).chunkIndex;
+            }
+            return -1;
+        }
+        
+        public int getRedoChunk() {
+            UndoableEdit edit = editToBeRedone();
+            if (edit instanceof ChunkAwareEdit) {
+                return ((ChunkAwareEdit)edit).chunkIndex;
+            }
+            return -1;
+        }
+    }
 
     private static class LineNumberPanel extends JPanel {
         private final JTextArea textArea;
