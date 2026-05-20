@@ -251,7 +251,7 @@ public class TextEditorFrame extends JFrame {
     private void showAboutDialog() {
         String appVersion = BearitApp.class.getPackage().getImplementationVersion(); // get version from pom.xml use <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
         String aboutMessage = "Bearit Text Editor\n"
-                + "Version: 1.0\n\n"
+                + "Version: " + appVersion + "\n\n"
                 + "A high-performance Java 21 text editor designed specifically "
                 + "for handling massive file sizes with extreme memory efficiency.\n\n"
                 + "By Ed Jakubowski  EdWaresApp@gmail.com\n";

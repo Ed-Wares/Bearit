@@ -135,6 +135,11 @@ public class BearitProperties {
         save();
     }
 
+    public void clearRecentFiles() {
+        recentFiles.clear();
+        save();
+    }
+
     // --- Getters & Setters ---
 
     public List<String> getRecentFiles() {
