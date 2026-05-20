@@ -66,6 +66,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     private final Timer settleTimer; 
 
     private String currentTitle = "Untitled";
+    private long currentChunkStartOffset = 0;
 
     private JDialog searchDialog;
     private JTextField txtSearch;
@@ -184,12 +185,24 @@ public class AdvancedTextEditorPanel extends JPanel {
         statusBar.add(lblCursorInfo, BorderLayout.EAST);
         add(statusBar, BorderLayout.SOUTH);
     }
-
+    
     public void setFont(Font font) {
         if (textArea != null) {
             textArea.setFont(font);
             lineNumberPanel.setFont(lineNumberPanel.getFont().deriveFont(font.getSize2D()));
         }
+    }
+
+    /**
+     * Helper to safely append the hidden boundary newline before committing
+     * edits to the File Manager, ensuring chunks don't accidentally merge.
+     */
+    private String getCommitText() {
+        String text = textArea.getText();
+        if (loadedChunkIndex < fileManager.getTotalChunks() - 1) {
+            return text + "\n";
+        }
+        return text;
     }
 
     public void showSearchDialog() {
@@ -261,12 +274,16 @@ public class AdvancedTextEditorPanel extends JPanel {
             try {
                 long targetLine = Long.parseLong(input.trim());
                 lblLoadingStatus.setText("Searching for line position...");
+                
+                String commitText = getCommitText();
+                boolean wasDirty = isDirty;
+                isDirty = false;
+                
                 new SwingWorker<Integer, Void>() {
                     @Override
                     protected Integer doInBackground() throws Exception {
-                        if (isDirty && !isCurrentlyPreview) {
-                            fileManager.commitCurrentChunk(textArea.getText());
-                            isDirty = false;
+                        if (wasDirty && !isCurrentlyPreview) {
+                            fileManager.commitCurrentChunk(commitText);
                         }
                         return fileManager.getChunkForLine(targetLine);
                     }
@@ -326,13 +343,17 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
         
         lblLoadingStatus.setText("Scanning file for next match...");
+        
+        String commitText = getCommitText();
+        boolean wasDirty = isDirty;
+        isDirty = false;
+        
         new SwingWorker<Integer, Void>() {
             int foundIdx = -1;
             @Override
             protected Integer doInBackground() throws Exception {
-                if (isDirty && !isCurrentlyPreview) {
-                    fileManager.commitCurrentChunk(textArea.getText());
-                    isDirty = false;
+                if (wasDirty && !isCurrentlyPreview) {
+                    fileManager.commitCurrentChunk(commitText);
                 }
                 int total = fileManager.getTotalChunks();
                 for (int i = loadedChunkIndex + 1; i < total; i++) {
@@ -387,13 +408,17 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
         
         lblLoadingStatus.setText("Scanning file for previous match...");
+        
+        String commitText = getCommitText();
+        boolean wasDirty = isDirty;
+        isDirty = false;
+        
         new SwingWorker<Integer, Void>() {
             int foundIdx = -1;
             @Override
             protected Integer doInBackground() throws Exception {
-                if (isDirty && !isCurrentlyPreview) {
-                    fileManager.commitCurrentChunk(textArea.getText());
-                    isDirty = false;
+                if (wasDirty && !isCurrentlyPreview) {
+                    fileManager.commitCurrentChunk(commitText);
                 }
                 for (int i = loadedChunkIndex - 1; i >= 0; i--) {
                     String content = fileManager.getChunkContent(i);
@@ -446,12 +471,16 @@ public class AdvancedTextEditorPanel extends JPanel {
     private void performCountMatches(String target) {
         if (target == null || target.isEmpty()) return;
         lblLoadingStatus.setText("Running full file match count...");
+        
+        String commitText = getCommitText();
+        boolean wasDirty = isDirty;
+        isDirty = false;
+        
         new SwingWorker<Long, Void>() {
             @Override
             protected Long doInBackground() throws Exception {
-                if (isDirty && !isCurrentlyPreview) {
-                    fileManager.commitCurrentChunk(textArea.getText());
-                    isDirty = false;
+                if (wasDirty && !isCurrentlyPreview) {
+                    fileManager.commitCurrentChunk(commitText);
                 }
                 return fileManager.countGlobalMatches(target);
             }
@@ -474,12 +503,16 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
         
         lblLoadingStatus.setText("Replacing occurrences globally...");
+        
+        String commitText = getCommitText();
+        boolean wasDirty = isDirty;
+        isDirty = false;
+        
         new SwingWorker<Void, Void>() {
             @Override
             protected Void doInBackground() throws Exception {
-                if (isDirty && !isCurrentlyPreview) {
-                    fileManager.commitCurrentChunk(textArea.getText());
-                    isDirty = false;
+                if (wasDirty && !isCurrentlyPreview) {
+                    fileManager.commitCurrentChunk(commitText);
                 }
                 fileManager.replaceAllGlobal(target, replacement);
                 return null;
@@ -594,10 +627,12 @@ public class AdvancedTextEditorPanel extends JPanel {
     private void executeSaveRoutine() {
         lblLoadingStatus.setText("Saving file...");
         isNavigating = true; 
+        
+        String saveText = isCurrentlyPreview ? "" : getCommitText();
+        
         new SwingWorker<LargeFileManager.ChunkState, Void>() {
             @Override
             protected LargeFileManager.ChunkState doInBackground() throws Exception {
-                String saveText = isCurrentlyPreview ? "" : textArea.getText();
                 return fileManager.saveAll(saveText);
             }
             @Override
@@ -632,12 +667,17 @@ public class AdvancedTextEditorPanel extends JPanel {
             long absoluteLine = lineNumberPanel.getStartLine() + localLine;
             int col = dot - textArea.getLineStartOffset(localLine);
 
+            // Add the chunk's absolute file offset to the local cursor position
+            long absDot = currentChunkStartOffset + dot;
+            long absMark = currentChunkStartOffset + mark;
+
             if (dot == mark) {
-                lblCursorInfo.setText(String.format("Line: %d | Col: %d | Pos: %d", absoluteLine, col, dot));
+                lblCursorInfo.setText(String.format("Line: %d | Col: %d | Pos: %d", absoluteLine, col, absDot));
             } else {
-                int selStart = Math.min(dot, mark);
-                int selEnd = Math.max(dot, mark);
-                lblCursorInfo.setText(String.format("Line: %d | Col: %d | Sel: %d - %d (width: %d)", absoluteLine, col, selStart, selEnd, selEnd - selStart));
+                long selStart = Math.min(absDot, absMark);
+                long selEnd = Math.max(absDot, absMark);
+                long width = selEnd - selStart; // Fixed typo here
+                lblCursorInfo.setText(String.format("Line: %d | Col: %d | Sel: %d - %d (width: %d)", absoluteLine, col, selStart, selEnd, width));
             }
         } catch (Exception e) {}
     }
@@ -702,6 +742,55 @@ public class AdvancedTextEditorPanel extends JPanel {
         am.put("redo", new AbstractAction() {
             public void actionPerformed(ActionEvent e) { redo(); }
         });
+
+        // --- Wrap-Around Keyboard Navigation Routing ---
+        bindWrapAroundNavigation(im, am, KeyEvent.VK_DOWN, 1);
+        bindWrapAroundNavigation(im, am, KeyEvent.VK_PAGE_DOWN, 1);
+        bindWrapAroundNavigation(im, am, KeyEvent.VK_UP, -1);
+        bindWrapAroundNavigation(im, am, KeyEvent.VK_PAGE_UP, -1);
+    }
+
+    private void bindWrapAroundNavigation(InputMap im, ActionMap am, int keyCode, int direction) {
+        KeyStroke keyStroke = KeyStroke.getKeyStroke(keyCode, 0);
+        Object origActionKey = im.get(keyStroke);
+        Action originalAction = am.get(origActionKey);
+
+        String customKey = "customWrapNav_" + keyCode;
+        im.put(keyStroke, customKey);
+        am.put(customKey, new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if (isLoadingChunk || isNavigating) return;
+
+                int caretPos = textArea.getCaretPosition();
+                int currentLine = 0;
+                int totalLines = 0;
+
+                try {
+                    currentLine = textArea.getLineOfOffset(caretPos);
+                    totalLines = textArea.getLineCount();
+                } catch (Exception ex) {
+                    // Fallback to strict char position if offset calculation somehow fails
+                    if (direction > 0 && caretPos == textArea.getDocument().getLength() && loadedChunkIndex < fileManager.getTotalChunks() - 1) {
+                        triggerAsyncLoad(loadedChunkIndex + 1, direction, -1, false, null);
+                    } else if (direction < 0 && caretPos == 0 && loadedChunkIndex > 0) {
+                        triggerAsyncLoad(loadedChunkIndex - 1, direction, -1, false, null);
+                    } else if (originalAction != null) {
+                        originalAction.actionPerformed(e);
+                    }
+                    return;
+                }
+
+                // Trigger chunk load if on the boundary lines, otherwise rely on native cursor movements
+                if (direction > 0 && currentLine == totalLines - 1 && loadedChunkIndex < fileManager.getTotalChunks() - 1) {
+                    triggerAsyncLoad(loadedChunkIndex + 1, direction, -1, false, null);
+                } else if (direction < 0 && currentLine == 0 && loadedChunkIndex > 0) {
+                    triggerAsyncLoad(loadedChunkIndex - 1, direction, -1, false, null);
+                } else if (originalAction != null) {
+                    originalAction.actionPerformed(e);
+                }
+            }
+        });
     }
 
     private void triggerAsyncLoad(int targetChunk, int direction, double localPercentForScroll, boolean requestPreview, Runnable postLoadAction) {
@@ -728,7 +817,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
         lblStatus.setText(String.format("Chunk %d of %d", targetChunk + 1, total));
 
-        String currentText = textArea.getText();
+        String currentText = getCommitText();
         boolean wasDirty = isDirty;
         isDirty = false;
 
@@ -823,7 +912,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         isNavigating = true; 
         loadedChunkIndex = state.chunkIndex();
         isCurrentlyPreview = state.isPreview();
-        
+        currentChunkStartOffset = state.startOffset();
+
         Document doc = documentCache.get(loadedChunkIndex);
         
         if (doc != null && !isCurrentlyPreview) {
@@ -831,7 +921,16 @@ public class AdvancedTextEditorPanel extends JPanel {
         } else {
             Document newDoc = new PlainDocument();
             try {
-                newDoc.insertString(0, state.content(), null);
+                String content = state.content();
+                // Strip the trailing newline used strictly for chunk file boundaries
+                if (state.hasNext()) {
+                    if (content.endsWith("\r\n")) {
+                        content = content.substring(0, content.length() - 2);
+                    } else if (content.endsWith("\n")) {
+                        content = content.substring(0, content.length() - 1);
+                    }
+                }
+                newDoc.insertString(0, content, null);
             } catch (Exception ex) {}
             
             newDoc.addDocumentListener(editorDocumentListener);

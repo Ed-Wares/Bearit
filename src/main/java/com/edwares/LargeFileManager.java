@@ -24,6 +24,7 @@ public class LargeFileManager {
     public record ChunkState(
         String content, 
         long startLine, 
+        long startOffset,
         int chunkIndex,
         int totalChunks,
         boolean hasPrev, 
@@ -233,16 +234,19 @@ public class LargeFileManager {
 
     private ChunkState generateChunkState(int index, boolean isPreview) throws IOException {
         if (currentFile == null && dirtyChunks.isEmpty()) {
-            return new ChunkState("", 1, index, 1, false, false, "New file creation mode.", "Untitled", false);
+            return new ChunkState("", 1, 0, index, 1, false, false, "New file creation mode.", "Untitled", false);
         }
 
         String content = "";
+        long absoluteStartOffset = 0; // TRACK THE OFFSET
         
         if (dirtyChunks.containsKey(index)) {
             content = Files.readString(dirtyChunks.get(index).toPath(), StandardCharsets.UTF_8);
             isPreview = false; 
+            absoluteStartOffset = getChunkBoundaries(index)[0];
         } else if (currentFile != null && currentFile.exists()) {
             long[] boundaries = getChunkBoundaries(index);
+            absoluteStartOffset = boundaries[0]; // CAPTURE THE BOUNDARY
             long bytesToRead = boundaries[1] - boundaries[0];
 
             if (isPreview && bytesToRead > PREVIEW_SIZE) {
@@ -272,7 +276,8 @@ public class LargeFileManager {
         String statusText = String.format("Chunk %d of %d %s", index + 1, virtualTotalChunks, dirtyIndicator);
         String fName = currentFile == null ? "Untitled" : currentFile.getName();
 
-        return new ChunkState(content, absoluteStartLine, index, virtualTotalChunks, hasPrev, hasNext, statusText, fName, isPreview);
+        // PASS THE OFFSET INTO THE RECORD
+        return new ChunkState(content, absoluteStartLine, absoluteStartOffset, index, virtualTotalChunks, hasPrev, hasNext, statusText, fName, isPreview);
     }
 
     private long[] getChunkBoundaries(int index) throws IOException {
