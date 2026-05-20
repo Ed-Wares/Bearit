@@ -11,13 +11,39 @@ public class TextEditorFrame extends JFrame {
     private final JFileChooser fileChooser;
 
     public TextEditorFrame() {
+        BearitProperties props = BearitProperties.getInstance();
+        
+        // The screen size is the working area of the screen, exluding taskbars and docks
+        int xPos = 50;
+        int yPos = 50;
+        GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
+        Insets screenInsets = Toolkit.getDefaultToolkit().getScreenInsets(ge.getDefaultScreenDevice().getDefaultConfiguration());
+        Rectangle screenSize = ge.getDefaultScreenDevice().getDefaultConfiguration().getBounds();
+        int screenWidth = screenSize.width - screenInsets.left - screenInsets.right;
+        int screenHeight = screenSize.height - screenInsets.top - screenInsets.bottom;
+        if (props.getFrameWidth() > screenWidth) {
+            props.setFrameWidth(screenWidth);
+        }
+        if (props.getFrameHeight() > screenHeight) {
+            props.setFrameHeight(screenHeight);
+        }
+
         setTitle("Bearit Text Editor - Untitled");
-        setSize(950, 700);
+        setSize(props.getFrameWidth(), props.getFrameHeight());
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
 
+        // Save window dimensions automatically upon closing
+        addComponentListener(new java.awt.event.ComponentAdapter() {
+            public void componentResized(java.awt.event.ComponentEvent evt) {
+                props.setFrameWidth(getWidth());
+                props.setFrameHeight(getHeight());
+            }
+        });
+
         // Instantiate the core reusable editor component
         editorPanel = new AdvancedTextEditorPanel();
+        editorPanel.setFont(new Font(props.getFontName(), Font.PLAIN, props.getFontSize()));
         fileChooser = new JFileChooser();
 
         // Listen for document title changes from the editor panel to update the window frame
@@ -45,6 +71,7 @@ public class TextEditorFrame extends JFrame {
 
         JButton btnNew = new JButton("📄 New");
         JButton btnOpen = new JButton("📂 Open");
+
         JButton btnSave = new JButton("💾 Save");
         JButton btnSaveAs = new JButton("💾 Save As...");
         
@@ -188,6 +215,7 @@ public class TextEditorFrame extends JFrame {
         int option = fileChooser.showOpenDialog(this);
         if (option == JFileChooser.APPROVE_OPTION) {
             editorPanel.loadFile(fileChooser.getSelectedFile());
+            BearitProperties.getInstance().addRecentFile(fileChooser.getSelectedFile().getAbsolutePath());
         }
     }
 

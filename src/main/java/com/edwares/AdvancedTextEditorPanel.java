@@ -185,6 +185,13 @@ public class AdvancedTextEditorPanel extends JPanel {
         add(statusBar, BorderLayout.SOUTH);
     }
 
+    public void setFont(Font font) {
+        if (textArea != null) {
+            textArea.setFont(font);
+            lineNumberPanel.setFont(lineNumberPanel.getFont().deriveFont(font.getSize2D()));
+        }
+    }
+
     public void showSearchDialog() {
         if (searchDialog == null) {
             Window parentWindow = SwingUtilities.getWindowAncestor(this);
@@ -623,13 +630,14 @@ public class AdvancedTextEditorPanel extends JPanel {
             int mark = textArea.getCaret().getMark();
             int localLine = textArea.getLineOfOffset(dot);
             long absoluteLine = lineNumberPanel.getStartLine() + localLine;
+            int col = dot - textArea.getLineStartOffset(localLine);
 
             if (dot == mark) {
-                lblCursorInfo.setText(String.format("Line: %d | Pos: %d", absoluteLine, dot));
+                lblCursorInfo.setText(String.format("Line: %d | Col: %d | Pos: %d", absoluteLine, col, dot));
             } else {
                 int selStart = Math.min(dot, mark);
                 int selEnd = Math.max(dot, mark);
-                lblCursorInfo.setText(String.format("Line: %d | Sel: %d - %d", absoluteLine, selStart, selEnd));
+                lblCursorInfo.setText(String.format("Line: %d | Col: %d | Sel: %d - %d (width: %d)", absoluteLine, col, selStart, selEnd, selEnd - selStart));
             }
         } catch (Exception e) {}
     }
@@ -953,6 +961,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         @Override public String getRedoPresentationName() { return inner.getRedoPresentationName(); }
     }
 
+    /*  Instead of isolating history to a single chunk and losing it when you scroll away, we will keep up to 40 chunks (1GB of RAM) active in 
+    an LRU (Least Recently Used) cache. The GlobalUndoManager will intercept every keystroke, tag it with its chunk index, and store it in a single unified timeline. */
     private static class GlobalUndoManager extends UndoManager {
         public int getUndoChunk() {
             UndoableEdit edit = editToBeUndone();
