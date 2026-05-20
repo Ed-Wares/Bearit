@@ -1,0 +1,33 @@
+name: Release Asset Deployment
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  # 1. Trigger the reusable Maven builder
+  build_release_binary:
+    uses: ./.github/workflows/build.yml
+    with:
+      git_ref: ${{ github.ref }} 
+      version_string: ${{ github.event.release.tag_name }} 
+
+  # 2. Extract compiled binary from the workspace and deploy it to the Release asset slot
+  upload_to_release:
+    needs: build_release_binary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Essential permission context to mutate Release assets
+
+    steps:
+      # Adjusted name matching string schema to perfectly align with build.yml output signature
+      - name: Download Artifact from Build Stage
+        uses: actions/download-artifact@v4
+        with:
+          name: compiled-bearit-package-${{ github.event.release.tag_name }}
+          
+      - name: Upload Asset to Github Release Page
+        uses: softprops/action-gh-release@v2
+        with:
+          # Targets the downloaded file inside the local job instance
+          files: bearit.jar

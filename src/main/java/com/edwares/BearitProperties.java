@@ -19,6 +19,7 @@ public class BearitProperties {
     private String fontName = "Monospaced";
     private int fontSize = 14;
     private final String[] customToolCommands = new String[8];
+    private final String[] customToolTitle = new String[8];
     private final String[] customToolIcons = new String[8];
 
     private BearitProperties() {
@@ -27,6 +28,7 @@ public class BearitProperties {
         
         for (int i = 0; i < 8; i++) {
             customToolCommands[i] = "";
+            customToolTitle[i] = "Tool " + (i + 1);
             customToolIcons[i] = "";
         }
         
@@ -80,6 +82,7 @@ public class BearitProperties {
 
             for (int i = 0; i < 8; i++) {
                 customToolCommands[i] = props.getProperty("tool." + (i + 1) + ".command", "");
+                customToolTitle[i] = props.getProperty("tool." + (i + 1) + ".title", "Tool " + (i + 1));
                 customToolIcons[i] = props.getProperty("tool." + (i + 1) + ".icon", "");
             }
         } catch (IOException | NumberFormatException e) {
@@ -104,6 +107,7 @@ public class BearitProperties {
 
         for (int i = 0; i < 8; i++) {
             props.setProperty("tool." + (i + 1) + ".command", customToolCommands[i] != null ? customToolCommands[i] : "");
+            props.setProperty("tool." + (i + 1) + ".title", customToolTitle[i] != null ? customToolTitle[i] : "Tool " + (i + 1));
             // Standardize paths to use forward slashes for cross-platform compatibility
             props.setProperty("tool." + (i + 1) + ".icon", customToolIcons[i] != null ? customToolIcons[i].replace("\\", "/") : "");
         }
@@ -175,6 +179,18 @@ public class BearitProperties {
     public void setCustomToolCommand(int index, String command) {
         if (index >= 0 && index < 8) {
             customToolCommands[index] = command;
+            save();
+        }
+    }
+
+    public String getCustomToolTitle(int index) {
+        if (index >= 0 && index < 8) return customToolTitle[index];
+        return "Tool " + (index + 1);
+    }
+
+    public void setCustomToolTitle(int index, String title) {
+        if (index >= 0 && index < 8) {
+            customToolTitle[index] = title;
             save();
         }
     }

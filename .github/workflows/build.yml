@@ -1,0 +1,58 @@
+name: Reusable Maven Compilation Workflow
+
+on:
+  workflow_call:
+    inputs:
+      git_ref:
+        description: 'The specific git branch, tag, or SHA hash reference to compile'
+        required: true
+        type: string
+      version_string:
+        description: 'The customized version token to embed into the artifact signature'
+        required: true
+        type: string
+
+jobs:
+  compile_project:
+    name: Execute Maven Native Compilation
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Pull the codebase into the virtual machine environment
+      - name: Fetch Codebase Repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git_ref }}
+
+      # 2. Provision JDK 21 Environment (Using Amazon Corretto build)
+      - name: Provision Amazon Corretto JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'corretto'
+          java-version: '21'
+          cache: 'maven' # Speeds up subsequent compiles by caching heavy dependency trees
+
+      # 3. Inject the dynamic Version String into the Maven project properties
+      - name: Apply Dynamic Compilation Version
+        run: |
+          mvn versions:set -DnewVersion=${{ inputs.version_string }} -DgenerateBackupPoms=false
+
+      # 4. Build and Package the application into a clean executable JAR file
+      - name: Compile Code and Package Executable Artifact
+        run: mvn clean package -DskipTests
+
+      # 5. Standardize the output filename so it can be handled safely by delivery streams
+      - name: Normalize Executable File Nomenclature
+        run: |
+          mkdir -p distribution_payload
+          # Dynamically finds your compiled JAR file in the target directory and standardizes its filename
+          cp target/bearit-*.jar distribution_payload/bearit.jar
+
+      # 6. Archive the compiled binary as a downloadable workflow artifact
+      - name: Archive Compiled Binary Workspace
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiled-bearit-package-${{ inputs.version_string }}
+          path: distribution_payload/bearit.jar
+          retention-days: 7 # Safe storage limit to keep the workspace clean
+          if-no-files-found: error
