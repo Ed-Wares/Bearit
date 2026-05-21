@@ -19,8 +19,8 @@ public class BearitProperties {
     private String fontName = "Monospaced";
     private int fontSize = 14;
     private final String[] customToolCommands = new String[8];
-    private final String[] customToolTitle = new String[8];
     private final String[] customToolIcons = new String[8];
+    private final String[] customToolNames = new String[8];
 
     private BearitProperties() {
         props = new Properties();
@@ -28,8 +28,8 @@ public class BearitProperties {
         
         for (int i = 0; i < 8; i++) {
             customToolCommands[i] = "";
-            customToolTitle[i] = "Tool " + (i + 1);
             customToolIcons[i] = "";
+            customToolNames[i] = "Tool " + (i + 1);
         }
         
         load();
@@ -42,9 +42,6 @@ public class BearitProperties {
         return instance;
     }
 
-    /**
-     * Locates the directory of the executing JAR file to store the properties alongside it.
-     */
     private File determinePropertiesFile() {
         try {
             File jarPath = new File(BearitProperties.class.getProtectionDomain().getCodeSource().getLocation().toURI());
@@ -59,7 +56,7 @@ public class BearitProperties {
 
     public void load() {
         if (!propertiesFile.exists()) {
-            save(); // Create the file and write default values
+            save(); 
             return;
         }
         
@@ -82,8 +79,8 @@ public class BearitProperties {
 
             for (int i = 0; i < 8; i++) {
                 customToolCommands[i] = props.getProperty("tool." + (i + 1) + ".command", "");
-                customToolTitle[i] = props.getProperty("tool." + (i + 1) + ".title", "Tool " + (i + 1));
                 customToolIcons[i] = props.getProperty("tool." + (i + 1) + ".icon", "");
+                customToolNames[i] = props.getProperty("tool." + (i + 1) + ".name", "Tool " + (i + 1));
             }
         } catch (IOException | NumberFormatException e) {
             System.err.println("Failed to load properties: " + e.getMessage());
@@ -107,9 +104,8 @@ public class BearitProperties {
 
         for (int i = 0; i < 8; i++) {
             props.setProperty("tool." + (i + 1) + ".command", customToolCommands[i] != null ? customToolCommands[i] : "");
-            props.setProperty("tool." + (i + 1) + ".title", customToolTitle[i] != null ? customToolTitle[i] : "Tool " + (i + 1));
-            // Standardize paths to use forward slashes for cross-platform compatibility
             props.setProperty("tool." + (i + 1) + ".icon", customToolIcons[i] != null ? customToolIcons[i].replace("\\", "/") : "");
+            props.setProperty("tool." + (i + 1) + ".name", customToolNames[i] != null ? customToolNames[i] : "Tool " + (i + 1));
         }
 
         try (OutputStream out = new FileOutputStream(propertiesFile)) {
@@ -142,73 +138,44 @@ public class BearitProperties {
 
     // --- Getters & Setters ---
 
-    public List<String> getRecentFiles() {
-        return new ArrayList<>(recentFiles);
-    }
-
+    public List<String> getRecentFiles() { return new ArrayList<>(recentFiles); }
+    
     public int getFrameWidth() { return frameWidth; }
-    public void setFrameWidth(int frameWidth) { 
-        this.frameWidth = frameWidth; 
-        save();
-    }
+    public void setFrameWidth(int frameWidth) { this.frameWidth = frameWidth; save(); }
 
     public int getFrameHeight() { return frameHeight; }
-    public void setFrameHeight(int frameHeight) { 
-        this.frameHeight = frameHeight; 
-        save();
-    }
+    public void setFrameHeight(int frameHeight) { this.frameHeight = frameHeight; save(); }
 
     public boolean isCheckForUpdates() { return checkForUpdates; }
-    public void setCheckForUpdates(boolean checkForUpdates) { 
-        this.checkForUpdates = checkForUpdates; 
-        save();
-    }
+    public void setCheckForUpdates(boolean checkForUpdates) { this.checkForUpdates = checkForUpdates; save(); }
 
     public String getFontName() { return fontName; }
-    public void setFontName(String fontName) { 
-        this.fontName = fontName; 
-        save();
-    }
+    public void setFontName(String fontName) { this.fontName = fontName; save(); }
 
     public int getFontSize() { return fontSize; }
-    public void setFontSize(int fontSize) { 
-        this.fontSize = fontSize; 
-        save();
-    }
+    public void setFontSize(int fontSize) { this.fontSize = fontSize; save(); }
 
     public String getCustomToolCommand(int index) {
         if (index >= 0 && index < 8) return customToolCommands[index];
         return "";
     }
-
     public void setCustomToolCommand(int index, String command) {
-        if (index >= 0 && index < 8) {
-            customToolCommands[index] = command;
-            save();
-        }
-    }
-
-    public String getCustomToolTitle(int index) {
-        if (index >= 0 && index < 8) return customToolTitle[index];
-        return "Tool " + (index + 1);
-    }
-
-    public void setCustomToolTitle(int index, String title) {
-        if (index >= 0 && index < 8) {
-            customToolTitle[index] = title;
-            save();
-        }
+        if (index >= 0 && index < 8) { customToolCommands[index] = command; save(); }
     }
 
     public String getCustomToolIcon(int index) {
         if (index >= 0 && index < 8) return customToolIcons[index];
         return "";
     }
-
     public void setCustomToolIcon(int index, String iconPath) {
-        if (index >= 0 && index < 8) {
-            customToolIcons[index] = iconPath;
-            save();
-        }
+        if (index >= 0 && index < 8) { customToolIcons[index] = iconPath; save(); }
+    }
+
+    public String getCustomToolName(int index) {
+        if (index >= 0 && index < 8) return customToolNames[index];
+        return "";
+    }
+    public void setCustomToolName(int index, String name) {
+        if (index >= 0 && index < 8) { customToolNames[index] = name; save(); }
     }
 }

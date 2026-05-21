@@ -1,10 +1,13 @@
 package com.edwares;
 
 import javax.swing.*;
+import javax.swing.event.MenuEvent;
+import javax.swing.event.MenuListener;
 import java.awt.*;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.io.File;
+import java.util.List;
 
 public class TextEditorFrame extends JFrame {
     private final AdvancedTextEditorPanel editorPanel;
@@ -14,8 +17,6 @@ public class TextEditorFrame extends JFrame {
         BearitProperties props = BearitProperties.getInstance();
         
         // The screen size is the working area of the screen, exluding taskbars and docks
-        int xPos = 50;
-        int yPos = 50;
         GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
         Insets screenInsets = Toolkit.getDefaultToolkit().getScreenInsets(ge.getDefaultScreenDevice().getDefaultConfiguration());
         Rectangle screenSize = ge.getDefaultScreenDevice().getDefaultConfiguration().getBounds();
@@ -27,7 +28,7 @@ public class TextEditorFrame extends JFrame {
         if (props.getFrameHeight() > screenHeight) {
             props.setFrameHeight(screenHeight);
         }
-
+        
         setTitle("Bearit Text Editor - Untitled");
         setSize(props.getFrameWidth(), props.getFrameHeight());
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -54,9 +55,19 @@ public class TextEditorFrame extends JFrame {
             }
         });
 
-        // Instantiate the core reusable editor component
+        try {
+            java.net.URL iconURL = getClass().getResource("/bear.png");
+            if (iconURL != null) {
+                ImageIcon icon = new ImageIcon(iconURL);
+                setIconImage(icon.getImage());
+            }
+        } catch (Exception e) {}
+
         editorPanel = new AdvancedTextEditorPanel();
+        
+        // Apply properties font setting
         editorPanel.setFont(new Font(props.getFontName(), Font.PLAIN, props.getFontSize()));
+        
         fileChooser = new JFileChooser();
 
         // Listen for document title changes from the editor panel to update the window frame
@@ -75,6 +86,7 @@ public class TextEditorFrame extends JFrame {
      */
     public void loadInitialFile(File file) {
         editorPanel.loadFile(file);
+        BearitProperties.getInstance().addRecentFile(file.getAbsolutePath());
     }
 
     private JToolBar createToolBar() {
@@ -84,7 +96,6 @@ public class TextEditorFrame extends JFrame {
 
         JButton btnNew = new JButton("📄 New");
         JButton btnOpen = new JButton("📂 Open");
-
         JButton btnSave = new JButton("💾 Save");
         JButton btnSaveAs = new JButton("💾 Save As...");
         
@@ -102,30 +113,23 @@ public class TextEditorFrame extends JFrame {
         btnNew.setToolTipText("Create a new document");
         btnOpen.setToolTipText("Open an existing file");
         btnSave.setToolTipText("Save current changes");
-        
         btnUndo.setToolTipText("Undo last edit in current chunk");
         btnRedo.setToolTipText("Redo last edit in current chunk");
-        
         btnCut.setToolTipText("Cut selected text");
         btnCopy.setToolTipText("Copy selected text");
         btnPaste.setToolTipText("Paste text from clipboard");
-        
         btnSearch.setToolTipText("Search and Replace across full file");
         btnGoto.setToolTipText("Jump to specific line number");
 
-        // Action routing
         btnNew.addActionListener(e -> performNew());
         btnOpen.addActionListener(e -> performOpen());
         btnSave.addActionListener(e -> performSave());
         btnSaveAs.addActionListener(e -> performSaveAs());
-        
         btnUndo.addActionListener(e -> editorPanel.undo());
         btnRedo.addActionListener(e -> editorPanel.redo());
-        
         btnCut.addActionListener(e -> editorPanel.cut());
         btnCopy.addActionListener(e -> editorPanel.copy());
         btnPaste.addActionListener(e -> editorPanel.paste());
-        
         btnSearch.addActionListener(e -> editorPanel.showSearchDialog());
         btnGoto.addActionListener(e -> editorPanel.showGotoLineDialog());
 
@@ -144,7 +148,54 @@ public class TextEditorFrame extends JFrame {
         toolBar.add(btnSearch);
         toolBar.add(btnGoto);
 
+        // --- Load Custom Tools from Properties ---
+        BearitProperties props = BearitProperties.getInstance();
+        boolean hasCustomTools = false;
+        
+        for (int i = 0; i < 8; i++) {
+            String command = props.getCustomToolCommand(i);
+            if (command != null && !command.trim().isEmpty()) {
+                if (!hasCustomTools) {
+                    toolBar.addSeparator();
+                    hasCustomTools = true;
+                }
+                
+                String icon = props.getCustomToolIcon(i);
+                String name = props.getCustomToolName(i);
+                
+                String buttonText = (icon != null && !icon.isEmpty() ? icon + " " : "⚒ ") + name;
+                JButton customBtn = new JButton(buttonText);
+                customBtn.setToolTipText("Executes: " + command);
+                
+                final String toolCommand = command;
+                customBtn.addActionListener(e -> executeCustomTool(toolCommand));
+                
+                toolBar.add(customBtn);
+            }
+        }
+
         return toolBar;
+    }
+
+    private void executeCustomTool(String command) {
+        new SwingWorker<Void, Void>() {
+            @Override
+            protected Void doInBackground() throws Exception {
+                Runtime.getRuntime().exec(command);
+                return null;
+            }
+            @Override
+            protected void done() {
+                try {
+                    get(); // Throws exception if the background execution failed
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(TextEditorFrame.this, 
+                        "Failed to execute custom tool command:\n" + ex.getMessage(), 
+                        "Tool Execution Error", 
+                        JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        }.execute();
     }
 
     private JMenuBar createMenuBar() {
@@ -154,6 +205,39 @@ public class TextEditorFrame extends JFrame {
         JMenu fileMenu = new JMenu("File");
         JMenuItem newItem = new JMenuItem("New");
         JMenuItem openItem = new JMenuItem("Open...");
+        
+        // --- Open Recent Submenu ---
+        JMenu recentMenu = new JMenu("Open Recent");
+        recentMenu.addMenuListener(new MenuListener() {
+            @Override
+            public void menuSelected(MenuEvent e) {
+                recentMenu.removeAll();
+                List<String> recents = BearitProperties.getInstance().getRecentFiles();
+                if (recents.isEmpty()) {
+                    JMenuItem emptyItem = new JMenuItem("No recent files");
+                    emptyItem.setEnabled(false);
+                    recentMenu.add(emptyItem);
+                } else {
+                    for (String path : recents) {
+                        JMenuItem pathItem = new JMenuItem(path);
+                        pathItem.addActionListener(evt -> {
+                            File f = new File(path);
+                            if (f.exists()) {
+                                editorPanel.loadFile(f);
+                                BearitProperties.getInstance().addRecentFile(path);
+                            } else {
+                                JOptionPane.showMessageDialog(TextEditorFrame.this, 
+                                    "File not found: " + path, "Error", JOptionPane.ERROR_MESSAGE);
+                            }
+                        });
+                        recentMenu.add(pathItem);
+                    }
+                }
+            }
+            @Override public void menuDeselected(MenuEvent e) {}
+            @Override public void menuCanceled(MenuEvent e) {}
+        });
+
         JMenuItem saveItem = new JMenuItem("Save");
         JMenuItem saveAsItem = new JMenuItem("Save As...");
         JMenuItem exitItem = new JMenuItem("Exit");
@@ -166,6 +250,8 @@ public class TextEditorFrame extends JFrame {
 
         fileMenu.add(newItem);
         fileMenu.add(openItem);
+        fileMenu.add(recentMenu); // Add the dynamic recent menu
+        fileMenu.addSeparator();
         fileMenu.add(saveItem);
         fileMenu.add(saveAsItem);
         fileMenu.addSeparator();
@@ -227,8 +313,9 @@ public class TextEditorFrame extends JFrame {
     private void performOpen() {
         int option = fileChooser.showOpenDialog(this);
         if (option == JFileChooser.APPROVE_OPTION) {
-            editorPanel.loadFile(fileChooser.getSelectedFile());
-            BearitProperties.getInstance().addRecentFile(fileChooser.getSelectedFile().getAbsolutePath());
+            File selected = fileChooser.getSelectedFile();
+            editorPanel.loadFile(selected);
+            BearitProperties.getInstance().addRecentFile(selected.getAbsolutePath());
         }
     }
 
@@ -244,7 +331,9 @@ public class TextEditorFrame extends JFrame {
     private void performSaveAs() {
         int option = fileChooser.showSaveDialog(this);
         if (option == JFileChooser.APPROVE_OPTION) {
-            editorPanel.saveAsFile(fileChooser.getSelectedFile());
+            File selected = fileChooser.getSelectedFile();
+            editorPanel.saveAsFile(selected);
+            BearitProperties.getInstance().addRecentFile(selected.getAbsolutePath());
         }
     }
 
