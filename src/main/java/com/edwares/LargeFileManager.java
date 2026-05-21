@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.Map;
 import java.util.concurrent.*;
+import java.util.function.BiConsumer;
 
 public class LargeFileManager {
     private static final int CHUNK_SIZE = 25 * 1024 * 1024; 
@@ -34,9 +35,15 @@ public class LargeFileManager {
         boolean isPreview
     ) {}
 
+    // CLI usage
     public static void generateTestFile(double sizeInGb) throws IOException {
+        File defaultDest = new File(String.format(java.util.Locale.US, "bearit_test_file_%.2fGB.txt", sizeInGb));
+        generateTestFile(defaultDest, sizeInGb, null);
+    }
+
+    // UI User-initiated usage with progress callback
+    public static void generateTestFile(File targetFile, double sizeInGb, BiConsumer<Long, Long> progressCallback) throws IOException {
         long totalBytesTarget = (long) (sizeInGb * 1024L * 1024L * 1024L);
-        File targetFile = new File(String.format("bearit_test_file_%.2fGB.txt", sizeInGb));
         
         System.out.println("Generating test file: " + targetFile.getAbsolutePath());
         System.out.println("Target size: " + sizeInGb + " GB...");
@@ -49,22 +56,38 @@ public class LargeFileManager {
             long bytesWritten = 0;
             int lastPrintedProgress = -1;
             int lineCnt = 1;
+            long lastReportTime = 0;
             while (bytesWritten < totalBytesTarget) {
                 buffer.clear();
-                while (buffer.remaining() > lineBytes.length && bytesWritten + buffer.position() < totalBytesTarget) {
+                while (buffer.remaining() > lineBytes.length + 20 && bytesWritten + buffer.position() < totalBytesTarget) {
                     buffer.put(lineBytes);
                     String lineNumStr = String.valueOf(lineCnt++) + "\n";
                     byte[] lineNumBytes = lineNumStr.getBytes(StandardCharsets.UTF_8);
-                    buffer.put(lineNumBytes);
+                    buffer.put(lineNumBytes);                
+                    if (Thread.currentThread().isInterrupted()) { // Allows the SwingWorker to cleanly cancel the file generation
+                        break;
+                    }                    
                 }
                 buffer.flip();
                 bytesWritten += channel.write(buffer);
 
+                // Throttle UI updates to prevent the UI thread from freezing
+                long now = System.currentTimeMillis();
+                if (progressCallback != null && (now - lastReportTime > 300)) {
+                    progressCallback.accept(bytesWritten, totalBytesTarget);
+                    lastReportTime = now;
+                }
+                
+                // Print progress to console if no callback is provided
                 int progressPercent = (int) ((bytesWritten * 100L) / totalBytesTarget);
                 if (progressPercent > lastPrintedProgress) {
                     lastPrintedProgress = progressPercent;
                     System.out.print("\rProgress: " + progressPercent + "%");
                 }
+            }
+            // Send final 100% completion tick
+            if (progressCallback != null) {
+                progressCallback.accept(bytesWritten, totalBytesTarget);
             }
         }
         System.out.println("\nGeneration complete! File is ready for testing.");

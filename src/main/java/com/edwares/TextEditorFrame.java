@@ -9,6 +9,7 @@ import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 public class TextEditorFrame extends JFrame {
@@ -401,6 +402,111 @@ public class TextEditorFrame extends JFrame {
         }.execute();
     }
 
+    // --- Generation Tool ---
+    private void performGenerateTestFile() {
+        String input = JOptionPane.showInputDialog(this, 
+                "Enter target test file size in Gigabytes (e.g., 1.5):", 
+                "Generate Test File", 
+                JOptionPane.QUESTION_MESSAGE);
+                
+        if (input != null && !input.trim().isEmpty()) {
+            try {
+                double gbSize = Double.parseDouble(input.trim());
+                if (gbSize <= 0) throw new NumberFormatException("Size must be positive.");
+
+                // Re-enable the file chooser for custom path selection
+                fileChooser.setDialogTitle("Select Destination for Test File");
+                fileChooser.setSelectedFile(new File(String.format(java.util.Locale.US, "bearit_test_file_%.2fGB.txt", gbSize)));
+                
+                if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+                    File destFile = fileChooser.getSelectedFile();
+                    
+                    // Create detailed progress dialog
+                    JDialog progressDialog = new JDialog(this, "Generating File", true);
+                    JPanel panel = new JPanel(new BorderLayout(10, 10));
+                    panel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+                    
+                    JLabel lblStatus = new JLabel(String.format(java.util.Locale.US, "0.00 GB / %.2f GB (0%%)", gbSize));
+                    lblStatus.setHorizontalAlignment(SwingConstants.CENTER);
+                    panel.add(lblStatus, BorderLayout.NORTH);
+                    
+                    JProgressBar progressBar = new JProgressBar(0, 100);
+                    progressBar.setStringPainted(true);
+                    panel.add(progressBar, BorderLayout.CENTER);
+                    
+                    JButton btnCancel = new JButton("Cancel");
+                    JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+                    bottomPanel.add(btnCancel);
+                    panel.add(bottomPanel, BorderLayout.SOUTH);
+                    
+                    progressDialog.add(panel);
+                    progressDialog.pack();
+                    progressDialog.setLocationRelativeTo(this);
+                    progressDialog.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
+
+                    SwingWorker<File, long[]> worker = new SwingWorker<File, long[]>() {
+                        @Override
+                        protected File doInBackground() throws Exception {
+                            // Call the overloaded static method and pass a progress callback
+                            LargeFileManager.generateTestFile(destFile, gbSize, (written, total) -> {
+                                publish(new long[]{written, total});
+                            });
+                            return destFile;
+                        }
+
+                        @Override
+                        protected void process(List<long[]> chunks) {
+                            // Only process the most recent update to avoid UI lag
+                            long[] latest = chunks.get(chunks.size() - 1);
+                            long written = latest[0];
+                            long total = latest[1];
+                            
+                            int percent = (int) ((written * 100) / total);
+                            double writtenGb = written / (1024.0 * 1024.0 * 1024.0);
+                            double totalGb = total / (1024.0 * 1024.0 * 1024.0);
+                            
+                            progressBar.setValue(percent);
+                            lblStatus.setText(String.format(java.util.Locale.US, "%.2f GB / %.2f GB (%d%%)", writtenGb, totalGb, percent));
+                        }
+
+                        @Override
+                        protected void done() {
+                            progressDialog.dispose(); 
+                            try {
+                                File result = get(); 
+                                if (isCancelled()) {
+                                    destFile.delete(); // Clean up if user clicked cancel
+                                    return;
+                                }
+                                if (result.exists()) {
+                                    JOptionPane.showMessageDialog(TextEditorFrame.this, 
+                                        "Successfully generated test file:\n" + result.getAbsolutePath(), 
+                                        "Generation Complete", JOptionPane.INFORMATION_MESSAGE);
+                                    openFileInTab(result);
+                                }
+                            } catch (Exception ex) {
+                                destFile.delete(); 
+                                JOptionPane.showMessageDialog(TextEditorFrame.this, 
+                                    "Failed to generate test file.\nError Details: " + ex.getMessage(), 
+                                    "Generation Error", JOptionPane.ERROR_MESSAGE);
+                            }
+                        }
+                    };
+                    
+                    btnCancel.addActionListener(e -> {
+                        worker.cancel(true);
+                        progressDialog.dispose();
+                    });
+
+                    worker.execute();
+                    progressDialog.setVisible(true); // Blocks UI while working
+                }
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(this, "Please enter a valid positive number for the GB size.", "Invalid Input", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
+
     private JMenuBar createMenuBar() {
         JMenuBar menuBar = new JMenuBar();
 
@@ -499,6 +605,9 @@ public class TextEditorFrame extends JFrame {
 
         // --- Help Menu ---
         JMenu helpMenu = new JMenu("Help");
+        JMenuItem generateItem = new JMenuItem("Generate Test File...");
+        generateItem.addActionListener(e -> performGenerateTestFile());
+        helpMenu.add(generateItem);
         JMenuItem aboutItem = new JMenuItem("About Bearit...");
         aboutItem.addActionListener(e -> showAboutDialog());
         helpMenu.add(aboutItem);
