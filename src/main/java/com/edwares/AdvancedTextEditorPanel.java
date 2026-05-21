@@ -30,7 +30,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     private final JLabel lblStatus;
     private final JLabel lblLoadingStatus;
     private final JLabel lblCursorInfo;
-    private final JProgressBar chunkLoadProgressBar;
+    private final JProgressBar chunkLoadProgressBar; 
     private final JScrollBar globalScrollBar;
     
     private final LargeFileManager fileManager;
@@ -55,6 +55,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     private boolean isSyncingScroll = false;
     private boolean isLoadingChunk = false;
     private boolean isDirty = false;
+    private boolean hasUnsavedChanges = false; // Tracks global file edits
     private boolean isNavigating = false; 
     
     // Tracks intelligent focus state to survive chained background loads
@@ -82,7 +83,10 @@ public class AdvancedTextEditorPanel extends JPanel {
         public void changedUpdate(DocumentEvent e) { registerEdit(); }
         
         private void registerEdit() {
-            if (!isNavigating && !isCurrentlyPreview) isDirty = true;
+            if (!isNavigating && !isCurrentlyPreview) {
+                isDirty = true;
+                setUnsavedChanges(true); // Flag the entire file as unsaved
+            }
             lineNumberPanel.adjustMetricSizing();
             if (!isNavigating) syncLocalToGlobalScroll();
         }
@@ -120,7 +124,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         textArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
         textArea.setLineWrap(false);
         
-        // --- NEW: Intelligent Focus Listener ---
+        // Intelligent Focus Listener ---
         textArea.addFocusListener(new FocusAdapter() {
             @Override
             public void focusGained(FocusEvent e) {
@@ -213,8 +217,16 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
     }
 
-    public boolean isDirty() {
-        return isDirty;
+    public boolean hasUnsavedChanges() {
+        return hasUnsavedChanges;
+    }
+
+    private void setUnsavedChanges(boolean b) {
+        if (this.hasUnsavedChanges != b) {
+            boolean old = this.hasUnsavedChanges;
+            this.hasUnsavedChanges = b;
+            firePropertyChange("unsavedChanges", old, b);
+        }
     }
 
     /**
@@ -284,12 +296,12 @@ public class AdvancedTextEditorPanel extends JPanel {
             JPanel pnlBtns = new JPanel(new FlowLayout(FlowLayout.RIGHT));
             JButton btnFindPrev = new JButton("⬆ Previous");
             JButton btnFindNext = new JButton("⬇ Next");
-            JButton btnReplace = new JButton("Replace");
             JButton btnCount = new JButton("Count Matches");
+            JButton btnReplace = new JButton("Replace");
             JButton btnReplaceAll = new JButton("Replace All");
             
-            txtSearch.addActionListener(e -> performFindNext(txtSearch.getText()));
-            txtReplace.addActionListener(e -> performReplace(txtSearch.getText(), txtReplace.getText()));
+            txtSearch.addActionListener(e -> performFindNext(txtSearch.getText())); // Pressing Enter in the search field triggers "Find Next"
+            txtReplace.addActionListener(e -> performReplace(txtSearch.getText(), txtReplace.getText())); // Pressing Enter in the replace field triggers "Replace"
             
             btnFindPrev.addActionListener(e -> performFindPrevious(txtSearch.getText()));
             btnFindNext.addActionListener(e -> performFindNext(txtSearch.getText()));
@@ -299,8 +311,8 @@ public class AdvancedTextEditorPanel extends JPanel {
             
             pnlBtns.add(btnFindPrev);
             pnlBtns.add(btnFindNext);
-            pnlBtns.add(btnReplace);
             pnlBtns.add(btnCount);
+            pnlBtns.add(btnReplace);
             pnlBtns.add(btnReplaceAll);
             
             searchDialog.add(inputPanel, BorderLayout.CENTER);
@@ -568,6 +580,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             protected void done() {
                 documentCache.clear(); 
                 globalUndoManager.discardAllEdits();
+                setUnsavedChanges(true); // Flag global modification
                 triggerAsyncLoad(loadedChunkIndex, 0, -1, false, () -> {
                     lblLoadingStatus.setText("");
                     JOptionPane.showMessageDialog(getDialogParent(), "Global replacement complete.", "Replace All", JOptionPane.INFORMATION_MESSAGE);
@@ -612,6 +625,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         fileManager.setNewFile();
         activeFile = null;
         isDirty = false;
+        setUnsavedChanges(false); 
         isNavigating = true;
         loadedChunkIndex = 0;
         pendingTargetChunk = -1;
@@ -644,6 +658,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         fileManager.buildIndexCacheAsync(); 
 
         isDirty = false;
+        setUnsavedChanges(false);
         loadedChunkIndex = 0;
         pendingTargetChunk = -1;
         
@@ -689,6 +704,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             protected void done() {
                 try {
                     isDirty = false;
+                    setUnsavedChanges(false);
                     pendingTargetChunk = -1;
                     applyStateUpdates(get(), 0, -1, null);
                 } catch (Exception ex) {
@@ -830,6 +846,8 @@ public class AdvancedTextEditorPanel extends JPanel {
             if (postLoadAction != null) postLoadAction.run();
             return; 
         }
+
+        wasEditorFocused = textArea.isFocusOwner();
 
         isLoadingChunk = true;
         textArea.setEnabled(false); 
