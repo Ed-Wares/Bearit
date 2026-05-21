@@ -22,6 +22,11 @@ public class LargeFileManager {
     private final ExecutorService preloader = Executors.newSingleThreadExecutor();
     private final Map<Integer, ChunkState> preloadCache = new ConcurrentHashMap<>();
 
+    // --- Index Caches ---
+    private final Map<Integer, long[]> boundaryCache = new ConcurrentHashMap<>();
+    private final Map<Integer, String> previewCache = new ConcurrentHashMap<>();
+    private final Map<Integer, Long> lineOffsetCache = new ConcurrentHashMap<>();    
+
     public record ChunkState(
         String content, 
         long startLine, 
@@ -133,6 +138,79 @@ public class LargeFileManager {
         preloadCache.remove(currentChunkIndex); 
     }
 
+    /**
+     * Spawns a background worker to silently scan the entire file.
+     * It maps out boundaries, caches line offsets, and stores 8KB 
+     * string previews directly in RAM for ultra-fast scrollbar rendering.
+     */
+    public void buildIndexCacheAsync() {
+        if (currentFile == null || !currentFile.exists()) return;
+        
+        // Clear caches prior to building
+        boundaryCache.clear();
+        previewCache.clear();
+        lineOffsetCache.clear();
+        
+        new Thread(() -> {
+            try (RandomAccessFile raf = new RandomAccessFile(currentFile, "r")) {
+                long fileLength = raf.length();
+                long currentOffset = 0;
+                long currentLine = 1;
+                int chunkIdx = 0;
+                
+                while (currentOffset < fileLength) {
+                    long start = currentOffset;
+                    long end = Math.min(start + CHUNK_SIZE, fileLength);
+                    
+                    // Securely seek to end and find the precise newline boundary
+                    if (end < fileLength) {
+                        raf.seek(end);
+                        while (end < fileLength) {
+                            int b = raf.read();
+                            end++;
+                            if (b == '\n') break;
+                        }
+                    }
+                    
+                    boundaryCache.put(chunkIdx, new long[]{start, end});
+                    lineOffsetCache.put(chunkIdx, currentLine);
+                    
+                    // 1. Generate memory-safe 8KB UI Preview
+                    long previewEnd = Math.min(end, start + 8192); 
+                    byte[] previewBytes = new byte[(int)(previewEnd - start)];
+                    raf.seek(start);
+                    raf.readFully(previewBytes);
+                    
+                    String previewStr = new String(previewBytes, StandardCharsets.UTF_8);
+                    if (previewEnd < end) {
+                        previewStr += "\n\n... [Scrolling Preview: Release scrollbar to render full 25MB chunk] ...";
+                    }
+                    previewCache.put(chunkIdx, previewStr);
+                    
+                    // 2. Hyper-fast sequential line counting for the rest of the chunk
+                    raf.seek(start);
+                    byte[] buffer = new byte[8192];
+                    long bytesRead = 0;
+                    long chunkLen = end - start;
+                    while (bytesRead < chunkLen) {
+                        int toRead = (int) Math.min(buffer.length, chunkLen - bytesRead);
+                        int read = raf.read(buffer, 0, toRead);
+                        if (read == -1) break;
+                        for (int i = 0; i < read; i++) {
+                            if (buffer[i] == '\n') currentLine++;
+                        }
+                        bytesRead += read;
+                    }
+                    
+                    currentOffset = end;
+                    chunkIdx++;
+                }
+            } catch (Exception e) {
+                System.err.println("Background file indexer failed: " + e.getMessage());
+            }
+        }).start();
+    }    
+
     public ChunkState navigateToIndex(int index, boolean requestPreview) throws IOException {
         int virtualTotalChunks = getTotalChunks();
         if (index < 0) index = 0;
@@ -165,7 +243,7 @@ public class LargeFileManager {
         return generateChunkState(currentChunkIndex, requestPreview);
     }
 
-    // --- NEW: Expose raw chunk content extraction for background Find Next loops ---
+    // --- Expose raw chunk content extraction for background Find Next loops ---
     public String getChunkContent(int index) throws IOException {
         if (dirtyChunks.containsKey(index)) {
             return Files.readString(dirtyChunks.get(index).toPath(), StandardCharsets.UTF_8);
@@ -184,7 +262,7 @@ public class LargeFileManager {
         return "";
     }
 
-    // --- NEW: Memory-safe File-wide Global Counting ---
+    // --- Memory-safe File-wide Global Counting ---
     public long countGlobalMatches(String target) throws IOException {
         long count = 0;
         int virtualTotalChunks = getTotalChunks();
@@ -199,7 +277,7 @@ public class LargeFileManager {
         return count;
     }
 
-    // --- NEW: Global Streaming File Replacements ---
+    // --- Global Streaming File Replacements ---
     public void replaceAllGlobal(String target, String replacement) throws IOException {
         if (currentFile == null) return;
         
@@ -225,7 +303,7 @@ public class LargeFileManager {
         updateFileMetrics();
     }
 
-    // --- NEW: Calculate chunk locations dynamically for Go-To-Line ---
+    // --- Calculate chunk locations dynamically for Go-To-Line ---
     public int getChunkForLine(long targetLine) throws IOException {
         if (targetLine <= 1) return 0;
         long currentLine = 1;

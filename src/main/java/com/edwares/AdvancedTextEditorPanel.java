@@ -30,6 +30,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     private final JLabel lblStatus;
     private final JLabel lblLoadingStatus;
     private final JLabel lblCursorInfo;
+    private final JProgressBar chunkLoadProgressBar;
     private final JScrollBar globalScrollBar;
     
     private final LargeFileManager fileManager;
@@ -55,6 +56,9 @@ public class AdvancedTextEditorPanel extends JPanel {
     private boolean isLoadingChunk = false;
     private boolean isDirty = false;
     private boolean isNavigating = false; 
+    
+    // Tracks intelligent focus state to survive chained background loads
+    private boolean wasEditorFocused = false; 
 
     private int loadedChunkIndex = 0;
     private int pendingTargetChunk = -1;
@@ -64,9 +68,9 @@ public class AdvancedTextEditorPanel extends JPanel {
     private boolean isCurrentlyPreview = false;
     private double lastRequestedLocalPercent = -1;
     private final Timer settleTimer; 
+    private long currentChunkStartOffset = 0;
 
     private String currentTitle = "Untitled";
-    private long currentChunkStartOffset = 0;
 
     private JDialog searchDialog;
     private JTextField txtSearch;
@@ -116,9 +120,19 @@ public class AdvancedTextEditorPanel extends JPanel {
         textArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
         textArea.setLineWrap(false);
         
+        // --- NEW: Intelligent Focus Listener ---
         textArea.addFocusListener(new FocusAdapter() {
             @Override
+            public void focusGained(FocusEvent e) {
+                wasEditorFocused = true;
+            }
+            @Override
             public void focusLost(FocusEvent e) {
+                // Only mark focus as lost if the user explicitly clicked away.
+                // If isEnabled() is false, the focus loss was artificially caused by the chunk loader locking the UI.
+                if (textArea.isEnabled()) {
+                    wasEditorFocused = false;
+                }
                 textArea.getCaret().setSelectionVisible(true);
             }
         });
@@ -176,8 +190,14 @@ public class AdvancedTextEditorPanel extends JPanel {
         lblLoadingStatus.setFont(lblLoadingStatus.getFont().deriveFont(Font.BOLD));
         lblLoadingStatus.setForeground(new Color(220, 100, 0)); 
         
+        chunkLoadProgressBar = new JProgressBar();
+        chunkLoadProgressBar.setIndeterminate(true);
+        chunkLoadProgressBar.setPreferredSize(new Dimension(100, 14));
+        chunkLoadProgressBar.setVisible(false);
+        
         leftStatusPanel.add(lblStatus);
         leftStatusPanel.add(lblLoadingStatus);
+        leftStatusPanel.add(chunkLoadProgressBar);
         
         lblCursorInfo = new JLabel("Line: 1 | Pos: 0");
         
@@ -193,16 +213,43 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
     }
 
+    public boolean isDirty() {
+        return isDirty;
+    }
+
     /**
      * Helper to safely append the hidden boundary newline before committing
      * edits to the File Manager, ensuring chunks don't accidentally merge.
-     */
+     */    
     private String getCommitText() {
         String text = textArea.getText();
         if (loadedChunkIndex < fileManager.getTotalChunks() - 1) {
             return text + "\n";
         }
         return text;
+    }
+
+    private void updateCursorStatus() {
+        if (isCurrentlyPreview) return;
+        try {
+            int dot = textArea.getCaret().getDot();
+            int mark = textArea.getCaret().getMark();
+            int localLine = textArea.getLineOfOffset(dot);
+            long absoluteLine = lineNumberPanel.getStartLine() + localLine;
+            int col = dot - textArea.getLineStartOffset(localLine);
+
+            long absDot = currentChunkStartOffset + dot;
+            long absMark = currentChunkStartOffset + mark;
+
+            if (dot == mark) {
+                lblCursorInfo.setText(String.format("Line: %d | Col: %d | Pos: %d", absoluteLine, col, absDot));
+            } else {
+                long selStart = Math.min(absDot, absMark);
+                long selEnd = Math.max(absDot, absMark);
+                long width = selEnd - selStart; 
+                lblCursorInfo.setText(String.format("Line: %d | Col: %d | Sel: %d - %d (width: %d)", absoluteLine, col, selStart, selEnd, width));
+            }
+        } catch (Exception e) {}
     }
 
     public void showSearchDialog() {
@@ -529,10 +576,6 @@ public class AdvancedTextEditorPanel extends JPanel {
         }.execute();
     }
 
-    public boolean isDirty() {
-        return isDirty;
-    }
-
     public void cut() { if (!isCurrentlyPreview) textArea.cut(); }
     public void copy() { textArea.copy(); }
     public void paste() { if (!isCurrentlyPreview) textArea.paste(); }
@@ -597,6 +640,9 @@ public class AdvancedTextEditorPanel extends JPanel {
     public void loadFile(File file) {
         this.activeFile = file;
         fileManager.setFile(file);
+        
+        fileManager.buildIndexCacheAsync(); 
+
         isDirty = false;
         loadedChunkIndex = 0;
         pendingTargetChunk = -1;
@@ -660,30 +706,6 @@ public class AdvancedTextEditorPanel extends JPanel {
         this.currentTitle = newTitle;
         // Fires a standard Swing property change event so the parent window can update its JFrame title
         firePropertyChange("editorTitle", oldTitle, newTitle);
-    }
-
-    private void updateCursorStatus() {
-        if (isCurrentlyPreview) return;
-        try {
-            int dot = textArea.getCaret().getDot();
-            int mark = textArea.getCaret().getMark();
-            int localLine = textArea.getLineOfOffset(dot);
-            long absoluteLine = lineNumberPanel.getStartLine() + localLine;
-            int col = dot - textArea.getLineStartOffset(localLine);
-
-            // Add the chunk's absolute file offset to the local cursor position
-            long absDot = currentChunkStartOffset + dot;
-            long absMark = currentChunkStartOffset + mark;
-
-            if (dot == mark) {
-                lblCursorInfo.setText(String.format("Line: %d | Col: %d | Pos: %d", absoluteLine, col, absDot));
-            } else {
-                long selStart = Math.min(absDot, absMark);
-                long selEnd = Math.max(absDot, absMark);
-                long width = selEnd - selStart; // Fixed typo here
-                lblCursorInfo.setText(String.format("Line: %d | Col: %d | Sel: %d - %d (width: %d)", absoluteLine, col, selStart, selEnd, width));
-            }
-        } catch (Exception e) {}
     }
 
     private void setupKeyboardShortcuts() {
@@ -774,7 +796,6 @@ public class AdvancedTextEditorPanel extends JPanel {
                     currentLine = textArea.getLineOfOffset(caretPos);
                     totalLines = textArea.getLineCount();
                 } catch (Exception ex) {
-                    // Fallback to strict char position if offset calculation somehow fails
                     if (direction > 0 && caretPos == textArea.getDocument().getLength() && loadedChunkIndex < fileManager.getTotalChunks() - 1) {
                         triggerAsyncLoad(loadedChunkIndex + 1, direction, -1, false, null);
                     } else if (direction < 0 && caretPos == 0 && loadedChunkIndex > 0) {
@@ -811,7 +832,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
 
         isLoadingChunk = true;
-        textArea.setEditable(false); 
+        textArea.setEnabled(false); 
+        chunkLoadProgressBar.setVisible(true); 
         lastRequestedLocalPercent = localPercentForScroll;
         
         if (requestPreview) {
@@ -843,13 +865,17 @@ public class AdvancedTextEditorPanel extends JPanel {
                         applyStateUpdates(state, direction, localPercentForScroll, postLoadAction);
                     } else {
                         isLoadingChunk = false;
-                        textArea.setEditable(!isCurrentlyPreview);
+                        textArea.setEnabled(true);
+                        chunkLoadProgressBar.setVisible(false);
+                        if (wasEditorFocused && !isCurrentlyPreview) textArea.requestFocusInWindow();
                     }
                 } catch (Exception e) {
                     showError("Chunk load failure: " + e.getMessage());
                     isLoadingChunk = false;
                     lblLoadingStatus.setText("");
-                    textArea.setEditable(!isCurrentlyPreview);
+                    textArea.setEnabled(true);
+                    chunkLoadProgressBar.setVisible(false);
+                    if (wasEditorFocused && !isCurrentlyPreview) textArea.requestFocusInWindow();
                 }
             }
         }.execute();
@@ -917,7 +943,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         loadedChunkIndex = state.chunkIndex();
         isCurrentlyPreview = state.isPreview();
         currentChunkStartOffset = state.startOffset();
-
+        
         Document doc = documentCache.get(loadedChunkIndex);
         
         if (doc != null && !isCurrentlyPreview) {
@@ -951,7 +977,10 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
         }
         
+        textArea.setEnabled(true);
         textArea.setEditable(!isCurrentlyPreview);
+        chunkLoadProgressBar.setVisible(false);
+
         lineNumberPanel.setStartLine(state.startLine());
         
         updateTitle(state.fileName() + (isCurrentlyPreview ? " [PREVIEW]" : ""));
@@ -1007,6 +1036,11 @@ public class AdvancedTextEditorPanel extends JPanel {
                 }
             } else {
                 syncLocalToGlobalScroll();
+                
+                if (wasEditorFocused && !isCurrentlyPreview) {
+                    textArea.requestFocusInWindow();
+                }
+                
                 if (postLoadAction != null) postLoadAction.run();
             }
         });
