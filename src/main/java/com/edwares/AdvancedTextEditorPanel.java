@@ -529,6 +529,10 @@ public class AdvancedTextEditorPanel extends JPanel {
         }.execute();
     }
 
+    public boolean isDirty() {
+        return isDirty;
+    }
+
     public void cut() { if (!isCurrentlyPreview) textArea.cut(); }
     public void copy() { textArea.copy(); }
     public void paste() { if (!isCurrentlyPreview) textArea.paste(); }

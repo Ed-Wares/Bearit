@@ -6,16 +6,22 @@ import javax.swing.event.MenuListener;
 import java.awt.*;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.io.File;
 import java.util.List;
 
 public class TextEditorFrame extends JFrame {
-    private final AdvancedTextEditorPanel editorPanel;
+    private final JTabbedPane tabbedPane;
     private final JFileChooser fileChooser;
+    
+    // Safety lock to prevent infinite recursion during tab creation/deletion
+    private boolean isUpdatingTabs = false; 
 
     public TextEditorFrame() {
         BearitProperties props = BearitProperties.getInstance();
         
+        setTitle("Bearit Text Editor");
         // The screen size is the working area of the screen, exluding taskbars and docks
         GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
         Insets screenInsets = Toolkit.getDefaultToolkit().getScreenInsets(ge.getDefaultScreenDevice().getDefaultConfiguration());
@@ -28,12 +34,6 @@ public class TextEditorFrame extends JFrame {
         if (props.getFrameHeight() > screenHeight) {
             props.setFrameHeight(screenHeight);
         }
-        
-        setTitle("Bearit Text Editor - Untitled");
-        setSize(props.getFrameWidth(), props.getFrameHeight());
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setLocationRelativeTo(null);
-
         // Load and set the application icon ---
         try {
             java.net.URL iconURL = getClass().getResource("/BearFace.png");
@@ -46,12 +46,18 @@ public class TextEditorFrame extends JFrame {
         } catch (Exception e) {
             System.err.println("Failed to load application icon: " + e.getMessage());
         }
-
-        // Save window dimensions automatically upon closing
-        addComponentListener(new java.awt.event.ComponentAdapter() {
-            public void componentResized(java.awt.event.ComponentEvent evt) {
-                props.setFrameWidth(getWidth());
-                props.setFrameHeight(getHeight());
+        setSize(props.getFrameWidth(), props.getFrameHeight());
+        setLocationRelativeTo(null);
+        
+        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                if (checkAllTabsBeforeExit()) {
+                    props.setFrameWidth(getWidth());
+                    props.setFrameHeight(getHeight());
+                    System.exit(0);
+                }
             }
         });
 
@@ -63,31 +69,227 @@ public class TextEditorFrame extends JFrame {
             }
         } catch (Exception e) {}
 
-        editorPanel = new AdvancedTextEditorPanel();
-        
-        // Apply properties font setting
-        editorPanel.setFont(new Font(props.getFontName(), Font.PLAIN, props.getFontSize()));
-        
         fileChooser = new JFileChooser();
+        tabbedPane = new JTabbedPane();
 
-        // Listen for document title changes from the editor panel to update the window frame
-        editorPanel.addPropertyChangeListener("editorTitle", evt -> {
-            setTitle("Bearit Text Editor - " + evt.getNewValue());
+        // The "+" Tab routing logic with safety lock
+        tabbedPane.addChangeListener(e -> {
+            if (isUpdatingTabs) return; // Ignore events while we are building/destroying tabs
+            
+            int selected = tabbedPane.getSelectedIndex();
+            if (selected == tabbedPane.getTabCount() - 1) {
+                // Decouple the tab creation from the selection event to prevent UI freezes
+                SwingUtilities.invokeLater(() -> addNewTab(null));
+            } else {
+                updateFrameTitle();
+            }
         });
 
-        // Setup the UI Layout
+        // Add the permanent "+" dummy tab
+        tabbedPane.addTab("+", new JPanel());
+
         add(createToolBar(), BorderLayout.NORTH);
-        add(editorPanel, BorderLayout.CENTER);
+        add(tabbedPane, BorderLayout.CENTER);
         setJMenuBar(createMenuBar());
+
+        // Launch with one empty tab
+        //addNewTab(null);
     }
 
-    /**
-     * Called by the application bootstrapper if a file is passed via command-line arguments.
-     */
-    public void loadInitialFile(File file) {
-        editorPanel.loadFile(file);
-        BearitProperties.getInstance().addRecentFile(file.getAbsolutePath());
+    // --- Tab Management ---
+
+    private void addNewTab(File file) {
+        isUpdatingTabs = true; // Engage lock
+        try {
+            AdvancedTextEditorPanel editor = new AdvancedTextEditorPanel();
+            BearitProperties props = BearitProperties.getInstance();
+            editor.setFont(new Font(props.getFontName(), Font.PLAIN, props.getFontSize()));
+
+            int insertIndex = Math.max(0, tabbedPane.getTabCount() - 1);
+            tabbedPane.insertTab("Untitled", null, editor, null, insertIndex);
+
+            // Custom Tab Header with Close Button
+            JPanel tabHeader = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+            tabHeader.setOpaque(false);
+            JLabel lblTitle = new JLabel("Untitled ");
+            JButton btnClose = new JButton("x");
+            btnClose.setMargin(new Insets(0, 2, 0, 2));
+            btnClose.setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 4));
+            btnClose.setFocusable(false);
+            btnClose.setContentAreaFilled(false);
+            
+            btnClose.addMouseListener(new java.awt.event.MouseAdapter() {
+                public void mouseEntered(java.awt.event.MouseEvent evt) { btnClose.setForeground(Color.RED); }
+                public void mouseExited(java.awt.event.MouseEvent evt) { btnClose.setForeground(UIManager.getColor("Button.foreground")); }
+            });
+            
+            btnClose.addActionListener(e -> closeTab(editor));
+
+            tabHeader.add(lblTitle);
+            tabHeader.add(btnClose);
+            tabbedPane.setTabComponentAt(insertIndex, tabHeader);
+
+            editor.addPropertyChangeListener("editorTitle", evt -> {
+                String title = (String) evt.getNewValue();
+                lblTitle.setText(title + " ");
+                if (getActiveEditor() == editor) {
+                    updateFrameTitle();
+                }
+            });
+
+            if (file != null) {
+                editor.loadFile(file);
+                BearitProperties.getInstance().addRecentFile(file.getAbsolutePath());
+            } else {
+                editor.createNewDocument();
+            }
+
+            tabbedPane.setSelectedComponent(editor);
+        } finally {
+            isUpdatingTabs = false; // Disengage lock
+            updateFrameTitle();
+        }
     }
+
+    private void closeTab(AdvancedTextEditorPanel editor) {
+        if (editor.isDirty()) {
+            tabbedPane.setSelectedComponent(editor); 
+            int opt = JOptionPane.showConfirmDialog(this, 
+                "Save changes to " + editor.getCurrentTitle() + "?", 
+                "Unsaved Changes", 
+                JOptionPane.YES_NO_CANCEL_OPTION);
+            
+            if (opt == JOptionPane.CANCEL_OPTION || opt == JOptionPane.CLOSED_OPTION) {
+                return; // Abort closing
+            }
+            if (opt == JOptionPane.YES_OPTION) {
+                boolean saved = performSaveFor(editor);
+                if (!saved) return; // Abort if they cancelled the Save As dialog
+            }
+        }
+        
+        isUpdatingTabs = true; // Engage lock
+        try {
+            tabbedPane.remove(editor);
+            
+            // If all functional tabs are closed (only the "+" remains), open a fresh one
+            if (tabbedPane.getTabCount() == 1) {
+                SwingUtilities.invokeLater(() -> addNewTab(null));
+            } 
+            // PREVENT "+" FOCUS: If Swing auto-selected the "+" tab, shift focus left
+            else if (tabbedPane.getSelectedIndex() == tabbedPane.getTabCount() - 1) {
+                tabbedPane.setSelectedIndex(tabbedPane.getTabCount() - 2);
+            }
+        } finally {
+            isUpdatingTabs = false; // Disengage lock
+            updateFrameTitle();
+        }
+    }
+
+    private boolean checkAllTabsBeforeExit() {
+        for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            if (c instanceof AdvancedTextEditorPanel) {
+                AdvancedTextEditorPanel editor = (AdvancedTextEditorPanel) c;
+                if (editor.isDirty()) {
+                    tabbedPane.setSelectedComponent(editor);
+                    int opt = JOptionPane.showConfirmDialog(this, 
+                        "Save changes to " + editor.getCurrentTitle() + "?", 
+                        "Unsaved Changes", 
+                        JOptionPane.YES_NO_CANCEL_OPTION);
+                    
+                    if (opt == JOptionPane.CANCEL_OPTION || opt == JOptionPane.CLOSED_OPTION) {
+                        return false; 
+                    }
+                    if (opt == JOptionPane.YES_OPTION) {
+                        if (!performSaveFor(editor)) return false; 
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    private AdvancedTextEditorPanel getActiveEditor() {
+        Component c = tabbedPane.getSelectedComponent();
+        if (c instanceof AdvancedTextEditorPanel) {
+            return (AdvancedTextEditorPanel) c;
+        }
+        return null; 
+    }
+
+    private void updateFrameTitle() {
+        AdvancedTextEditorPanel active = getActiveEditor();
+        if (active != null) {
+            setTitle("Bearit Text Editor - " + active.getCurrentTitle());
+        } else {
+            setTitle("Bearit Text Editor");
+        }
+    }
+
+    // --- File Operations ---
+
+    public void loadInitialFile(File file) {
+        openFileInTab(file);
+    }
+
+    private void openFileInTab(File file) {
+        AdvancedTextEditorPanel active = getActiveEditor();
+        if (active != null && !active.isDirty() && !active.hasActiveFile()) {
+            active.loadFile(file);
+            BearitProperties.getInstance().addRecentFile(file.getAbsolutePath());
+        } else {
+            addNewTab(file);
+        }
+    }
+
+    private void performNew() {
+        addNewTab(null);
+    }
+
+    private void performOpen() {
+        int option = fileChooser.showOpenDialog(this);
+        if (option == JFileChooser.APPROVE_OPTION) {
+            openFileInTab(fileChooser.getSelectedFile());
+        }
+    }
+
+    private void performSave() {
+        AdvancedTextEditorPanel active = getActiveEditor();
+        if (active != null) {
+            performSaveFor(active);
+        }
+    }
+
+    private void performSaveAs() {
+        AdvancedTextEditorPanel active = getActiveEditor();
+        if (active != null) {
+            int option = fileChooser.showSaveDialog(this);
+            if (option == JFileChooser.APPROVE_OPTION) {
+                File selected = fileChooser.getSelectedFile();
+                active.saveAsFile(selected);
+                BearitProperties.getInstance().addRecentFile(selected.getAbsolutePath());
+            }
+        }
+    }
+
+    private boolean performSaveFor(AdvancedTextEditorPanel editor) {
+        if (!editor.hasActiveFile()) {
+            int option = fileChooser.showSaveDialog(this);
+            if (option == JFileChooser.APPROVE_OPTION) {
+                File selected = fileChooser.getSelectedFile();
+                editor.saveAsFile(selected);
+                BearitProperties.getInstance().addRecentFile(selected.getAbsolutePath());
+                return true;
+            }
+            return false;
+        } else {
+            editor.saveCurrentFile();
+            return true;
+        }
+    }
+
+    // --- UI Setup ---
 
     private JToolBar createToolBar() {
         JToolBar toolBar = new JToolBar();
@@ -112,9 +314,9 @@ public class TextEditorFrame extends JFrame {
         // Tooltip text for better UX
         btnNew.setToolTipText("Create a new document");
         btnOpen.setToolTipText("Open an existing file");
-        btnSave.setToolTipText("Save current changes");
-        btnUndo.setToolTipText("Undo last edit in current chunk");
-        btnRedo.setToolTipText("Redo last edit in current chunk");
+        btnSave.setToolTipText("Save current tab");
+        btnUndo.setToolTipText("Undo last edit");
+        btnRedo.setToolTipText("Redo last edit");
         btnCut.setToolTipText("Cut selected text");
         btnCopy.setToolTipText("Copy selected text");
         btnPaste.setToolTipText("Paste text from clipboard");
@@ -125,13 +327,14 @@ public class TextEditorFrame extends JFrame {
         btnOpen.addActionListener(e -> performOpen());
         btnSave.addActionListener(e -> performSave());
         btnSaveAs.addActionListener(e -> performSaveAs());
-        btnUndo.addActionListener(e -> editorPanel.undo());
-        btnRedo.addActionListener(e -> editorPanel.redo());
-        btnCut.addActionListener(e -> editorPanel.cut());
-        btnCopy.addActionListener(e -> editorPanel.copy());
-        btnPaste.addActionListener(e -> editorPanel.paste());
-        btnSearch.addActionListener(e -> editorPanel.showSearchDialog());
-        btnGoto.addActionListener(e -> editorPanel.showGotoLineDialog());
+        
+        btnUndo.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().undo(); });
+        btnRedo.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().redo(); });
+        btnCut.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().cut(); });
+        btnCopy.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().copy(); });
+        btnPaste.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().paste(); });
+        btnSearch.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().showSearchDialog(); });
+        btnGoto.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().showGotoLineDialog(); });
 
         toolBar.add(btnNew);
         toolBar.add(btnOpen);
@@ -148,7 +351,7 @@ public class TextEditorFrame extends JFrame {
         toolBar.add(btnSearch);
         toolBar.add(btnGoto);
 
-        // --- Load Custom Tools from Properties ---
+        // Custom Tools Implementation
         BearitProperties props = BearitProperties.getInstance();
         boolean hasCustomTools = false;
         
@@ -203,7 +406,7 @@ public class TextEditorFrame extends JFrame {
 
         // --- File Menu ---
         JMenu fileMenu = new JMenu("File");
-        JMenuItem newItem = new JMenuItem("New");
+        JMenuItem newItem = new JMenuItem("New Tab");
         JMenuItem openItem = new JMenuItem("Open...");
         
         // --- Open Recent Submenu ---
@@ -223,8 +426,7 @@ public class TextEditorFrame extends JFrame {
                         pathItem.addActionListener(evt -> {
                             File f = new File(path);
                             if (f.exists()) {
-                                editorPanel.loadFile(f);
-                                BearitProperties.getInstance().addRecentFile(path);
+                                openFileInTab(f);
                             } else {
                                 JOptionPane.showMessageDialog(TextEditorFrame.this, 
                                     "File not found: " + path, "Error", JOptionPane.ERROR_MESSAGE);
@@ -246,11 +448,15 @@ public class TextEditorFrame extends JFrame {
         openItem.addActionListener(e -> performOpen());
         saveItem.addActionListener(e -> performSave());
         saveAsItem.addActionListener(e -> performSaveAs());
-        exitItem.addActionListener(e -> System.exit(0));
+        exitItem.addActionListener(e -> {
+            if (checkAllTabsBeforeExit()) {
+                System.exit(0);
+            }
+        });
 
         fileMenu.add(newItem);
         fileMenu.add(openItem);
-        fileMenu.add(recentMenu); // Add the dynamic recent menu
+        fileMenu.add(recentMenu);
         fileMenu.addSeparator();
         fileMenu.add(saveItem);
         fileMenu.add(saveAsItem);
@@ -273,13 +479,13 @@ public class TextEditorFrame extends JFrame {
         searchItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK));
         gotoItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_G, InputEvent.CTRL_DOWN_MASK));
 
-        undoItem.addActionListener(e -> editorPanel.undo());
-        redoItem.addActionListener(e -> editorPanel.redo());
-        cutItem.addActionListener(e -> editorPanel.cut());
-        copyItem.addActionListener(e -> editorPanel.copy());
-        pasteItem.addActionListener(e -> editorPanel.paste());
-        searchItem.addActionListener(e -> editorPanel.showSearchDialog());
-        gotoItem.addActionListener(e -> editorPanel.showGotoLineDialog());
+        undoItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().undo(); });
+        redoItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().redo(); });
+        cutItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().cut(); });
+        copyItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().copy(); });
+        pasteItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().paste(); });
+        searchItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().showSearchDialog(); });
+        gotoItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().showGotoLineDialog(); });
 
         editMenu.add(undoItem);
         editMenu.add(redoItem);
@@ -302,39 +508,6 @@ public class TextEditorFrame extends JFrame {
         menuBar.add(helpMenu);
 
         return menuBar;
-    }
-
-    // --- Action Handlers ---
-
-    private void performNew() {
-        editorPanel.createNewDocument();
-    }
-
-    private void performOpen() {
-        int option = fileChooser.showOpenDialog(this);
-        if (option == JFileChooser.APPROVE_OPTION) {
-            File selected = fileChooser.getSelectedFile();
-            editorPanel.loadFile(selected);
-            BearitProperties.getInstance().addRecentFile(selected.getAbsolutePath());
-        }
-    }
-
-    private void performSave() {
-        // Automatically route to "Save As" if the file hasn't been saved to disk yet
-        if (!editorPanel.hasActiveFile()) {
-            performSaveAs();
-        } else {
-            editorPanel.saveCurrentFile();
-        }
-    }
-
-    private void performSaveAs() {
-        int option = fileChooser.showSaveDialog(this);
-        if (option == JFileChooser.APPROVE_OPTION) {
-            File selected = fileChooser.getSelectedFile();
-            editorPanel.saveAsFile(selected);
-            BearitProperties.getInstance().addRecentFile(selected.getAbsolutePath());
-        }
     }
 
     private void showAboutDialog() {
