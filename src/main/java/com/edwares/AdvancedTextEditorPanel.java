@@ -36,6 +36,9 @@ public class AdvancedTextEditorPanel extends JPanel {
     private final LargeFileManager fileManager;
     private File activeFile = null;
 
+    // Tracks the active load task so we can kill it if the user scrolls past it
+    private SwingWorker<LargeFileManager.ChunkState, Void> activeChunkWorker = null;
+
     // --- Global Undo Architecture ---
     private final GlobalUndoManager globalUndoManager = new GlobalUndoManager();
     
@@ -847,6 +850,11 @@ public class AdvancedTextEditorPanel extends JPanel {
             return; 
         }
 
+        // --- NEW: Immediately abort any pending disk reads if the user keeps scrolling ---
+        if (activeChunkWorker != null && !activeChunkWorker.isDone()) {
+            activeChunkWorker.cancel(true);
+        }
+
         wasEditorFocused = textArea.isFocusOwner();
 
         isLoadingChunk = true;
@@ -866,37 +874,52 @@ public class AdvancedTextEditorPanel extends JPanel {
         isDirty = false;
 
         final int finalTarget = targetChunk;
-        new SwingWorker<LargeFileManager.ChunkState, Void>() {
+        
+        // Assign to the tracking variable
+        activeChunkWorker = new SwingWorker<LargeFileManager.ChunkState, Void>() {
             @Override
             protected LargeFileManager.ChunkState doInBackground() throws Exception {
                 if (wasDirty && !isCurrentlyPreview) {
                     fileManager.commitCurrentChunk(currentText);
                 }
+                // If cancelled before we even start the heavy IO, abort.
+                if (isCancelled()) throw new java.util.concurrent.CancellationException();
+                
                 return fileManager.navigateToIndex(finalTarget, requestPreview);
             }
 
             @Override
             protected void done() {
                 try {
+                    // If the user scrolled past this chunk, quietly exit without updating the UI
+                    if (isCancelled()) return; 
+                    
                     LargeFileManager.ChunkState state = get();
                     if (state != null) {
                         applyStateUpdates(state, direction, localPercentForScroll, postLoadAction);
                     } else {
-                        isLoadingChunk = false;
-                        textArea.setEnabled(true);
-                        chunkLoadProgressBar.setVisible(false);
-                        if (wasEditorFocused && !isCurrentlyPreview) textArea.requestFocusInWindow();
+                        unlockUI();
                     }
+                } catch (java.util.concurrent.CancellationException ce) {
+                    // Expected behavior when scrolling fast, do nothing.
                 } catch (Exception e) {
-                    showError("Chunk load failure: " + e.getMessage());
-                    isLoadingChunk = false;
-                    lblLoadingStatus.setText("");
-                    textArea.setEnabled(true);
-                    chunkLoadProgressBar.setVisible(false);
-                    if (wasEditorFocused && !isCurrentlyPreview) textArea.requestFocusInWindow();
+                    if (!isCancelled()) {
+                        showError("Chunk load failure: " + e.getMessage());
+                        lblLoadingStatus.setText("");
+                        unlockUI();
+                    }
                 }
             }
-        }.execute();
+            
+            private void unlockUI() {
+                isLoadingChunk = false;
+                textArea.setEnabled(true);
+                chunkLoadProgressBar.setVisible(false);
+                if (wasEditorFocused && !isCurrentlyPreview) textArea.requestFocusInWindow();
+            }
+        };
+        
+        activeChunkWorker.execute();
     }
 
     private void syncLocalToGlobalScroll() {
