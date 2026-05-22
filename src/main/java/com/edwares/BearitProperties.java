@@ -18,9 +18,10 @@ public class BearitProperties {
     private boolean checkForUpdates = true;
     private String fontName = "Monospaced";
     private int fontSize = 14;
+    private boolean wordWrap = false;
     private final String[] customToolCommands = new String[8];
     private final String[] customToolIcons = new String[8];
-    private final String[] customToolNames = new String[8];
+    private final String[] customToolNames = new String[8]; 
 
     private BearitProperties() {
         props = new Properties();
@@ -68,6 +69,7 @@ public class BearitProperties {
             checkForUpdates = Boolean.parseBoolean(props.getProperty("updates.check", "true"));
             fontName = props.getProperty("font.name", "Monospaced");
             fontSize = Integer.parseInt(props.getProperty("font.size", "14"));
+            wordWrap = Boolean.parseBoolean(props.getProperty("word.wrap", "false"));
 
             recentFiles.clear();
             for (int i = 1; i <= 10; i++) {
@@ -93,6 +95,7 @@ public class BearitProperties {
         props.setProperty("updates.check", String.valueOf(checkForUpdates));
         props.setProperty("font.name", fontName);
         props.setProperty("font.size", String.valueOf(fontSize));
+        props.setProperty("word.wrap", String.valueOf(wordWrap));
 
         // Clear out old recent file keys
         for (int i = 1; i <= 10; i++) {
@@ -139,21 +142,18 @@ public class BearitProperties {
     // --- Getters & Setters ---
 
     public List<String> getRecentFiles() { return new ArrayList<>(recentFiles); }
-    
     public int getFrameWidth() { return frameWidth; }
     public void setFrameWidth(int frameWidth) { this.frameWidth = frameWidth; save(); }
-
     public int getFrameHeight() { return frameHeight; }
     public void setFrameHeight(int frameHeight) { this.frameHeight = frameHeight; save(); }
-
     public boolean isCheckForUpdates() { return checkForUpdates; }
     public void setCheckForUpdates(boolean checkForUpdates) { this.checkForUpdates = checkForUpdates; save(); }
-
     public String getFontName() { return fontName; }
     public void setFontName(String fontName) { this.fontName = fontName; save(); }
-
     public int getFontSize() { return fontSize; }
     public void setFontSize(int fontSize) { this.fontSize = fontSize; save(); }
+    public boolean isWordWrap() { return wordWrap; }
+    public void setWordWrap(boolean wordWrap) { this.wordWrap = wordWrap; save(); }
 
     public String getCustomToolCommand(int index) {
         if (index >= 0 && index < 8) return customToolCommands[index];
@@ -162,7 +162,6 @@ public class BearitProperties {
     public void setCustomToolCommand(int index, String command) {
         if (index >= 0 && index < 8) { customToolCommands[index] = command; save(); }
     }
-
     public String getCustomToolIcon(int index) {
         if (index >= 0 && index < 8) return customToolIcons[index];
         return "";
@@ -170,7 +169,6 @@ public class BearitProperties {
     public void setCustomToolIcon(int index, String iconPath) {
         if (index >= 0 && index < 8) { customToolIcons[index] = iconPath; save(); }
     }
-
     public String getCustomToolName(int index) {
         if (index >= 0 && index < 8) return customToolNames[index];
         return "";

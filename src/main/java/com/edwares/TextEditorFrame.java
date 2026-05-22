@@ -4,6 +4,7 @@ import javax.swing.*;
 import javax.swing.event.MenuEvent;
 import javax.swing.event.MenuListener;
 import java.awt.*;
+import java.awt.event.ActionListener;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
@@ -17,6 +18,10 @@ public class TextEditorFrame extends JFrame {
     
     // Safety lock to prevent infinite recursion during tab creation/deletion
     private boolean isUpdatingTabs = false; 
+    
+    // UI Elements that need their selected state synchronized 
+    private JToggleButton btnWordWrap;
+    private JCheckBoxMenuItem wrapMenuItem;
 
     public TextEditorFrame() {
         BearitProperties props = BearitProperties.getInstance();
@@ -298,6 +303,20 @@ public class TextEditorFrame extends JFrame {
             return true;
         }
     }
+    
+    // --- Word Wrap Operation ---
+
+    private void toggleGlobalWordWrap(boolean enableWrap) {
+        BearitProperties.getInstance().setWordWrap(enableWrap);
+        
+        // Push the setting dynamically into all actively opened file tabs
+        for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            if (c instanceof AdvancedTextEditorPanel) {
+                ((AdvancedTextEditorPanel) c).setWordWrap(enableWrap);
+            }
+        }
+    }
 
     // --- Generation Tool ---
 
@@ -423,8 +442,11 @@ public class TextEditorFrame extends JFrame {
         JButton btnSearch = new JButton("🔍 Search");
         JButton btnGoto = new JButton("📍 Go To Line");
 
-        // Tooltip text for better UX
-        btnNew.setToolTipText("Create a new document");
+        btnWordWrap = new JToggleButton("↩ Wrap");
+        boolean currentWrapState = BearitProperties.getInstance().isWordWrap();
+        btnWordWrap.setSelected(currentWrapState);
+
+        btnNew.setToolTipText("Create a new document tab");
         btnOpen.setToolTipText("Open an existing file");
         btnSave.setToolTipText("Save current tab");
         btnUndo.setToolTipText("Undo last edit");
@@ -434,6 +456,7 @@ public class TextEditorFrame extends JFrame {
         btnPaste.setToolTipText("Paste text from clipboard");
         btnSearch.setToolTipText("Search and Replace across full file");
         btnGoto.setToolTipText("Jump to specific line number");
+        btnWordWrap.setToolTipText("Toggle global Word Wrap mode");
 
         btnNew.addActionListener(e -> performNew());
         btnOpen.addActionListener(e -> performOpen());
@@ -447,6 +470,15 @@ public class TextEditorFrame extends JFrame {
         btnPaste.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().paste(); });
         btnSearch.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().showSearchDialog(); });
         btnGoto.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().showGotoLineDialog(); });
+
+        // Synchronize Toolbar and Menu Checkbox visually
+        ActionListener wrapToggleAction = e -> {
+            boolean isChecked = ((AbstractButton) e.getSource()).isSelected();
+            btnWordWrap.setSelected(isChecked);
+            if (wrapMenuItem != null) wrapMenuItem.setSelected(isChecked);
+            toggleGlobalWordWrap(isChecked);
+        };
+        btnWordWrap.addActionListener(wrapToggleAction);
 
         toolBar.add(btnNew);
         toolBar.add(btnOpen);
@@ -462,6 +494,8 @@ public class TextEditorFrame extends JFrame {
         toolBar.addSeparator();
         toolBar.add(btnSearch);
         toolBar.add(btnGoto);
+        toolBar.addSeparator();
+        toolBar.add(btnWordWrap);
 
         // Custom Tools Implementation
         BearitProperties props = BearitProperties.getInstance();
@@ -575,7 +609,7 @@ public class TextEditorFrame extends JFrame {
         fileMenu.addSeparator();
         fileMenu.add(exitItem);
 
-        // --- Edit Menu ---
+        // --- Edit / View Menu ---
         JMenu editMenu = new JMenu("Edit");
         JMenuItem undoItem = new JMenuItem("Undo");
         JMenuItem redoItem = new JMenuItem("Redo");
@@ -609,6 +643,18 @@ public class TextEditorFrame extends JFrame {
         editMenu.add(searchItem);
         editMenu.add(gotoItem);
 
+        JMenu viewMenu = new JMenu("View");
+        wrapMenuItem = new JCheckBoxMenuItem("Word Wrap");
+        wrapMenuItem.setSelected(BearitProperties.getInstance().isWordWrap());
+        
+        wrapMenuItem.addActionListener(e -> {
+            boolean isChecked = wrapMenuItem.isSelected();
+            if (btnWordWrap != null) btnWordWrap.setSelected(isChecked);
+            toggleGlobalWordWrap(isChecked);
+        });
+        
+        viewMenu.add(wrapMenuItem);
+
         // --- Help Menu ---
         JMenu helpMenu = new JMenu("Help");
         JMenuItem generateItem = new JMenuItem("Generate Test File...");
@@ -622,6 +668,7 @@ public class TextEditorFrame extends JFrame {
 
         menuBar.add(fileMenu);
         menuBar.add(editMenu);
+        menuBar.add(viewMenu);
         menuBar.add(helpMenu);
 
         return menuBar;
@@ -631,8 +678,7 @@ public class TextEditorFrame extends JFrame {
         String appVersion = BearitApp.class.getPackage().getImplementationVersion(); // get version from pom.xml use <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
         String aboutMessage = "Bearit Text Editor\n"
                 + "Version: " + appVersion + "\n\n"
-                + "A high-performance Java 21 text editor designed specifically "
-                + "for handling massive file sizes with extreme memory efficiency.\n\n"
+                + "Bearit is a high-performance Java 21 text editor designed specifically to handle massive file sizes, helping your system bear the heavy memory load.\n\n"
                 + "By Ed Jakubowski  EdWaresApp@gmail.com\n";
                 
         JOptionPane.showMessageDialog(this, 

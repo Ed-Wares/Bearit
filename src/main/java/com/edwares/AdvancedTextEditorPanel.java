@@ -30,6 +30,8 @@ public class AdvancedTextEditorPanel extends JPanel {
     private final JLabel lblStatus;
     private final JLabel lblLoadingStatus;
     private final JLabel lblCursorInfo;
+    private final JLabel lblFontInfo;
+    private final JLabel lblIndexingStatus; // Background tracking label
     private final JProgressBar chunkLoadProgressBar; 
     private final JScrollBar globalScrollBar;
     
@@ -108,86 +110,6 @@ public class AdvancedTextEditorPanel extends JPanel {
         });
         settleTimer.setRepeats(false);
 
-        textArea = new JTextArea() {
-            @Override
-            protected void paintComponent(Graphics g) {
-                g.setColor(getBackground());
-                g.fillRect(0, 0, getWidth(), getHeight());
-                try {
-                    Rectangle r = modelToView2D(getCaretPosition()).getBounds();
-                    g.setColor(new Color(235, 245, 255)); 
-                    g.fillRect(0, r.y, getWidth(), r.height);
-                } catch (Exception e) {}
-                
-                setOpaque(false);
-                super.paintComponent(g);
-                setOpaque(true);
-            }
-        };
-        textArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
-        textArea.setLineWrap(false);
-        
-        // Intelligent Focus Listener ---
-        textArea.addFocusListener(new FocusAdapter() {
-            @Override
-            public void focusGained(FocusEvent e) {
-                wasEditorFocused = true;
-            }
-            @Override
-            public void focusLost(FocusEvent e) {
-                // Only mark focus as lost if the user explicitly clicked away.
-                // If isEnabled() is false, the focus loss was artificially caused by the chunk loader locking the UI.
-                if (textArea.isEnabled()) {
-                    wasEditorFocused = false;
-                }
-                textArea.getCaret().setSelectionVisible(true);
-            }
-        });
-
-        lineNumberPanel = new LineNumberPanel(textArea);
-
-        textArea.addCaretListener(e -> {
-            if (isNavigating) return;
-            updateCursorStatus();
-            try {
-                int line = textArea.getLineOfOffset(textArea.getCaretPosition());
-                lineNumberPanel.setCurrentLine(line);
-            } catch (Exception ex) {}
-            textArea.repaint(); 
-        });
-
-        setupKeyboardShortcuts();
-
-        scrollPane = new JScrollPane(textArea);
-        scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_NEVER);
-        scrollPane.setRowHeaderView(lineNumberPanel);
-        
-        scrollPane.getVerticalScrollBar().addAdjustmentListener(e -> {
-            if (!isSyncingScroll && !isNavigating && !isLoadingChunk) {
-                syncLocalToGlobalScroll();
-            }
-        });
-
-        scrollPane.addMouseWheelListener(e -> {
-            if (isLoadingChunk || isNavigating) return;
-            JScrollBar vBar = scrollPane.getVerticalScrollBar();
-            if (e.getWheelRotation() > 0 && vBar.getValue() + vBar.getVisibleAmount() >= vBar.getMaximum()) {
-                triggerAutoNavigate(1);
-            } else if (e.getWheelRotation() < 0 && vBar.getValue() <= 0) {
-                triggerAutoNavigate(-1);
-            }
-        });
-
-        add(scrollPane, BorderLayout.CENTER);
-
-        globalScrollBar = new JScrollBar(JScrollBar.VERTICAL, 0, 1, 0, SCROLL_RESOLUTION);
-        globalScrollBar.addAdjustmentListener(e -> {
-            if (!isSyncingScroll && !isNavigating) {
-                syncGlobalToLocalScroll();
-            }
-        });
-        add(globalScrollBar, BorderLayout.EAST);
-
         JPanel statusBar = new JPanel(new BorderLayout());
         statusBar.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
         
@@ -206,18 +128,136 @@ public class AdvancedTextEditorPanel extends JPanel {
         leftStatusPanel.add(lblLoadingStatus);
         leftStatusPanel.add(chunkLoadProgressBar);
         
+        JPanel rightStatusPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 15, 0));
+        lblIndexingStatus = new JLabel(""); 
+        lblIndexingStatus.setForeground(new Color(120, 120, 120)); // Subtle grey
+        lblFontInfo = new JLabel("Font: 14pt"); 
         lblCursorInfo = new JLabel("Line: 1 | Pos: 0");
         
+        rightStatusPanel.add(lblIndexingStatus);
+        rightStatusPanel.add(lblFontInfo);
+        rightStatusPanel.add(lblCursorInfo);
+        
         statusBar.add(leftStatusPanel, BorderLayout.WEST);
-        statusBar.add(lblCursorInfo, BorderLayout.EAST);
+        statusBar.add(rightStatusPanel, BorderLayout.EAST);
         add(statusBar, BorderLayout.SOUTH);
+
+        textArea = new JTextArea() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                g.setColor(getBackground());
+                g.fillRect(0, 0, getWidth(), getHeight());
+                try {
+                    Rectangle r = modelToView2D(getCaretPosition()).getBounds();
+                    g.setColor(new Color(235, 245, 255)); 
+                    g.fillRect(0, r.y, getWidth(), r.height);
+                } catch (Exception e) {}
+                
+                setOpaque(false);
+                super.paintComponent(g);
+                setOpaque(true);
+            }
+        };
+        textArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
+        
+        // Intelligent Focus Listener ---
+        textArea.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusGained(FocusEvent e) {
+                wasEditorFocused = true;
+            }
+            @Override
+            public void focusLost(FocusEvent e) {
+                // Only mark focus as lost if the user explicitly clicked away.
+                // If isEnabled() is false, the focus loss was artificially caused by the chunk loader locking the UI.
+                if (textArea.isEnabled()) {
+                    wasEditorFocused = false;
+                }
+                textArea.getCaret().setSelectionVisible(true);
+            }
+        });
+
+        lineNumberPanel = new LineNumberPanel(this, textArea);
+
+        textArea.addCaretListener(e -> {
+            if (isNavigating) return;
+            updateCursorStatus();
+            try {
+                int line = textArea.getLineOfOffset(textArea.getCaretPosition());
+                lineNumberPanel.setCurrentLine(line);
+            } catch (Exception ex) {}
+            textArea.repaint(); 
+        });
+
+        setupKeyboardShortcuts();
+
+        scrollPane = new JScrollPane(textArea);
+        scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_NEVER);
+        scrollPane.setRowHeaderView(lineNumberPanel);
+        
+        setWordWrap(BearitProperties.getInstance().isWordWrap());
+        
+        scrollPane.getVerticalScrollBar().addAdjustmentListener(e -> {
+            if (!isSyncingScroll && !isNavigating && !isLoadingChunk) {
+                syncLocalToGlobalScroll();
+            }
+        });
+
+        scrollPane.addMouseWheelListener(e -> {
+            if (e.isControlDown()) {
+                if (e.getWheelRotation() < 0) {
+                    adjustFontSize(2); 
+                } else {
+                    adjustFontSize(-2); 
+                }
+            } else if (!isLoadingChunk && !isNavigating) {
+                JScrollBar vBar = scrollPane.getVerticalScrollBar();
+                if (e.getWheelRotation() > 0 && vBar.getValue() + vBar.getVisibleAmount() >= vBar.getMaximum()) {
+                    triggerAutoNavigate(1);
+                } else if (e.getWheelRotation() < 0 && vBar.getValue() <= 0) {
+                    triggerAutoNavigate(-1);
+                }
+            }
+        });
+
+        add(scrollPane, BorderLayout.CENTER);
+
+        globalScrollBar = new JScrollBar(JScrollBar.VERTICAL, 0, 1, 0, SCROLL_RESOLUTION);
+        globalScrollBar.addAdjustmentListener(e -> {
+            if (!isSyncingScroll && !isNavigating) {
+                syncGlobalToLocalScroll();
+            }
+        });
+        add(globalScrollBar, BorderLayout.EAST);
+
     }
     
+    public void adjustFontSize(int delta) {
+        Font current = textArea.getFont();
+        int newSize = Math.max(6, Math.min(72, current.getSize() + delta)); 
+        setFont(current.deriveFont((float) newSize));
+        BearitProperties.getInstance().setFontSize(newSize);
+    }
+
     public void setFont(Font font) {
         if (textArea != null) {
             textArea.setFont(font);
-            lineNumberPanel.setFont(lineNumberPanel.getFont().deriveFont(font.getSize2D()));
+            if (lineNumberPanel != null) {
+                lineNumberPanel.setFont(lineNumberPanel.getFont().deriveFont(font.getSize2D()));
+                lineNumberPanel.adjustMetricSizing();
+            }
+            if (lblFontInfo != null) {
+                lblFontInfo.setText("Font: " + font.getSize() + "pt");
+            }
         }
+    }
+
+    public void setWordWrap(boolean wrap) {
+        textArea.setLineWrap(wrap);
+        textArea.setWrapStyleWord(wrap);
+        scrollPane.setHorizontalScrollBarPolicy(wrap ? JScrollPane.HORIZONTAL_SCROLLBAR_NEVER : JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+        lineNumberPanel.revalidate();
+        lineNumberPanel.repaint();
     }
 
     public boolean hasUnsavedChanges() {
@@ -633,6 +673,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         loadedChunkIndex = 0;
         pendingTargetChunk = -1;
         
+        lblIndexingStatus.setText(""); // Clear status for new files
+        
         documentCache.clear();
         globalUndoManager.discardAllEdits();
         Document newDoc = new PlainDocument();
@@ -658,7 +700,29 @@ public class AdvancedTextEditorPanel extends JPanel {
         this.activeFile = file;
         fileManager.setFile(file);
         
-        fileManager.buildIndexCacheAsync(); 
+        lblIndexingStatus.setText("⚙ Indexing lines: 0%");
+        
+        // Callback automatically fires as background indexer progresses
+        fileManager.buildIndexCacheAsync((indexedChunk) -> {
+            int total = Math.max(1, fileManager.getTotalChunks());
+            int pct = (int) (((indexedChunk + 1) * 100.0) / total);
+            
+            if (indexedChunk < total - 1) {
+                lblIndexingStatus.setText("⚙ Indexing lines: " + pct + "%");
+            } else {
+                lblIndexingStatus.setText(""); // Complete, hide label
+            }
+            
+            // If the chunk we are looking at was just processed, correct the line numbers instantly!
+            if (indexedChunk == loadedChunkIndex) {
+                long exactLine = fileManager.getExactLineOffset(loadedChunkIndex);
+                if (exactLine != -1 && exactLine != lineNumberPanel.getStartLine()) {
+                    lineNumberPanel.setStartLine(exactLine);
+                    updateCursorStatus();
+                    lineNumberPanel.repaint(); // Force clean redraw
+                }
+            }
+        }); 
 
         isDirty = false;
         setUnsavedChanges(false);
@@ -788,6 +852,16 @@ public class AdvancedTextEditorPanel extends JPanel {
             public void actionPerformed(ActionEvent e) { redo(); }
         });
 
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_EQUALS, InputEvent.CTRL_DOWN_MASK), "zoomIn");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_ADD, InputEvent.CTRL_DOWN_MASK), "zoomInNumPad");
+        am.put("zoomIn", new AbstractAction() { public void actionPerformed(ActionEvent e) { adjustFontSize(2); }});
+        am.put("zoomInNumPad", new AbstractAction() { public void actionPerformed(ActionEvent e) { adjustFontSize(2); }});
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_MINUS, InputEvent.CTRL_DOWN_MASK), "zoomOut");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_SUBTRACT, InputEvent.CTRL_DOWN_MASK), "zoomOutNumPad");
+        am.put("zoomOut", new AbstractAction() { public void actionPerformed(ActionEvent e) { adjustFontSize(-2); }});
+        am.put("zoomOutNumPad", new AbstractAction() { public void actionPerformed(ActionEvent e) { adjustFontSize(-2); }});
+
         // --- Wrap-Around Keyboard Navigation Routing ---
         bindWrapAroundNavigation(im, am, KeyEvent.VK_DOWN, 1);
         bindWrapAroundNavigation(im, am, KeyEvent.VK_PAGE_DOWN, 1);
@@ -850,7 +924,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             return; 
         }
 
-        // --- NEW: Immediately abort any pending disk reads if the user keeps scrolling ---
+        // Immediately abort any pending disk reads if the user keeps scrolling ---
         if (activeChunkWorker != null && !activeChunkWorker.isDone()) {
             activeChunkWorker.cancel(true);
         }
@@ -884,7 +958,6 @@ public class AdvancedTextEditorPanel extends JPanel {
                 }
                 // If cancelled before we even start the heavy IO, abort.
                 if (isCancelled()) throw new java.util.concurrent.CancellationException();
-                
                 return fileManager.navigateToIndex(finalTarget, requestPreview);
             }
 
@@ -1161,14 +1234,26 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     private static class LineNumberPanel extends JPanel {
         private final JTextArea textArea;
+        private final AdvancedTextEditorPanel parent; // Access parent to check indexing
         private long startLine = 1;
         private int currentLocalLine = 0;
 
-        public LineNumberPanel(JTextArea textArea) {
+        public LineNumberPanel(AdvancedTextEditorPanel parent, JTextArea textArea) {
+            this.parent = parent;
             this.textArea = textArea;
             setBackground(new Color(245, 245, 245));
             setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, Color.LIGHT_GRAY));
-            adjustMetricSizing();
+            
+            // Force repaint when indexing status changes ---
+            parent.lblIndexingStatus.addPropertyChangeListener("text", evt -> repaint());
+
+            textArea.addComponentListener(new ComponentAdapter() {
+                @Override
+                public void componentResized(ComponentEvent e) {
+                    revalidate();
+                    repaint();
+                }
+            });
         }
 
         public void setStartLine(long startLine) {
@@ -1186,13 +1271,18 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
 
         public void adjustMetricSizing() {
-            FontMetrics fm = textArea.getFontMetrics(textArea.getFont());
-            int totalLines = textArea.getLineCount();
-            int maximumDigits = String.valueOf(startLine + totalLines).length();
-            int functionalWidth = fm.stringWidth("0") * Math.max(maximumDigits, 3) + 12;
-            setPreferredSize(new Dimension(functionalWidth, textArea.getPreferredSize().height));
             revalidate();
             repaint();
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            FontMetrics fm = textArea.getFontMetrics(textArea.getFont());
+            int totalLines = textArea.getLineCount();
+            int maximumDigits = String.valueOf(startLine + totalLines).length() + 2; // +2 for "~ "
+            int functionalWidth = fm.stringWidth("0") * Math.max(maximumDigits, 4) + 12;
+            
+            return new Dimension(functionalWidth, textArea.getPreferredSize().height);
         }
 
         @Override
@@ -1200,17 +1290,27 @@ public class AdvancedTextEditorPanel extends JPanel {
             super.paintComponent(g);
             
             FontMetrics fm = g.getFontMetrics(textArea.getFont());
-            int lineHeight = fm.getHeight();
-            int localLineCount = textArea.getLineCount();
+            Rectangle viewportClip = getVisibleRect(); 
 
-            Rectangle viewportClip = g.getClipBounds();
-            int startingY = viewportClip.y;
-            int boundingY = viewportClip.y + viewportClip.height;
+            // Check if indexing is currently active via the status label
+            boolean isIndexing = parent.lblIndexingStatus.getText().contains("⚙");
 
-            int computedY = fm.getAscent();
-            for (int i = 0; i < localLineCount; i++) {
-                if (computedY + lineHeight >= startingY && computedY <= boundingY) {
-                    String stringLabel = String.valueOf(startLine + i);
+            try {
+                int startOffset = textArea.viewToModel2D(new Point(0, viewportClip.y));
+                int endOffset = textArea.viewToModel2D(new Point(0, viewportClip.y + viewportClip.height + fm.getHeight()));
+                
+                int startLineIdx = textArea.getLineOfOffset(startOffset);
+                int endLineIdx = textArea.getLineOfOffset(endOffset);
+
+                for (int i = startLineIdx; i <= endLineIdx; i++) {
+                    int offset = textArea.getLineStartOffset(i);
+                    Rectangle r = textArea.modelToView2D(offset).getBounds();
+                    
+                    if (r.y + r.height < viewportClip.y) continue;
+                    if (r.y > viewportClip.y + viewportClip.height) break;
+                    
+                    // --- Add ~ symbol if indexing is still in progress ---
+                    String stringLabel = (isIndexing ? "~" : "") + String.valueOf(startLine + i);
                     int alignedX = getWidth() - fm.stringWidth(stringLabel) - 6;
                     
                     if (i == currentLocalLine) {
@@ -1221,10 +1321,9 @@ public class AdvancedTextEditorPanel extends JPanel {
                         g.setColor(new Color(110, 110, 110));
                     }
                     
-                    g.drawString(stringLabel, alignedX, computedY + 2);
+                    g.drawString(stringLabel, alignedX, r.y + fm.getAscent());
                 }
-                computedY += lineHeight;
-            }
+            } catch (Exception e) {}
         }
     }
 }

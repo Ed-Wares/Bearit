@@ -122,6 +122,14 @@ public class LargeFileManager {
         return Math.max(totalChunks, dirtyChunks.keySet().stream().max(Integer::compare).orElse(0) + 1);
     }
 
+    /**
+     * Retrieves the exact line offset if the background indexer has processed it.
+     */
+    public long getExactLineOffset(int index) {
+        if (index == 0) return 1;
+        return lineOffsetCache.getOrDefault(index, -1L);
+    }
+
     private void updateFileMetrics() {
         if (currentFile != null && currentFile.exists()) {
             totalFileSize = currentFile.length();
@@ -140,10 +148,9 @@ public class LargeFileManager {
 
     /**
      * Spawns a background worker to silently scan the entire file.
-     * It maps out boundaries, caches line offsets, and stores 8KB 
-     * string previews directly in RAM for ultra-fast scrollbar rendering.
+     * Fires the onChunkIndexed callback every time a chunk is perfectly mapped.
      */
-    public void buildIndexCacheAsync() {
+    public void buildIndexCacheAsync(java.util.function.Consumer<Integer> onChunkIndexed) {
         if (currentFile == null || !currentFile.exists()) return;
         
         // Clear caches prior to building
@@ -152,28 +159,19 @@ public class LargeFileManager {
         lineOffsetCache.clear();
         
         new Thread(() -> {
-            try (RandomAccessFile raf = new RandomAccessFile(currentFile, "r")) {
-                long fileLength = raf.length();
-                long currentOffset = 0;
-                long currentLine = 1;
-                int chunkIdx = 0;
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(currentFile, "r")) {
+                int totalChunks = getTotalChunks();
+                long currentGlobalLine = 1;
                 
-                while (currentOffset < fileLength) {
-                    long start = currentOffset;
-                    long end = Math.min(start + CHUNK_SIZE, fileLength);
+                for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
+                    if (Thread.currentThread().isInterrupted()) break;
                     
-                    // Securely seek to end and find the precise newline boundary
-                    if (end < fileLength) {
-                        raf.seek(end);
-                        while (end < fileLength) {
-                            int b = raf.read();
-                            end++;
-                            if (b == '\n') break;
-                        }
-                    }
+                    // --- THE FIX: Force the indexer to use the exact same O(1) boundaries as the UI ---
+                    long[] bounds = getChunkBoundaries(chunkIdx);
+                    long start = bounds[0];
+                    long end = bounds[1];
                     
-                    boundaryCache.put(chunkIdx, new long[]{start, end});
-                    lineOffsetCache.put(chunkIdx, currentLine);
+                    lineOffsetCache.put(chunkIdx, currentGlobalLine);
                     
                     // 1. Generate memory-safe 8KB UI Preview
                     long previewEnd = Math.min(end, start + 8192); 
@@ -181,35 +179,43 @@ public class LargeFileManager {
                     raf.seek(start);
                     raf.readFully(previewBytes);
                     
-                    String previewStr = new String(previewBytes, StandardCharsets.UTF_8);
+                    String previewStr = new String(previewBytes, java.nio.charset.StandardCharsets.UTF_8);
                     if (previewEnd < end) {
-                        previewStr += "\n\n... [Scrolling Preview: Release scrollbar to render full 25MB chunk] ...";
+                        previewStr += "\n\n... [Scrolling Preview: Release scrollbar to render full chunk] ...";
                     }
                     previewCache.put(chunkIdx, previewStr);
                     
-                    // 2. Hyper-fast sequential line counting for the rest of the chunk
+                    // 2. Exact Line Count using the unified boundaries
                     raf.seek(start);
                     byte[] buffer = new byte[8192];
                     long bytesRead = 0;
                     long chunkLen = end - start;
+                    long linesInChunk = 0;
+                    
                     while (bytesRead < chunkLen) {
+                        if (Thread.currentThread().isInterrupted()) return;
                         int toRead = (int) Math.min(buffer.length, chunkLen - bytesRead);
                         int read = raf.read(buffer, 0, toRead);
                         if (read == -1) break;
                         for (int i = 0; i < read; i++) {
-                            if (buffer[i] == '\n') currentLine++;
+                            if (buffer[i] == '\n') linesInChunk++;
                         }
                         bytesRead += read;
                     }
                     
-                    currentOffset = end;
-                    chunkIdx++;
+                    currentGlobalLine += linesInChunk;
+                    
+                    // Ping the UI that this chunk's exact lines are securely mapped!
+                    final int completedChunk = chunkIdx;
+                    if (onChunkIndexed != null) {
+                        javax.swing.SwingUtilities.invokeLater(() -> onChunkIndexed.accept(completedChunk));
+                    }
                 }
             } catch (Exception e) {
                 System.err.println("Background file indexer failed: " + e.getMessage());
             }
         }).start();
-    }    
+    }
 
     public ChunkState navigateToIndex(int index, boolean requestPreview) throws IOException {
         int virtualTotalChunks = getTotalChunks();

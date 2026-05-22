@@ -1,6 +1,8 @@
 # Bearit Text Editor
 
-Bearit is a high-performance, zero-dependency Java 21 text editor built from the ground up to handle massive text files (exceeding 50GB) while maintaining a strict, lightweight memory footprint (under 4GB). 
+Bearit is a high-performance Java 21 text editor designed specifically to handle massive file sizes, helping your system bear the heavy memory load.
+
+The application is a zero-dependency text editor built from the ground up to handle large text files (exceeding 50GB) while maintaining a strict, lightweight memory footprint (under 4GB). 
 
 By utilizing a custom virtual-paging architecture, background asynchronous preloading, and a dynamic LRU document cache, Bearit provides a seamless, infinite-scrolling experience for log files and datasets that would instantly crash traditional text editors.
 
@@ -45,7 +47,7 @@ Bearit can be launched as a standard desktop application or controlled via termi
 Launch the application with a blank new document:
 
 ```bash
-java -jar target/bearit-1.*.jar
+java -jar target/bearit-1.0.1.jar
 ```
 
 ### Open a File Directly
@@ -53,7 +55,7 @@ java -jar target/bearit-1.*.jar
 Pass a file path as an argument to instantly load it into the editor:
 
 ```bash
-java -jar target/bearit-1.*.jar /path/to/your/largefile.log
+java -jar target/bearit-1.0.1.jar /path/to/your/largefile.log
 ```
 
 ### Options & Arguments
@@ -90,4 +92,8 @@ This will create a 10GB file called bearit_test_file_10.00GB.txt for testing pur
 * Ctrl + Home: Jump to the very beginning of the file
 
 * Ctrl + End: Jump to the very end of the file
+
+* Ctrl + Plus: Increase font size
+
+* Ctrl + Minus: Decrease font size
 
