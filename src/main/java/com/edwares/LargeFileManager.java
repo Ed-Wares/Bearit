@@ -14,6 +14,8 @@ public class LargeFileManager {
     private static final int PREVIEW_SIZE = 10 * 1024; 
 
     private File currentFile;
+    private File pendingSaveAsFile = null; //Tracks the destination for Save As
+    
     private int currentChunkIndex = 0;
     private int totalChunks = 1;
     private long totalFileSize = 0;
@@ -100,6 +102,7 @@ public class LargeFileManager {
 
     public void setNewFile() {
         this.currentFile = null;
+        this.pendingSaveAsFile = null;
         this.currentChunkIndex = 0;
         this.totalChunks = 1;
         this.totalFileSize = 0;
@@ -109,14 +112,19 @@ public class LargeFileManager {
 
     public void setFile(File file) {
         this.currentFile = file;
+        this.pendingSaveAsFile = null;
         this.currentChunkIndex = 0;
         clearDirtyChunks();
         preloadCache.clear();
         updateFileMetrics();
     }
 
-    public boolean hasFile() { return currentFile != null; }
-    public void setCurrentFile(File file) { this.currentFile = file; }
+    public boolean hasFile() { return currentFile != null || pendingSaveAsFile != null; }
+    
+    // Safely queues the new file destination instead of instantly overwriting the source ---
+    public void setCurrentFile(File file) { 
+        this.pendingSaveAsFile = file; 
+    }
 
     public int getTotalChunks() {
         return Math.max(totalChunks, dirtyChunks.keySet().stream().max(Integer::compare).orElse(0) + 1);
@@ -166,7 +174,7 @@ public class LargeFileManager {
                 for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
                     if (Thread.currentThread().isInterrupted()) break;
                     
-                    // --- THE FIX: Force the indexer to use the exact same O(1) boundaries as the UI ---
+                    // Force the indexer to use the exact same O(1) boundaries as the UI ---
                     long[] bounds = getChunkBoundaries(chunkIdx);
                     long start = bounds[0];
                     long end = bounds[1];
@@ -344,7 +352,7 @@ public class LargeFileManager {
     }
 
     private ChunkState generateChunkState(int index, boolean isPreview) throws IOException {
-        if (currentFile == null && dirtyChunks.isEmpty()) {
+        if (currentFile == null && dirtyChunks.isEmpty() && pendingSaveAsFile == null) {
             return new ChunkState("", 1, 0, index, 1, false, false, "New file creation mode.", "Untitled", false);
         }
 
@@ -385,18 +393,20 @@ public class LargeFileManager {
 
         String dirtyIndicator = dirtyChunks.isEmpty() ? "" : " [Unsaved Edits Pending]";
         String statusText = String.format("Chunk %d of %d %s", index + 1, virtualTotalChunks, dirtyIndicator);
-        String fName = currentFile == null ? "Untitled" : currentFile.getName();
+        
+        File displayFile = pendingSaveAsFile != null ? pendingSaveAsFile : currentFile;
+        String fName = displayFile == null ? "Untitled" : displayFile.getName();
 
-        // PASS THE OFFSET INTO THE RECORD
         return new ChunkState(content, absoluteStartLine, absoluteStartOffset, index, virtualTotalChunks, hasPrev, hasNext, statusText, fName, isPreview);
     }
 
-/**
+    /**
      * Fast O(1) boundary calculation using purely mathematical byte-seeking.
      * Takes ~2ms regardless of if the chunk is at 10MB or 19.9GB.
      */
     private long[] getChunkBoundaries(int index) throws IOException {
         if (boundaryCache.containsKey(index)) return boundaryCache.get(index);
+        if (currentFile == null) return new long[]{0, 0};
 
         long start = (long) index * CHUNK_SIZE; // Mathematical byte jump
         long end = Math.min(start + CHUNK_SIZE, currentFile.length());
@@ -448,16 +458,21 @@ public class LargeFileManager {
         return totalFileSize;
     }
 
+    // Safely bridges current source file to pending destination file ---
     public ChunkState saveAll(String currentText) throws IOException {
-        if (currentFile == null) throw new IllegalStateException("No valid target file to apply save operation.");
+        File destFile = (pendingSaveAsFile != null) ? pendingSaveAsFile : currentFile;
+        if (destFile == null) throw new IllegalStateException("No valid target file to apply save operation.");
+        
+        // Commit the current text to the memory cache first
         commitCurrentChunk(currentText);
 
-        Path path = currentFile.toPath();
-        Path tempPath = path.resolveSibling(path.getFileName() + ".tmp");
+        Path destPath = destFile.toPath();
+        Path tempPath = destPath.resolveSibling(destPath.getFileName() + ".tmp");
         int virtualTotalChunks = getTotalChunks();
 
         try (FileChannel destChannel = FileChannel.open(tempPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
-             FileChannel srcChannel = Files.exists(path) ? FileChannel.open(path, StandardOpenOption.READ) : null) {
+             FileChannel srcChannel = (currentFile != null && Files.exists(currentFile.toPath())) ? FileChannel.open(currentFile.toPath(), StandardOpenOption.READ) : null) {
+            
             for (int i = 0; i < virtualTotalChunks; i++) {
                 if (dirtyChunks.containsKey(i)) {
                     byte[] bytes = Files.readAllBytes(dirtyChunks.get(i).toPath());
@@ -471,11 +486,16 @@ public class LargeFileManager {
                 }
             }
         }
+        
         try {
-            Files.move(tempPath, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            Files.move(tempPath, destPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException ioEx) {
-            Files.move(tempPath, path, StandardCopyOption.REPLACE_EXISTING);
+            Files.move(tempPath, destPath, StandardCopyOption.REPLACE_EXISTING);
         }
+
+        // Successfully copied; permanently switch references
+        this.currentFile = destFile;
+        this.pendingSaveAsFile = null;
 
         clearDirtyChunks();
         updateFileMetrics();
