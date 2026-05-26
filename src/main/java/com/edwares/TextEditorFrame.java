@@ -126,8 +126,8 @@ public class TextEditorFrame extends JFrame {
 
         // Restore the previously active tab index, ensuring it's within bounds
         int savedIndex = BearitProperties.getInstance().getSessionActiveIndex();
-                if (savedIndex >= 0 && savedIndex < tabbedPane.getTabCount()) {
-                    tabbedPane.setSelectedIndex(savedIndex);
+        if (savedIndex >= 0 && savedIndex < tabbedPane.getTabCount()) {
+            tabbedPane.setSelectedIndex(savedIndex);
         }
     }
 
@@ -249,7 +249,7 @@ public class TextEditorFrame extends JFrame {
             clipboard.setContents(selection, selection);
         });
 
-        // --- NEW: Copy Full Filename (Absolute Path) ---
+        // Copy Full Filename (Absolute Path) ---
         JMenuItem copyFullFilenameItem = new JMenuItem("Copy Full Filename");
         File targetFile = targetEditor.getActiveFile();
         if (targetFile == null || !targetFile.exists()) {
@@ -290,7 +290,7 @@ public class TextEditorFrame extends JFrame {
         popup.add(closeOtherTabsItem);
         popup.addSeparator();
         popup.add(copyFilenameItem);
-        popup.add(copyFullFilenameItem); // <--- Added to popup menu
+        popup.add(copyFullFilenameItem);
         popup.add(showExplorerItem);
         
         popup.show(invoker, x, y);
@@ -430,22 +430,37 @@ public class TextEditorFrame extends JFrame {
             }
         }
     }
+    
+    // Save All Logic ---
+    private void performSaveAll() {
+        for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            if (c instanceof AdvancedTextEditorPanel) {
+                AdvancedTextEditorPanel editor = (AdvancedTextEditorPanel) c;
+                if (editor.hasUnsavedChanges()) {
+                    tabbedPane.setSelectedComponent(editor); // Bring to front so user sees which tab is saving
+                    performSaveFor(editor, false);
+                }
+            }
+        }
+    }
 
     private boolean performSaveFor(AdvancedTextEditorPanel editor, boolean saveAsynchronously) {
         boolean saveResult = true;
         if (!editor.hasActiveFile()) {
-        int option = fileChooser.showSaveDialog(this);
-        if (option == JFileChooser.APPROVE_OPTION) {
-            File selected = fileChooser.getSelectedFile();
+            int option = fileChooser.showSaveDialog(this);
+            if (option == JFileChooser.APPROVE_OPTION) {
+                File selected = fileChooser.getSelectedFile();
                 if (saveAsynchronously) {
+                    // Assuming saveAsSynchronously exists per your previous iteration
                     saveResult = editor.saveAsSynchronously(selected);
                 } else {
-            editor.saveAsFile(selected);
+                    editor.saveAsFile(selected);
                 }
-            BearitProperties.getInstance().addRecentFile(selected.getAbsolutePath());
+                BearitProperties.getInstance().addRecentFile(selected.getAbsolutePath());
                 return saveResult;
-        }
-        return false;
+            }
+            return false;
         } else {
             if (saveAsynchronously) {
                 saveResult = editor.saveAsSynchronously(editor.getActiveFile());
@@ -769,12 +784,18 @@ public class TextEditorFrame extends JFrame {
 
         JMenuItem saveItem = new JMenuItem("Save");
         JMenuItem saveAsItem = new JMenuItem("Save As...");
+        JMenuItem saveAllItem = new JMenuItem("Save All"); // NEW
         JMenuItem exitItem = new JMenuItem("Exit");
 
         newItem.addActionListener(e -> performNew());
         openItem.addActionListener(e -> performOpen());
         saveItem.addActionListener(e -> performSave());
         saveAsItem.addActionListener(e -> performSaveAs());
+        
+        // Add listener and shortcut to the new Save All menu item
+        saveAllItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
+        saveAllItem.addActionListener(e -> performSaveAll());
+        
         exitItem.addActionListener(e -> {
             if (checkAllTabsBeforeExit()) {
                 System.exit(0);
@@ -787,6 +808,7 @@ public class TextEditorFrame extends JFrame {
         fileMenu.addSeparator();
         fileMenu.add(saveItem);
         fileMenu.add(saveAsItem);
+        fileMenu.add(saveAllItem); // Added to File Menu
         fileMenu.addSeparator();
         fileMenu.add(exitItem);
 
