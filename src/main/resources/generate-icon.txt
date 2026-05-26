@@ -1,0 +1,6 @@
+
+#First, ensure you have ImageMagick and its SVG delegate (rsvg) installed in MSYS2 shell
+pacman -S mingw-w64-x86_64-imagemagick
+
+#Run the following command in your MSYS2 shell
+magick convert -density 384 ./BearFace.svg -define icon:auto-resize ./Bearit.ico

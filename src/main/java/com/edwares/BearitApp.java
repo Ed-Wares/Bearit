@@ -6,6 +6,8 @@ import java.io.IOException;
 
 public class BearitApp {
     public static void main(String[] args) {
+
+        ShortcutUtil.ensureShortcutExists();
         CommandLineParser cli = new CommandLineParser(args);
 
         // Handle Console-Only Actions
