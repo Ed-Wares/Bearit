@@ -284,8 +284,9 @@ public class LargeFileManager {
     }
 
     // --- Global Streaming File Replacements ---
-    public void replaceAllGlobal(String target, String replacement) throws IOException {
-        if (currentFile == null) return;
+    public int replaceAllGlobal(String target, String replacement) throws IOException {
+        int totalMatches = 0;
+        if (currentFile == null) return totalMatches;
         
         Path path = currentFile.toPath();
         Path tempPath = path.resolveSibling(path.getFileName() + ".tmp");
@@ -295,6 +296,8 @@ public class LargeFileManager {
             for (int i = 0; i < virtualTotalChunks; i++) {
                 String chunkContent = getChunkContent(i);
                 String replaced = chunkContent.replace(target, replacement);
+                // (NewLength - OldLength) / (ReplacementLength - TargetLength) gives us the number of matches in this chunk
+                totalMatches += (replaced.length() - chunkContent.length()) / (replacement.length() - target.length());
                 destChannel.write(ByteBuffer.wrap(replaced.getBytes(StandardCharsets.UTF_8)));
             }
         }
@@ -307,6 +310,7 @@ public class LargeFileManager {
 
         clearDirtyChunks();
         updateFileMetrics();
+        return totalMatches;
     }
 
     // --- Calculate chunk locations dynamically for Go-To-Line ---

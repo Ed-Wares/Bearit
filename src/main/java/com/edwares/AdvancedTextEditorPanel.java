@@ -681,24 +681,33 @@ public class AdvancedTextEditorPanel extends JPanel {
         boolean wasDirty = isDirty;
         isDirty = false;
         
-        new SwingWorker<Void, Void>() {
+        // SwingWorker returns Integer (the replacement count) ---
+        new SwingWorker<Integer, Void>() {
             @Override
-            protected Void doInBackground() throws Exception {
+            protected Integer doInBackground() throws Exception {
                 if (wasDirty && !isCurrentlyPreview) {
                     fileManager.commitCurrentChunk(commitText);
                 }
-                fileManager.replaceAllGlobal(target, replacement);
-                return null;
+                return fileManager.replaceAllGlobal(target, replacement);
             }
             @Override
             protected void done() {
-                documentCache.clear(); 
-                globalUndoManager.discardAllEdits();
-                setUnsavedChanges(true); // Flag global modification
-                triggerAsyncLoad(loadedChunkIndex, 0, -1, false, () -> {
+                try {
+                    int count = get(); // Retrieve the count
+                    documentCache.clear(); 
+                    globalUndoManager.discardAllEdits();
+                    setUnsavedChanges(true); 
+                    
+                    triggerAsyncLoad(loadedChunkIndex, 0, -1, false, () -> {
+                        lblLoadingStatus.setText("");
+                        JOptionPane.showMessageDialog(getDialogParent(), 
+                            "Global replacement complete.\nTotal replacements: " + count, 
+                            "Replace All", JOptionPane.INFORMATION_MESSAGE);
+                    });
+                } catch (Exception e) {
                     lblLoadingStatus.setText("");
-                    JOptionPane.showMessageDialog(getDialogParent(), "Global replacement complete.", "Replace All", JOptionPane.INFORMATION_MESSAGE);
-                });
+                    showError("Replace all failed: " + e.getMessage());
+                }
             }
         }.execute();
     }
