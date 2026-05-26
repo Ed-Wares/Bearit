@@ -65,6 +65,10 @@ public class AdvancedTextEditorPanel extends JPanel {
     
     // Tracks intelligent focus state to survive chained background loads
     private boolean wasEditorFocused = false; 
+    
+    private boolean showWhitespace = false;
+    private boolean showEol = false;
+    private String currentTheme = "Light";
 
     private int loadedChunkIndex = 0;
     private int pendingTargetChunk = -1;
@@ -109,39 +113,6 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
         });
         settleTimer.setRepeats(false);
-
-        JPanel statusBar = new JPanel(new BorderLayout());
-        statusBar.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
-        
-        JPanel leftStatusPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 0));
-        lblStatus = new JLabel("No file active.");
-        lblLoadingStatus = new JLabel("");
-        lblLoadingStatus.setFont(lblLoadingStatus.getFont().deriveFont(Font.BOLD));
-        lblLoadingStatus.setForeground(new Color(220, 100, 0)); 
-        
-        chunkLoadProgressBar = new JProgressBar();
-        chunkLoadProgressBar.setIndeterminate(true);
-        chunkLoadProgressBar.setPreferredSize(new Dimension(100, 14));
-        chunkLoadProgressBar.setVisible(false);
-        
-        leftStatusPanel.add(lblStatus);
-        leftStatusPanel.add(lblLoadingStatus);
-        leftStatusPanel.add(chunkLoadProgressBar);
-        
-        JPanel rightStatusPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 15, 0));
-        lblIndexingStatus = new JLabel(""); 
-        lblIndexingStatus.setForeground(new Color(120, 120, 120)); // Subtle grey
-        lblFontInfo = new JLabel("Font: 14pt"); 
-        lblCursorInfo = new JLabel("Line: 1 | Pos: 0");
-        
-        rightStatusPanel.add(lblIndexingStatus);
-        rightStatusPanel.add(lblFontInfo);
-        rightStatusPanel.add(lblCursorInfo);
-        
-        statusBar.add(leftStatusPanel, BorderLayout.WEST);
-        statusBar.add(rightStatusPanel, BorderLayout.EAST);
-        add(statusBar, BorderLayout.SOUTH);
-
         textArea = new JTextArea() {
             @Override
             protected void paintComponent(Graphics g) {
@@ -149,13 +120,52 @@ public class AdvancedTextEditorPanel extends JPanel {
                 g.fillRect(0, 0, getWidth(), getHeight());
                 try {
                     Rectangle r = modelToView2D(getCaretPosition()).getBounds();
-                    g.setColor(new Color(235, 245, 255)); 
+                    g.setColor(currentTheme.equals("Dark") ? new Color(75, 110, 175, 80) : new Color(235, 245, 255)); 
                     g.fillRect(0, r.y, getWidth(), r.height);
                 } catch (Exception e) {}
                 
                 setOpaque(false);
                 super.paintComponent(g);
                 setOpaque(true);
+                
+                if (showWhitespace || showEol) {
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    
+                    g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                    
+                    // Apply heavy bold font and high-contrast color for visibility ---
+                    g2.setFont(getFont().deriveFont(Font.BOLD));
+                    g2.setColor(currentTheme.equals("Dark") ? new Color(160, 160, 160) : new Color(140, 140, 140));
+                    
+                    FontMetrics fm = g2.getFontMetrics();
+                    int ascent = fm.getAscent();
+                    
+                    int charW = fm.charWidth(' ');
+                    int spaceSymbolW = fm.stringWidth("·");
+                    int tabSymbolW = fm.stringWidth("→");
+
+                    try {
+                        Rectangle clip = getVisibleRect();
+                        int startOffset = viewToModel2D(new Point(0, clip.y));
+                        int endOffset = viewToModel2D(new Point(0, clip.y + clip.height + fm.getHeight()));
+                        String text = getDocument().getText(startOffset, endOffset - startOffset);
+                        
+                        for (int i = 0; i < text.length(); i++) {
+                            char c = text.charAt(i);
+                            if (showWhitespace && c == ' ') {
+                                Rectangle r = modelToView2D(startOffset + i).getBounds();
+                                g2.drawString("·", r.x + (charW - spaceSymbolW) / 2, r.y + ascent);
+                            } else if (showWhitespace && c == '\t') {
+                                Rectangle r = modelToView2D(startOffset + i).getBounds();
+                                g2.drawString("→", r.x + (charW - tabSymbolW) / 2, r.y + ascent);
+                            } else if (showEol && c == '\n') {
+                                Rectangle r = modelToView2D(startOffset + i).getBounds();
+                                g2.drawString("¶", r.x + charW / 2, r.y + ascent);
+                            }
+                        }
+                    } catch (Exception ex) {}
+                    g2.dispose();
+                }
             }
         };
         textArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
@@ -177,6 +187,21 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
         });
 
+        lblStatus = new JLabel("No file active.");
+        lblLoadingStatus = new JLabel("");
+        lblLoadingStatus.setFont(lblLoadingStatus.getFont().deriveFont(Font.BOLD));
+        lblLoadingStatus.setForeground(new Color(220, 100, 0)); 
+        
+        chunkLoadProgressBar = new JProgressBar();
+        chunkLoadProgressBar.setIndeterminate(true);
+        chunkLoadProgressBar.setPreferredSize(new Dimension(100, 14));
+        chunkLoadProgressBar.setVisible(false);
+        
+        lblIndexingStatus = new JLabel(""); 
+        lblIndexingStatus.setForeground(new Color(120, 120, 120));
+        lblFontInfo = new JLabel("Font: 14pt"); 
+        lblCursorInfo = new JLabel("Line: 1 | Pos: 0");
+
         lineNumberPanel = new LineNumberPanel(this, textArea);
 
         textArea.addCaretListener(e -> {
@@ -195,7 +220,11 @@ public class AdvancedTextEditorPanel extends JPanel {
         scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_NEVER);
         scrollPane.setRowHeaderView(lineNumberPanel);
         
-        setWordWrap(BearitProperties.getInstance().isWordWrap());
+        BearitProperties props = BearitProperties.getInstance();
+        setWordWrap(props.isWordWrap());
+        setShowWhitespace(props.isShowWhitespace());
+        setShowEol(props.isShowEol());
+        applyTheme(props.getTheme());
         
         scrollPane.getVerticalScrollBar().addAdjustmentListener(e -> {
             if (!isSyncingScroll && !isNavigating && !isLoadingChunk) {
@@ -205,11 +234,8 @@ public class AdvancedTextEditorPanel extends JPanel {
 
         scrollPane.addMouseWheelListener(e -> {
             if (e.isControlDown()) {
-                if (e.getWheelRotation() < 0) {
-                    adjustFontSize(2); 
-                } else {
-                    adjustFontSize(-2); 
-                }
+                if (e.getWheelRotation() < 0) { adjustFontSize(2); } 
+                else { adjustFontSize(-2); }
             } else if (!isLoadingChunk && !isNavigating) {
                 JScrollBar vBar = scrollPane.getVerticalScrollBar();
                 if (e.getWheelRotation() > 0 && vBar.getValue() + vBar.getVisibleAmount() >= vBar.getMaximum()) {
@@ -230,11 +256,27 @@ public class AdvancedTextEditorPanel extends JPanel {
         });
         add(globalScrollBar, BorderLayout.EAST);
 
+        JPanel statusBar = new JPanel(new BorderLayout());
+        statusBar.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
+        
+        JPanel leftStatusPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 0));
+        leftStatusPanel.add(lblStatus);
+        leftStatusPanel.add(lblLoadingStatus);
+        leftStatusPanel.add(chunkLoadProgressBar);
+        
+        JPanel rightStatusPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 15, 0));
+        rightStatusPanel.add(lblIndexingStatus);
+        rightStatusPanel.add(lblFontInfo);
+        rightStatusPanel.add(lblCursorInfo);
+        
+        statusBar.add(leftStatusPanel, BorderLayout.WEST);
+        statusBar.add(rightStatusPanel, BorderLayout.EAST);
+        add(statusBar, BorderLayout.SOUTH);
     }
     
     public void adjustFontSize(int delta) {
         Font current = textArea.getFont();
-        int newSize = Math.max(6, Math.min(72, current.getSize() + delta)); 
+        int newSize = Math.max(8, Math.min(72, current.getSize() + delta)); 
         setFont(current.deriveFont((float) newSize));
         BearitProperties.getInstance().setFontSize(newSize);
     }
@@ -258,6 +300,35 @@ public class AdvancedTextEditorPanel extends JPanel {
         scrollPane.setHorizontalScrollBarPolicy(wrap ? JScrollPane.HORIZONTAL_SCROLLBAR_NEVER : JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
         lineNumberPanel.revalidate();
         lineNumberPanel.repaint();
+    }
+    
+    public void setShowWhitespace(boolean show) {
+        this.showWhitespace = show;
+        textArea.repaint();
+    }
+    
+    public void setShowEol(boolean show) {
+        this.showEol = show;
+        textArea.repaint();
+    }
+    
+    public void applyTheme(String theme) {
+        this.currentTheme = theme;
+        if ("Dark".equals(theme)) {
+            textArea.setBackground(new Color(43, 43, 43));
+            textArea.setForeground(new Color(169, 183, 198));
+            textArea.setCaretColor(Color.WHITE);
+            lineNumberPanel.setBackground(new Color(49, 51, 53));
+            lineNumberPanel.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, new Color(80, 80, 80)));
+        } else {
+            textArea.setBackground(Color.WHITE);
+            textArea.setForeground(Color.BLACK);
+            textArea.setCaretColor(Color.BLACK);
+            lineNumberPanel.setBackground(new Color(245, 245, 245));
+            lineNumberPanel.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, Color.LIGHT_GRAY));
+        }
+        lineNumberPanel.repaint();
+        textArea.repaint();
     }
 
     public boolean hasUnsavedChanges() {
@@ -339,12 +410,12 @@ public class AdvancedTextEditorPanel extends JPanel {
             JPanel pnlBtns = new JPanel(new FlowLayout(FlowLayout.RIGHT));
             JButton btnFindPrev = new JButton("⬆ Previous");
             JButton btnFindNext = new JButton("⬇ Next");
-            JButton btnCount = new JButton("Count Matches");
             JButton btnReplace = new JButton("Replace");
+            JButton btnCount = new JButton("Count Matches");
             JButton btnReplaceAll = new JButton("Replace All");
             
-            txtSearch.addActionListener(e -> performFindNext(txtSearch.getText())); // Pressing Enter in the search field triggers "Find Next"
-            txtReplace.addActionListener(e -> performReplace(txtSearch.getText(), txtReplace.getText())); // Pressing Enter in the replace field triggers "Replace"
+            txtSearch.addActionListener(e -> performFindNext(txtSearch.getText()));
+            txtReplace.addActionListener(e -> performReplace(txtSearch.getText(), txtReplace.getText()));
             
             btnFindPrev.addActionListener(e -> performFindPrevious(txtSearch.getText()));
             btnFindNext.addActionListener(e -> performFindNext(txtSearch.getText()));
@@ -1246,7 +1317,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             
             // Force repaint when indexing status changes ---
             parent.lblIndexingStatus.addPropertyChangeListener("text", evt -> repaint());
-
+            
             textArea.addComponentListener(new ComponentAdapter() {
                 @Override
                 public void componentResized(ComponentEvent e) {
@@ -1279,7 +1350,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         public Dimension getPreferredSize() {
             FontMetrics fm = textArea.getFontMetrics(textArea.getFont());
             int totalLines = textArea.getLineCount();
-            int maximumDigits = String.valueOf(startLine + totalLines).length() + 2; // +2 for "~ "
+            int maximumDigits = String.valueOf(startLine + totalLines).length() + 2; 
             int functionalWidth = fm.stringWidth("0") * Math.max(maximumDigits, 4) + 12;
             
             return new Dimension(functionalWidth, textArea.getPreferredSize().height);
@@ -1315,10 +1386,10 @@ public class AdvancedTextEditorPanel extends JPanel {
                     
                     if (i == currentLocalLine) {
                         g.setFont(textArea.getFont().deriveFont(Font.BOLD));
-                        g.setColor(new Color(40, 40, 40));
+                        g.setColor(parent.currentTheme.equals("Dark") ? new Color(200, 200, 200) : new Color(40, 40, 40));
                     } else {
                         g.setFont(textArea.getFont());
-                        g.setColor(new Color(110, 110, 110));
+                        g.setColor(parent.currentTheme.equals("Dark") ? new Color(110, 110, 110) : new Color(110, 110, 110));
                     }
                     
                     g.drawString(stringLabel, alignedX, r.y + fm.getAscent());

@@ -22,6 +22,10 @@ public class TextEditorFrame extends JFrame {
     // UI Elements that need their selected state synchronized 
     private JToggleButton btnWordWrap;
     private JCheckBoxMenuItem wrapMenuItem;
+    private JCheckBoxMenuItem whitespaceMenuItem;
+    private JCheckBoxMenuItem eolMenuItem;
+    private JRadioButtonMenuItem lightThemeItem;
+    private JRadioButtonMenuItem darkThemeItem;
 
     public TextEditorFrame() {
         BearitProperties props = BearitProperties.getInstance();
@@ -102,7 +106,7 @@ public class TextEditorFrame extends JFrame {
     }
 
     // --- Tab Management ---
-    
+
     private void updateTabHeader(AdvancedTextEditorPanel editor, JLabel lblTitle) {
         String title = editor.getCurrentTitle();
         if (editor.hasUnsavedChanges()) {
@@ -317,8 +321,36 @@ public class TextEditorFrame extends JFrame {
             }
         }
     }
-
-    // --- Generation Tool ---
+    
+    private void setGlobalTheme(String theme) {
+        BearitProperties.getInstance().setTheme(theme);
+        for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            if (c instanceof AdvancedTextEditorPanel) {
+                ((AdvancedTextEditorPanel) c).applyTheme(theme);
+            }
+        }
+    }
+    
+    private void setGlobalWhitespace(boolean showWhitespace) {
+        BearitProperties.getInstance().setShowWhitespace(showWhitespace);
+        for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            if (c instanceof AdvancedTextEditorPanel) {
+                ((AdvancedTextEditorPanel) c).setShowWhitespace(showWhitespace);
+            }
+        }
+    }
+    
+    private void setGlobalEol(boolean showEol) {
+        BearitProperties.getInstance().setShowEol(showEol);
+        for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            if (c instanceof AdvancedTextEditorPanel) {
+                ((AdvancedTextEditorPanel) c).setShowEol(showEol);
+            }
+        }
+    }
 
     private void performGenerateTestFile() {
         String input = JOptionPane.showInputDialog(this, 
@@ -549,6 +581,7 @@ public class TextEditorFrame extends JFrame {
 
     private JMenuBar createMenuBar() {
         JMenuBar menuBar = new JMenuBar();
+        BearitProperties props = BearitProperties.getInstance();
 
         // --- File Menu ---
         JMenu fileMenu = new JMenu("File");
@@ -609,7 +642,7 @@ public class TextEditorFrame extends JFrame {
         fileMenu.addSeparator();
         fileMenu.add(exitItem);
 
-        // --- Edit / View Menu ---
+        // --- Edit Menu ---
         JMenu editMenu = new JMenu("Edit");
         JMenuItem undoItem = new JMenuItem("Undo");
         JMenuItem redoItem = new JMenuItem("Redo");
@@ -643,17 +676,58 @@ public class TextEditorFrame extends JFrame {
         editMenu.add(searchItem);
         editMenu.add(gotoItem);
 
+        // --- View Menu ---
         JMenu viewMenu = new JMenu("View");
-        wrapMenuItem = new JCheckBoxMenuItem("Word Wrap");
-        wrapMenuItem.setSelected(BearitProperties.getInstance().isWordWrap());
         
+        JMenu themeMenu = new JMenu("Theme");
+        ButtonGroup themeGroup = new ButtonGroup();
+        lightThemeItem = new JRadioButtonMenuItem("Light");
+        darkThemeItem = new JRadioButtonMenuItem("Dark");
+        themeGroup.add(lightThemeItem);
+        themeGroup.add(darkThemeItem);
+        
+        if ("Dark".equals(props.getTheme())) { darkThemeItem.setSelected(true); } 
+        else { lightThemeItem.setSelected(true); }
+
+        lightThemeItem.addActionListener(e -> setGlobalTheme("Light"));
+        darkThemeItem.addActionListener(e -> setGlobalTheme("Dark"));
+        
+        themeMenu.add(lightThemeItem);
+        themeMenu.add(darkThemeItem);
+        
+        JMenuItem incFontItem = new JMenuItem("Increase Font");
+        JMenuItem decFontItem = new JMenuItem("Decrease Font");
+        incFontItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_EQUALS, InputEvent.CTRL_DOWN_MASK)); // Ctrl + = (+)
+        decFontItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_MINUS, InputEvent.CTRL_DOWN_MASK));  // Ctrl + -
+        
+        incFontItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().adjustFontSize(2); });
+        decFontItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().adjustFontSize(-2); });
+        
+        wrapMenuItem = new JCheckBoxMenuItem("Word Wrap");
+        wrapMenuItem.setSelected(props.isWordWrap());
         wrapMenuItem.addActionListener(e -> {
             boolean isChecked = wrapMenuItem.isSelected();
             if (btnWordWrap != null) btnWordWrap.setSelected(isChecked);
             toggleGlobalWordWrap(isChecked);
         });
         
+        whitespaceMenuItem = new JCheckBoxMenuItem("Show White Space Symbols");
+        whitespaceMenuItem.setSelected(props.isShowWhitespace());
+        whitespaceMenuItem.addActionListener(e -> setGlobalWhitespace(whitespaceMenuItem.isSelected()));
+        
+        eolMenuItem = new JCheckBoxMenuItem("Show End of Line Symbols");
+        eolMenuItem.setSelected(props.isShowEol());
+        eolMenuItem.addActionListener(e -> setGlobalEol(eolMenuItem.isSelected()));
+
+        viewMenu.add(themeMenu);
+        viewMenu.addSeparator();
+        viewMenu.add(incFontItem);
+        viewMenu.add(decFontItem);
+        viewMenu.addSeparator();
         viewMenu.add(wrapMenuItem);
+        viewMenu.addSeparator();
+        viewMenu.add(whitespaceMenuItem);
+        viewMenu.add(eolMenuItem);
 
         // --- Help Menu ---
         JMenu helpMenu = new JMenu("Help");

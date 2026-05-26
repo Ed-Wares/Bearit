@@ -18,7 +18,13 @@ public class BearitProperties {
     private boolean checkForUpdates = true;
     private String fontName = "Monospaced";
     private int fontSize = 14;
-    private boolean wordWrap = false;
+    private boolean wordWrap = false; 
+    
+    // --- NEW: View Settings ---
+    private String theme = "Light"; // "Light" or "Dark"
+    private boolean showWhitespace = false;
+    private boolean showEol = false;
+    
     private final String[] customToolCommands = new String[8];
     private final String[] customToolIcons = new String[8];
     private final String[] customToolNames = new String[8]; 
@@ -70,6 +76,9 @@ public class BearitProperties {
             fontName = props.getProperty("font.name", "Monospaced");
             fontSize = Integer.parseInt(props.getProperty("font.size", "14"));
             wordWrap = Boolean.parseBoolean(props.getProperty("word.wrap", "false"));
+            theme = props.getProperty("theme", "Light");
+            showWhitespace = Boolean.parseBoolean(props.getProperty("show.whitespace", "false"));
+            showEol = Boolean.parseBoolean(props.getProperty("show.eol", "false"));
 
             recentFiles.clear();
             for (int i = 1; i <= 10; i++) {
@@ -96,6 +105,9 @@ public class BearitProperties {
         props.setProperty("font.name", fontName);
         props.setProperty("font.size", String.valueOf(fontSize));
         props.setProperty("word.wrap", String.valueOf(wordWrap));
+        props.setProperty("theme", theme);
+        props.setProperty("show.whitespace", String.valueOf(showWhitespace));
+        props.setProperty("show.eol", String.valueOf(showEol));
 
         // Clear out old recent file keys
         for (int i = 1; i <= 10; i++) {
@@ -154,6 +166,13 @@ public class BearitProperties {
     public void setFontSize(int fontSize) { this.fontSize = fontSize; save(); }
     public boolean isWordWrap() { return wordWrap; }
     public void setWordWrap(boolean wordWrap) { this.wordWrap = wordWrap; save(); }
+    
+    public String getTheme() { return theme; }
+    public void setTheme(String theme) { this.theme = theme; save(); }
+    public boolean isShowWhitespace() { return showWhitespace; }
+    public void setShowWhitespace(boolean showWhitespace) { this.showWhitespace = showWhitespace; save(); }
+    public boolean isShowEol() { return showEol; }
+    public void setShowEol(boolean showEol) { this.showEol = showEol; save(); }
 
     public String getCustomToolCommand(int index) {
         if (index >= 0 && index < 8) return customToolCommands[index];
