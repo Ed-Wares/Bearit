@@ -10,6 +10,7 @@ import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
+import java.util.ArrayList;
 import java.util.List;
 
 public class TextEditorFrame extends JFrame {
@@ -65,6 +66,17 @@ public class TextEditorFrame extends JFrame {
                 if (checkAllTabsBeforeExit()) {
                     props.setFrameWidth(getWidth());
                     props.setFrameHeight(getHeight());
+                    // Save Session ---
+                    List<String> openFiles = new ArrayList<>();
+                    for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
+                        Component c = tabbedPane.getComponentAt(i);
+                        if (c instanceof AdvancedTextEditorPanel) {
+                            File f = ((AdvancedTextEditorPanel) c).getActiveFile();
+                            if (f != null) openFiles.add(f.getAbsolutePath());
+                        }
+                    }
+                    // Pass the current tab index to the session saver
+                    BearitProperties.getInstance().saveSession(openFiles, tabbedPane.getSelectedIndex());
                     System.exit(0);
                 }
             }
@@ -80,7 +92,8 @@ public class TextEditorFrame extends JFrame {
 
         fileChooser = new JFileChooser();
         tabbedPane = new JTabbedPane();
-
+        // Add the permanent "+" dummy tab
+        tabbedPane.addTab("+", new JPanel());
         // The "+" Tab routing logic with safety lock
         tabbedPane.addChangeListener(e -> {
             if (isUpdatingTabs) return; // Ignore events while we are building/destroying tabs
@@ -94,15 +107,29 @@ public class TextEditorFrame extends JFrame {
             }
         });
 
-        // Add the permanent "+" dummy tab
-        tabbedPane.addTab("+", new JPanel());
-
         add(createToolBar(), BorderLayout.NORTH);
         add(tabbedPane, BorderLayout.CENTER);
         setJMenuBar(createMenuBar());
 
-        // Launch with one empty tab
-        //addNewTab(null);
+        // Load previous sessions ---
+        List<String> sessionFiles = BearitProperties.getInstance().getSession();
+        if (!sessionFiles.isEmpty()) {
+            for (String path : sessionFiles) {
+                File f = new File(path);
+                if (f.exists()) {
+                    addNewTab(f);
+                }
+            }
+            
+        }
+        // Ensure at least one tab is open if session was empty or broken
+        if (tabbedPane.getTabCount() == 1) addNewTab(null);
+
+        // Restore the previously active tab index, ensuring it's within bounds
+        int savedIndex = BearitProperties.getInstance().getSessionActiveIndex();
+        if (savedIndex >= 0 && savedIndex < tabbedPane.getTabCount()) {
+            tabbedPane.setSelectedIndex(savedIndex);
+        }
     }
 
     // --- Tab Management ---
@@ -178,8 +205,11 @@ public class TextEditorFrame extends JFrame {
                 return; // Abort closing
             }
             if (opt == JOptionPane.YES_OPTION) {
-                boolean saved = performSaveFor(editor);
-                if (!saved) return; // Abort if they cancelled the Save As dialog
+                if (!performSaveFor(editor, true)) {
+                    // If it failed to save, abort the exit
+                    JOptionPane.showMessageDialog(this, "Could not save " + editor.getCurrentTitle() + ". Aborting.");
+                    return ; 
+                }
             }
         }
         
@@ -206,6 +236,7 @@ public class TextEditorFrame extends JFrame {
             Component c = tabbedPane.getComponentAt(i);
             if (c instanceof AdvancedTextEditorPanel) {
                 AdvancedTextEditorPanel editor = (AdvancedTextEditorPanel) c;
+                // If it's dirty, we MUST resolve it
                 if (editor.hasUnsavedChanges()) {
                     tabbedPane.setSelectedComponent(editor);
                     int opt = JOptionPane.showConfirmDialog(this, 
@@ -216,8 +247,13 @@ public class TextEditorFrame extends JFrame {
                     if (opt == JOptionPane.CANCEL_OPTION || opt == JOptionPane.CLOSED_OPTION) {
                         return false; 
                     }
-                    if (opt == JOptionPane.YES_OPTION) {
-                        if (!performSaveFor(editor)) return false; 
+                    if (opt == JOptionPane.YES_OPTION) { // Attempt save
+                        // Use synchronous save for shutdown ---
+                        if (!performSaveFor(editor, true)) {
+                            // If it failed to save, abort the exit
+                            JOptionPane.showMessageDialog(this, "Could not save " + editor.getCurrentTitle() + ". Aborting exit.");
+                            return false; 
+                        }
                     }
                 }
             }
@@ -276,7 +312,7 @@ public class TextEditorFrame extends JFrame {
     private void performSave() {
         AdvancedTextEditorPanel active = getActiveEditor();
         if (active != null) {
-            performSaveFor(active);
+            performSaveFor(active, false);
         }
     }
 
@@ -292,19 +328,28 @@ public class TextEditorFrame extends JFrame {
         }
     }
 
-    private boolean performSaveFor(AdvancedTextEditorPanel editor) {
+    private boolean performSaveFor(AdvancedTextEditorPanel editor, boolean saveAsynchronously) {
+        boolean saveResult = true;
         if (!editor.hasActiveFile()) {
             int option = fileChooser.showSaveDialog(this);
             if (option == JFileChooser.APPROVE_OPTION) {
                 File selected = fileChooser.getSelectedFile();
-                editor.saveAsFile(selected);
+                if (saveAsynchronously) {
+                    saveResult = editor.saveAsSynchronously(selected);
+                } else {
+                    editor.saveAsFile(selected);
+                }
                 BearitProperties.getInstance().addRecentFile(selected.getAbsolutePath());
-                return true;
+                return saveResult;
             }
             return false;
         } else {
-            editor.saveCurrentFile();
-            return true;
+            if (saveAsynchronously) {
+                saveResult = editor.saveAsSynchronously(editor.getActiveFile());
+            } else {
+                editor.saveCurrentFile();
+            }
+            return saveResult;
         }
     }
     

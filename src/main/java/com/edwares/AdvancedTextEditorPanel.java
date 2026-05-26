@@ -855,6 +855,24 @@ public class AdvancedTextEditorPanel extends JPanel {
         }.execute();
     }
 
+    // This method will perform the save operation directly on the calling thread, blocking until it completes.
+    public boolean saveAsSynchronously(File file) {
+        try {
+            this.activeFile = file;
+            fileManager.setCurrentFile(file);
+            // Perform the I/O on the current thread (blocking)
+            fileManager.saveAll(getCommitText());
+            
+            // Update state synchronously
+            isDirty = false;
+            setUnsavedChanges(false);
+            return true;
+        } catch (Exception e) {
+            showError("Failed to save file: " + e.getMessage());
+            return false;
+        }
+    }
+
     private void updateTitle(String newTitle) {
         String oldTitle = this.currentTitle;
         this.currentTitle = newTitle;

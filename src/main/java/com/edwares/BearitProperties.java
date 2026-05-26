@@ -151,6 +151,34 @@ public class BearitProperties {
         save();
     }
 
+    // methods to handle saving and loading the session state (the list of open file paths)
+    public void saveSession(List<String> filePaths, int activeIndex) {
+        // Clear old session
+        for (int i = 0; i < 20; i++) { props.remove("session.file." + i); }
+        
+        // Save new session
+        for (int i = 0; i < filePaths.size(); i++) {
+            props.setProperty("session.file." + i, filePaths.get(i));
+        }
+        props.setProperty("session.count", String.valueOf(filePaths.size()));
+        props.setProperty("session.active.index", String.valueOf(activeIndex));
+        save();
+    }
+    
+    public int getSessionActiveIndex() {
+        return Integer.parseInt(props.getProperty("session.active.index", "0"));
+    }
+
+    public List<String> getSession() {
+        List<String> session = new ArrayList<>();
+        int count = Integer.parseInt(props.getProperty("session.count", "0"));
+        for (int i = 0; i < count; i++) {
+            String path = props.getProperty("session.file." + i);
+            if (path != null) session.add(path);
+        }
+        return session;
+    }
+
     // --- Getters & Setters ---
 
     public List<String> getRecentFiles() { return new ArrayList<>(recentFiles); }
