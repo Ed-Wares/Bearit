@@ -17,6 +17,13 @@ By utilizing a custom virtual-paging architecture, background asynchronous prelo
 
 ---
 
+## Demo
+
+Here is a quick look at the application:
+
+![Demo](https://github.com/Ed-Wares/Bearit/blob/main/DemoBearit.gif?raw=true)
+
+
 ## 📋 Requirements
 
 To build and run Bearit, you will need:
