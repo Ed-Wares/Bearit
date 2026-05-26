@@ -4,11 +4,9 @@ import javax.swing.*;
 import javax.swing.event.MenuEvent;
 import javax.swing.event.MenuListener;
 import java.awt.*;
-import java.awt.event.ActionListener;
-import java.awt.event.InputEvent;
-import java.awt.event.KeyEvent;
-import java.awt.event.WindowAdapter;
-import java.awt.event.WindowEvent;
+import java.awt.datatransfer.Clipboard;
+import java.awt.datatransfer.StringSelection;
+import java.awt.event.*;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
@@ -92,9 +90,10 @@ public class TextEditorFrame extends JFrame {
 
         fileChooser = new JFileChooser();
         tabbedPane = new JTabbedPane();
+
         // Add the permanent "+" dummy tab
         tabbedPane.addTab("+", new JPanel());
-        // The "+" Tab routing logic with safety lock
+
         tabbedPane.addChangeListener(e -> {
             if (isUpdatingTabs) return; // Ignore events while we are building/destroying tabs
             
@@ -127,8 +126,8 @@ public class TextEditorFrame extends JFrame {
 
         // Restore the previously active tab index, ensuring it's within bounds
         int savedIndex = BearitProperties.getInstance().getSessionActiveIndex();
-        if (savedIndex >= 0 && savedIndex < tabbedPane.getTabCount()) {
-            tabbedPane.setSelectedIndex(savedIndex);
+                if (savedIndex >= 0 && savedIndex < tabbedPane.getTabCount()) {
+                    tabbedPane.setSelectedIndex(savedIndex);
         }
     }
 
@@ -165,9 +164,9 @@ public class TextEditorFrame extends JFrame {
             btnClose.setFocusable(false);
             btnClose.setContentAreaFilled(false);
             
-            btnClose.addMouseListener(new java.awt.event.MouseAdapter() {
-                public void mouseEntered(java.awt.event.MouseEvent evt) { btnClose.setForeground(Color.RED); }
-                public void mouseExited(java.awt.event.MouseEvent evt) { btnClose.setForeground(UIManager.getColor("Button.foreground")); }
+            btnClose.addMouseListener(new MouseAdapter() {
+                public void mouseEntered(MouseEvent evt) { btnClose.setForeground(Color.RED); }
+                public void mouseExited(MouseEvent evt) { btnClose.setForeground(UIManager.getColor("Button.foreground")); }
             });
             
             btnClose.addActionListener(e -> closeTab(editor));
@@ -175,6 +174,30 @@ public class TextEditorFrame extends JFrame {
             tabHeader.add(lblTitle);
             tabHeader.add(btnClose);
             tabbedPane.setTabComponentAt(insertIndex, tabHeader);
+
+            // --- Component-Level Tab Right-Click Listener & Left-Click Selector ---
+            MouseAdapter tabMouseListener = new MouseAdapter() {
+                public void mousePressed(MouseEvent e) { handleMouse(e); }
+                public void mouseReleased(MouseEvent e) { handleMouse(e); }
+                
+                private void handleMouse(MouseEvent e) {
+                    int tabIdx = tabbedPane.indexOfComponent(editor);
+                    if (tabIdx == -1) return;
+
+                    if (e.isPopupTrigger()) {
+                        // Handle right-click context menu
+                        createAndShowTabMenu(e.getComponent(), e.getX(), e.getY(), tabIdx, editor);
+                    } else if (SwingUtilities.isLeftMouseButton(e) && e.getID() == MouseEvent.MOUSE_PRESSED) {
+                        // Handle left-click to physically switch the tab
+                        if (tabbedPane.getSelectedIndex() != tabIdx) {
+                            tabbedPane.setSelectedIndex(tabIdx);
+                        }
+                    }
+                }
+            };
+            
+            tabHeader.addMouseListener(tabMouseListener);
+            lblTitle.addMouseListener(tabMouseListener);
 
             editor.addPropertyChangeListener("editorTitle", evt -> updateTabHeader(editor, lblTitle));
             editor.addPropertyChangeListener("unsavedChanges", evt -> updateTabHeader(editor, lblTitle));
@@ -191,6 +214,86 @@ public class TextEditorFrame extends JFrame {
             isUpdatingTabs = false; // Disengage lock
             updateFrameTitle();
         }
+    }
+
+    // --- Context Menu Logic ---
+    private void createAndShowTabMenu(Component invoker, int x, int y, int tabIndex, AdvancedTextEditorPanel targetEditor) {
+        JPopupMenu popup = new JPopupMenu();
+        
+        JMenuItem newTabItem = new JMenuItem("New Tab");
+        newTabItem.addActionListener(evt -> performNew());
+        
+        JMenuItem closeTabItem = new JMenuItem("Close Tab");
+        closeTabItem.addActionListener(evt -> closeTab(targetEditor));
+        
+        JMenuItem closeOtherTabsItem = new JMenuItem("Close Other Tabs");
+        closeOtherTabsItem.addActionListener(evt -> {
+            List<AdvancedTextEditorPanel> toClose = new ArrayList<>();
+            for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
+                Component c = tabbedPane.getComponentAt(i);
+                if (c instanceof AdvancedTextEditorPanel && c != targetEditor) {
+                    toClose.add((AdvancedTextEditorPanel) c);
+                }
+            }
+            for (AdvancedTextEditorPanel editor : toClose) {
+                closeTab(editor);
+            }
+        });
+        
+        JMenuItem copyFilenameItem = new JMenuItem("Copy Filename");
+        copyFilenameItem.addActionListener(evt -> {
+            File file = targetEditor.getActiveFile();
+            String name = file != null ? file.getName() : "Untitled";
+            StringSelection selection = new StringSelection(name);
+            Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+            clipboard.setContents(selection, selection);
+        });
+
+        // --- NEW: Copy Full Filename (Absolute Path) ---
+        JMenuItem copyFullFilenameItem = new JMenuItem("Copy Full Filename");
+        File targetFile = targetEditor.getActiveFile();
+        if (targetFile == null || !targetFile.exists()) {
+            // Disable option if the file hasn't been saved to disk yet
+            copyFullFilenameItem.setEnabled(false);
+        } else {
+            copyFullFilenameItem.addActionListener(evt -> {
+                StringSelection selection = new StringSelection(targetFile.getAbsolutePath());
+                Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+                clipboard.setContents(selection, selection);
+            });
+        }
+        
+        JMenuItem showExplorerItem = new JMenuItem("Show in File Explorer");
+        if (targetFile == null || !targetFile.exists()) {
+            showExplorerItem.setEnabled(false);
+        } else {
+            showExplorerItem.addActionListener(evt -> {
+                try {
+                    if (Desktop.isDesktopSupported()) {
+                        if (Desktop.getDesktop().isSupported(Desktop.Action.BROWSE_FILE_DIR)) {
+                            Desktop.getDesktop().browseFileDirectory(targetFile);
+                        } else if (Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
+                            Desktop.getDesktop().open(targetFile.getParentFile());
+                        }
+                    } else {
+                        JOptionPane.showMessageDialog(TextEditorFrame.this, "Desktop integration is not supported on this platform.", "Error", JOptionPane.ERROR_MESSAGE);
+                    }
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(TextEditorFrame.this, "Could not open file explorer: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            });
+        }
+        
+        popup.add(newTabItem);
+        popup.addSeparator();
+        popup.add(closeTabItem);
+        popup.add(closeOtherTabsItem);
+        popup.addSeparator();
+        popup.add(copyFilenameItem);
+        popup.add(copyFullFilenameItem); // <--- Added to popup menu
+        popup.add(showExplorerItem);
+        
+        popup.show(invoker, x, y);
     }
 
     private void closeTab(AdvancedTextEditorPanel editor) {
@@ -331,18 +434,18 @@ public class TextEditorFrame extends JFrame {
     private boolean performSaveFor(AdvancedTextEditorPanel editor, boolean saveAsynchronously) {
         boolean saveResult = true;
         if (!editor.hasActiveFile()) {
-            int option = fileChooser.showSaveDialog(this);
-            if (option == JFileChooser.APPROVE_OPTION) {
-                File selected = fileChooser.getSelectedFile();
+        int option = fileChooser.showSaveDialog(this);
+        if (option == JFileChooser.APPROVE_OPTION) {
+            File selected = fileChooser.getSelectedFile();
                 if (saveAsynchronously) {
                     saveResult = editor.saveAsSynchronously(selected);
                 } else {
-                    editor.saveAsFile(selected);
+            editor.saveAsFile(selected);
                 }
-                BearitProperties.getInstance().addRecentFile(selected.getAbsolutePath());
+            BearitProperties.getInstance().addRecentFile(selected.getAbsolutePath());
                 return saveResult;
-            }
-            return false;
+        }
+        return false;
         } else {
             if (saveAsynchronously) {
                 saveResult = editor.saveAsSynchronously(editor.getActiveFile());
