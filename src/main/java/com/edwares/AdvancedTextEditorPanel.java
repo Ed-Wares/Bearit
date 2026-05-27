@@ -113,6 +113,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
         });
         settleTimer.setRepeats(false);
+
         textArea = new JTextArea() {
             @Override
             protected void paintComponent(Graphics g) {
@@ -220,6 +221,9 @@ public class AdvancedTextEditorPanel extends JPanel {
         scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_NEVER);
         scrollPane.setRowHeaderView(lineNumberPanel);
         
+        // Prevent Swing from hijacking the scroll wheel for horizontal movement ---
+        scrollPane.setWheelScrollingEnabled(false); 
+        
         BearitProperties props = BearitProperties.getInstance();
         setWordWrap(props.isWordWrap());
         setShowWhitespace(props.isShowWhitespace());
@@ -237,11 +241,22 @@ public class AdvancedTextEditorPanel extends JPanel {
                 if (e.getWheelRotation() < 0) { adjustFontSize(2); } 
                 else { adjustFontSize(-2); }
             } else if (!isLoadingChunk && !isNavigating) {
-                JScrollBar vBar = scrollPane.getVerticalScrollBar();
-                if (e.getWheelRotation() > 0 && vBar.getValue() + vBar.getVisibleAmount() >= vBar.getMaximum()) {
-                    triggerAutoNavigate(1);
-                } else if (e.getWheelRotation() < 0 && vBar.getValue() <= 0) {
-                    triggerAutoNavigate(-1);
+                if (e.isShiftDown()) {
+                    // Manual Horizontal Scroll
+                    JScrollBar hBar = scrollPane.getHorizontalScrollBar();
+                    hBar.setValue(hBar.getValue() + (e.getUnitsToScroll() * textArea.getFontMetrics(textArea.getFont()).charWidth('m')));
+                } else {
+                    // Manual Vertical Scroll Override
+                    JScrollBar vBar = scrollPane.getVerticalScrollBar();
+                    int scrollAmount = e.getUnitsToScroll() * textArea.getFontMetrics(textArea.getFont()).getHeight();
+                    
+                    if (e.getWheelRotation() > 0 && vBar.getValue() + vBar.getVisibleAmount() >= vBar.getMaximum()) {
+                        triggerAutoNavigate(1);
+                    } else if (e.getWheelRotation() < 0 && vBar.getValue() <= 0) {
+                        triggerAutoNavigate(-1);
+                    } else {
+                        vBar.setValue(vBar.getValue() + scrollAmount);
+                    }
                 }
             }
         });
@@ -831,6 +846,36 @@ public class AdvancedTextEditorPanel extends JPanel {
         fileManager.setCurrentFile(file);
         executeSaveRoutine();
     }
+    
+    public boolean saveSynchronously() {
+        try {
+            fileManager.saveAll(getCommitText());
+            isDirty = false;
+            setUnsavedChanges(false);
+            return true;
+        } catch (Exception e) {
+            showError("Failed to save file: " + e.getMessage());
+            return false;
+        }
+    }
+
+    // This method will perform the save operation directly on the calling thread, blocking until it completes.
+    public boolean saveAsSynchronously(File file) {
+        try {
+            this.activeFile = file;
+            fileManager.setCurrentFile(file);
+            // Perform the I/O on the current thread (blocking)
+            fileManager.saveAll(getCommitText());
+            
+            // Update state synchronously
+            isDirty = false;
+            setUnsavedChanges(false);
+            return true;
+        } catch (Exception e) {
+            showError("Failed to save file: " + e.getMessage());
+            return false;
+        }
+    }
 
     public boolean hasActiveFile() { return fileManager.hasFile(); }
     public File getActiveFile() { return activeFile; }
@@ -862,24 +907,6 @@ public class AdvancedTextEditorPanel extends JPanel {
                 }
             }
         }.execute();
-    }
-
-    // This method will perform the save operation directly on the calling thread, blocking until it completes.
-    public boolean saveAsSynchronously(File file) {
-        try {
-            this.activeFile = file;
-            fileManager.setCurrentFile(file);
-            // Perform the I/O on the current thread (blocking)
-            fileManager.saveAll(getCommitText());
-            
-            // Update state synchronously
-            isDirty = false;
-            setUnsavedChanges(false);
-            return true;
-        } catch (Exception e) {
-            showError("Failed to save file: " + e.getMessage());
-            return false;
-        }
     }
 
     private void updateTitle(String newTitle) {
@@ -1097,6 +1124,15 @@ public class AdvancedTextEditorPanel extends JPanel {
         if (isNavigating || isLoadingChunk) return;
         isSyncingScroll = true;
         try {
+            // Dynamically calculate scrollbar arrows & track clicks ---
+            int totalLines = Math.max(1, textArea.getLineCount());
+            int fontHeight = Math.max(1, textArea.getFontMetrics(textArea.getFont()).getHeight());
+            int visibleLines = Math.max(1, scrollPane.getViewport().getHeight() / fontHeight);
+            
+            globalScrollBar.setUnitIncrement(Math.max(1, (int)((3.0 / totalLines) * SCROLL_RESOLUTION)));
+            globalScrollBar.setBlockIncrement(Math.max(1, (int)(((double)visibleLines / totalLines) * SCROLL_RESOLUTION)));
+            // -------------------------------------------------------------------
+            
             int totalChunks = fileManager.getTotalChunks();
             int maxScrollRange = Math.max(1, totalChunks) * SCROLL_RESOLUTION;
             globalScrollBar.setMaximum(maxScrollRange + globalScrollBar.getVisibleAmount());
