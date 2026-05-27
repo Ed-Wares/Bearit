@@ -10,6 +10,7 @@ import javax.swing.undo.CannotUndoException;
 import javax.swing.undo.UndoManager;
 import javax.swing.undo.UndoableEdit;
 import java.awt.*;
+import java.awt.datatransfer.StringSelection;
 import java.awt.event.*;
 import java.io.File;
 import java.io.IOException;
@@ -79,6 +80,15 @@ public class AdvancedTextEditorPanel extends JPanel {
     private double lastRequestedLocalPercent = -1;
     private final Timer settleTimer; 
     private long currentChunkStartOffset = 0;
+    
+    // Block Selection Tracking Variables ---
+    private boolean isBlockSelecting = false;
+    private boolean isDragging = false; 
+    private boolean isBlockArrowNavigating = false;
+    private int blockStartLine = -1;
+    private int blockEndLine = -1;
+    private int blockStartX = -1;
+    private int blockEndX = -1;
 
     private String currentTitle = "Untitled";
 
@@ -129,9 +139,24 @@ public class AdvancedTextEditorPanel extends JPanel {
                 super.paintComponent(g);
                 setOpaque(true);
                 
+                if (isBlockSelecting) {
+                    g.setColor(currentTheme.equals("Dark") ? new Color(60, 90, 140, 120) : new Color(100, 150, 220, 120));
+                    int minLine = Math.min(blockStartLine, blockEndLine);
+                    int maxLine = Math.max(blockStartLine, blockEndLine);
+                    int minX = Math.min(blockStartX, blockEndX);
+                    int maxX = Math.max(blockStartX, blockEndX);
+                    int h = g.getFontMetrics().getHeight();
+                    
+                    for (int i = minLine; i <= maxLine; i++) {
+                        try {
+                            int y = modelToView2D(getLineStartOffset(i)).getBounds().y;
+                            g.fillRect(minX, y, maxX - minX, h);
+                        } catch(Exception e) {}
+                    }
+                }
+                
                 if (showWhitespace || showEol) {
                     Graphics2D g2 = (Graphics2D) g.create();
-                    
                     g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
                     
                     // Apply heavy bold font and high-contrast color for visibility ---
@@ -140,7 +165,6 @@ public class AdvancedTextEditorPanel extends JPanel {
                     
                     FontMetrics fm = g2.getFontMetrics();
                     int ascent = fm.getAscent();
-                    
                     int charW = fm.charWidth(' ');
                     int spaceSymbolW = fm.stringWidth("·");
                     int tabSymbolW = fm.stringWidth("→");
@@ -187,6 +211,57 @@ public class AdvancedTextEditorPanel extends JPanel {
                 textArea.getCaret().setSelectionVisible(true);
             }
         });
+        
+        // Mouse Block Selection ---
+        textArea.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                if (e.isAltDown()) {
+                    isBlockSelecting = true;
+                    try {
+                        blockStartLine = textArea.getLineOfOffset(textArea.viewToModel2D(e.getPoint()));
+                        blockStartX = e.getX();
+                        blockEndLine = blockStartLine;
+                        blockEndX = blockStartX;
+                    } catch(Exception ex){}
+                } else {
+                    isBlockSelecting = false;
+                }
+                textArea.repaint();
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                isDragging = false; 
+            }
+        });
+
+        textArea.addMouseMotionListener(new MouseMotionAdapter() {
+            @Override
+            public void mouseDragged(MouseEvent e) {
+                isDragging = true;
+                if (e.isAltDown() || isBlockSelecting) {
+                    if (!isBlockSelecting) {
+                        isBlockSelecting = true;
+                        try {
+                            blockStartLine = textArea.getLineOfOffset(textArea.viewToModel2D(e.getPoint()));
+                            blockStartX = e.getX();
+                        } catch(Exception ex){}
+                    }
+                    try {
+                        blockEndLine = textArea.getLineOfOffset(textArea.viewToModel2D(e.getPoint()));
+                        blockEndX = e.getX();
+                        
+                        // Prevent the standard JTextArea linear blue highlight by collapsing the selection
+                        textArea.setSelectionStart(textArea.getCaretPosition());
+                        textArea.setSelectionEnd(textArea.getCaretPosition());
+                        
+                        textArea.scrollRectToVisible(new Rectangle(e.getX(), e.getY(), 1, 1));
+                        textArea.repaint();
+                    } catch(Exception ex){}
+                }
+            }
+        });
 
         lblStatus = new JLabel("No file active.");
         lblLoadingStatus = new JLabel("");
@@ -205,8 +280,15 @@ public class AdvancedTextEditorPanel extends JPanel {
 
         lineNumberPanel = new LineNumberPanel(this, textArea);
 
+        // Caret Listener Sync ---
         textArea.addCaretListener(e -> {
             if (isNavigating) return;
+            
+            // Only disable block mode if the user triggered a standard click or normal arrow key movement
+            if (isBlockSelecting && !isDragging && !isBlockArrowNavigating) {
+                isBlockSelecting = false;
+            }
+            
             updateCursorStatus();
             try {
                 int line = textArea.getLineOfOffset(textArea.getCaretPosition());
@@ -289,6 +371,113 @@ public class AdvancedTextEditorPanel extends JPanel {
         add(statusBar, BorderLayout.SOUTH);
     }
     
+    // Block Selection Keyboard Logic ---
+    private void moveBlockSelection(int dxChars, int dyLines) {
+        try {
+            isBlockArrowNavigating = true;
+            if (!isBlockSelecting) {
+                isBlockSelecting = true;
+                Rectangle r = textArea.modelToView2D(textArea.getCaretPosition()).getBounds();
+                blockStartX = r.x;
+                blockEndX = r.x;
+                blockStartLine = textArea.getLineOfOffset(textArea.getCaretPosition());
+                blockEndLine = blockStartLine;
+                textArea.setSelectionStart(textArea.getCaretPosition());
+                textArea.setSelectionEnd(textArea.getCaretPosition());
+            }
+            
+            blockEndLine += dyLines;
+            blockEndLine = Math.max(0, Math.min(textArea.getLineCount() - 1, blockEndLine));
+            
+            int charW = textArea.getFontMetrics(textArea.getFont()).charWidth('m');
+            blockEndX += (dxChars * charW);
+            blockEndX = Math.max(0, blockEndX); 
+            
+            // Explicitly sync the actual cursor to the visual box bounds
+            int y = textArea.modelToView2D(textArea.getLineStartOffset(blockEndLine)).getBounds().y;
+            int newOffset = textArea.viewToModel2D(new Point(blockEndX, y));
+            
+            textArea.setCaretPosition(newOffset);
+            textArea.scrollRectToVisible(new Rectangle(blockEndX, y, charW, textArea.getFontMetrics(textArea.getFont()).getHeight()));
+            
+            textArea.repaint();
+        } catch(Exception e) {
+        } finally {
+            isBlockArrowNavigating = false;
+        }
+    }
+
+    private String getBlockSelectedText() {
+        if (!isBlockSelecting) return null;
+        StringBuilder sb = new StringBuilder();
+        int minLine = Math.min(blockStartLine, blockEndLine);
+        int maxLine = Math.max(blockStartLine, blockEndLine);
+        int minX = Math.min(blockStartX, blockEndX);
+        int maxX = Math.max(blockStartX, blockEndX);
+        
+        for (int i = minLine; i <= maxLine; i++) {
+            try {
+                int lineStart = textArea.getLineStartOffset(i);
+                int lineEnd = textArea.getLineEndOffset(i);
+                if (i < textArea.getLineCount() - 1) lineEnd--; // Exclude \n
+                
+                int y = textArea.modelToView2D(lineStart).getBounds().y + 2; // target top of line
+                
+                int off1 = textArea.viewToModel2D(new Point(minX, y));
+                int off2 = textArea.viewToModel2D(new Point(maxX, y));
+                
+                off1 = Math.max(lineStart, Math.min(lineEnd, off1));
+                off2 = Math.max(lineStart, Math.min(lineEnd, off2));
+                
+                int startOffset = Math.min(off1, off2);
+                int endOffset = Math.max(off1, off2);
+                
+                if (startOffset <= endOffset) {
+                    sb.append(textArea.getText(startOffset, endOffset - startOffset));
+                }
+                if (i < maxLine) sb.append("\n");
+            } catch(Exception e) {}
+        }
+        return sb.toString();
+    }
+
+    private void deleteBlockSelection() {
+        if (!isBlockSelecting) return;
+        int minLine = Math.min(blockStartLine, blockEndLine);
+        int maxLine = Math.max(blockStartLine, blockEndLine);
+        int minX = Math.min(blockStartX, blockEndX);
+        int maxX = Math.max(blockStartX, blockEndX);
+        
+        try {
+            // Traverse BACKWARDS so offsets don't shift as we delete higher rows
+            for (int i = maxLine; i >= minLine; i--) {
+                int lineStart = textArea.getLineStartOffset(i);
+                int lineEnd = textArea.getLineEndOffset(i);
+                if (i < textArea.getLineCount() - 1) lineEnd--; 
+                
+                int y = textArea.modelToView2D(lineStart).getBounds().y + 2; 
+                
+                int off1 = textArea.viewToModel2D(new Point(minX, y));
+                int off2 = textArea.viewToModel2D(new Point(maxX, y));
+                
+                off1 = Math.max(lineStart, Math.min(lineEnd, off1));
+                off2 = Math.max(lineStart, Math.min(lineEnd, off2));
+                
+                int s = Math.min(off1, off2);
+                int e = Math.max(off1, off2);
+                
+                if (e > s) {
+                    textArea.getDocument().remove(s, e - s);
+                }
+            }
+        } catch(Exception e) {}
+        
+        isBlockSelecting = false;
+        textArea.repaint();
+    }
+    
+    // --- Existing Utility Methods ---
+
     public void adjustFontSize(int delta) {
         Font current = textArea.getFont();
         int newSize = Math.max(8, Math.min(72, current.getSize() + delta)); 
@@ -727,9 +916,37 @@ public class AdvancedTextEditorPanel extends JPanel {
         }.execute();
     }
 
-    public void cut() { if (!isCurrentlyPreview) textArea.cut(); }
-    public void copy() { textArea.copy(); }
-    public void paste() { if (!isCurrentlyPreview) textArea.paste(); }
+    public void copy() { 
+        if (isBlockSelecting) {
+            String txt = getBlockSelectedText();
+            if (txt != null && !txt.isEmpty()) {
+                StringSelection selection = new StringSelection(txt);
+                Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, selection);
+            }
+        } else {
+            textArea.copy(); 
+        }
+    }
+    
+    public void cut() { 
+        if (!isCurrentlyPreview) {
+            if (isBlockSelecting) {
+                copy();
+                deleteBlockSelection();
+            } else {
+                textArea.cut(); 
+            }
+        }
+    }
+    
+    public void paste() { 
+        if (!isCurrentlyPreview) {
+            if (isBlockSelecting) {
+                deleteBlockSelection(); 
+            }
+            textArea.paste(); 
+        }
+    }
 
     public void undo() { 
         if (!globalUndoManager.canUndo()) return;
@@ -916,7 +1133,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         firePropertyChange("editorTitle", oldTitle, newTitle);
     }
 
-    private void setupKeyboardShortcuts() {
+private void setupKeyboardShortcuts() {
         InputMap im = textArea.getInputMap(JComponent.WHEN_FOCUSED);
         ActionMap am = textArea.getActionMap();
 
@@ -986,8 +1203,52 @@ public class AdvancedTextEditorPanel extends JPanel {
         im.put(KeyStroke.getKeyStroke(KeyEvent.VK_SUBTRACT, InputEvent.CTRL_DOWN_MASK), "zoomOutNumPad");
         am.put("zoomOut", new AbstractAction() { public void actionPerformed(ActionEvent e) { adjustFontSize(-2); }});
         am.put("zoomOutNumPad", new AbstractAction() { public void actionPerformed(ActionEvent e) { adjustFontSize(-2); }});
+        
+        // ---  Intercept Native Copy/Cut/Paste Shortcuts ---
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_C, InputEvent.CTRL_DOWN_MASK), "customCopy");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_INSERT, InputEvent.CTRL_DOWN_MASK), "customCopy"); // Ctrl+Insert
+        am.put("customCopy", new AbstractAction() { public void actionPerformed(ActionEvent e) { copy(); }});
 
-        // --- Wrap-Around Keyboard Navigation Routing ---
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_X, InputEvent.CTRL_DOWN_MASK), "customCut");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, InputEvent.SHIFT_DOWN_MASK), "customCut"); // Shift+Delete
+        am.put("customCut", new AbstractAction() { public void actionPerformed(ActionEvent e) { cut(); }});
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_V, InputEvent.CTRL_DOWN_MASK), "customPaste");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_INSERT, InputEvent.SHIFT_DOWN_MASK), "customPaste"); // Shift+Insert
+        am.put("customPaste", new AbstractAction() { public void actionPerformed(ActionEvent e) { paste(); }});
+        
+        // --- Block Mode Keyboard Navigation ---
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_UP, InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "blockUp");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "blockDown");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "blockLeft");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "blockRight");
+        
+        am.put("blockUp", new AbstractAction() { public void actionPerformed(ActionEvent e) { moveBlockSelection(0, -1); }});
+        am.put("blockDown", new AbstractAction() { public void actionPerformed(ActionEvent e) { moveBlockSelection(0, 1); }});
+        am.put("blockLeft", new AbstractAction() { public void actionPerformed(ActionEvent e) { moveBlockSelection(-1, 0); }});
+        am.put("blockRight", new AbstractAction() { public void actionPerformed(ActionEvent e) { moveBlockSelection(1, 0); }});
+        
+        // Intercept backspace and delete to destroy the custom block string
+        Object origBack = im.get(KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0));
+        Action origBackAction = am.get(origBack);
+        am.put("customBack", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                if (isBlockSelecting && !isCurrentlyPreview) { deleteBlockSelection(); }
+                else if (origBackAction != null) { origBackAction.actionPerformed(e); }
+            }
+        });
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0), "customBack");
+        
+        Object origDel = im.get(KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0));
+        Action origDelAction = am.get(origDel);
+        am.put("customDel", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                if (isBlockSelecting && !isCurrentlyPreview) { deleteBlockSelection(); }
+                else if (origDelAction != null) { origDelAction.actionPerformed(e); }
+            }
+        });
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0), "customDel");
+
         bindWrapAroundNavigation(im, am, KeyEvent.VK_DOWN, 1);
         bindWrapAroundNavigation(im, am, KeyEvent.VK_PAGE_DOWN, 1);
         bindWrapAroundNavigation(im, am, KeyEvent.VK_UP, -1);
