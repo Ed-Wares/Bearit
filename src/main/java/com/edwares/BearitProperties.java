@@ -62,14 +62,27 @@ public class BearitProperties {
     }
 
     public void load() {
+        boolean createPropertiesFile = false;
         if (!propertiesFile.exists()) {
-            save(); 
-            return;
+            createPropertiesFile = true;
+            // Load the default properties bundled INSIDE the JAR if no external file exists, and then save it to create the external file for future edits
+            try (java.io.InputStream in = getClass().getResourceAsStream("/Bearit.properties")) {
+                if (in != null) {
+                    props.load(in);
+                }
+            } catch (java.io.IOException e) {
+                System.err.println("Default internal properties not found.");
+            }            
+        }
+        else {
+            try (InputStream in = new FileInputStream(propertiesFile)) {
+                props.load(in);
+            } catch (IOException e) {
+                System.err.println("Failed to load properties: " + e.getMessage());
+            }     
         }
         
-        try (InputStream in = new FileInputStream(propertiesFile)) {
-            props.load(in);
-            
+        try {
             frameWidth = Integer.parseInt(props.getProperty("frame.width", "950"));
             frameHeight = Integer.parseInt(props.getProperty("frame.height", "700"));
             checkForUpdates = Boolean.parseBoolean(props.getProperty("updates.check", "true"));
@@ -93,9 +106,10 @@ public class BearitProperties {
                 customToolIcons[i] = props.getProperty("tool." + (i + 1) + ".icon", "");
                 customToolNames[i] = props.getProperty("tool." + (i + 1) + ".name", "Tool " + (i + 1));
             }
-        } catch (IOException | NumberFormatException e) {
+        } catch (NumberFormatException e) {
             System.err.println("Failed to load properties: " + e.getMessage());
         }
+        if (createPropertiesFile) save();
     }
 
     public void save() {
