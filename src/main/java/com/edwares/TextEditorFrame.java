@@ -615,6 +615,85 @@ public class TextEditorFrame extends JFrame {
         }
     }
 
+    // --- Tool Execution Output Redirection ---
+    private void executeCustomTool(String command) {
+        new SwingWorker<Void, String>() {
+            @Override
+            protected Void doInBackground() throws Exception {
+                publish(">> Executing: " + command + "\n");
+                
+                // Use OS-level shell processing to handle complex commands correctly
+                ProcessBuilder pb = new ProcessBuilder();
+                if (System.getProperty("os.name").toLowerCase().contains("win")) {
+                    pb.command("cmd.exe", "/c", command);
+                } else {
+                    pb.command("bash", "-c", command);
+                }
+                
+                // Redirect standard error directly into standard out so we don't have to manage two reader threads
+                pb.redirectErrorStream(true); 
+                Process process = pb.start();
+                
+                try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        publish(line + "\n");
+                    }
+                }
+                
+                process.waitFor();
+                publish(">> Execution Finished. Exit code: " + process.exitValue() + "\n\n");
+                return null;
+            }
+            
+            @Override
+            protected void process(java.util.List<String> chunks) {
+                StringBuilder sb = new StringBuilder();
+                for (String s : chunks) {
+                    sb.append(s);
+                }
+                appendToolOutput(sb.toString());
+            }
+            
+            @Override
+            protected void done() {
+                try {
+                    get(); 
+                } catch (Exception ex) {
+                    appendToolOutput("[EXECUTION FAILED] " + ex.getMessage() + "\n\n");
+                }
+            }
+        }.execute();
+    }
+    
+    private void appendToolOutput(String text) {
+        AdvancedTextEditorPanel outputPanel = null;
+        
+        // Find existing output tab
+        for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            if (c instanceof AdvancedTextEditorPanel) {
+                AdvancedTextEditorPanel p = (AdvancedTextEditorPanel) c;
+                if ("Tool Output".equals(p.getCurrentTitle())) {
+                    outputPanel = p;
+                    if (tabbedPane.getSelectedIndex() != i) {
+                        tabbedPane.setSelectedIndex(i);
+                    }
+                    break;
+                }
+            }
+        }
+        
+        // Create if missing
+        if (outputPanel == null) {
+            performNew(); 
+            outputPanel = getActiveEditor();
+            outputPanel.setCustomTitle("Tool Output");
+        }
+        
+        outputPanel.appendText(text);
+    }
+
     // --- UI Setup ---
 
     private JToolBar createToolBar() {
@@ -721,27 +800,6 @@ public class TextEditorFrame extends JFrame {
         return toolBar;
     }
 
-    private void executeCustomTool(String command) {
-        new SwingWorker<Void, Void>() {
-            @Override
-            protected Void doInBackground() throws Exception {
-                Runtime.getRuntime().exec(command);
-                return null;
-            }
-            @Override
-            protected void done() {
-                try {
-                    get(); // Throws exception if the background execution failed
-                } catch (Exception ex) {
-                    JOptionPane.showMessageDialog(TextEditorFrame.this, 
-                        "Failed to execute custom tool command:\n" + ex.getMessage(), 
-                        "Tool Execution Error", 
-                        JOptionPane.ERROR_MESSAGE);
-                }
-            }
-        }.execute();
-    }
-
     private JMenuBar createMenuBar() {
         JMenuBar menuBar = new JMenuBar();
         BearitProperties props = BearitProperties.getInstance();
@@ -784,16 +842,17 @@ public class TextEditorFrame extends JFrame {
 
         JMenuItem saveItem = new JMenuItem("Save");
         JMenuItem saveAsItem = new JMenuItem("Save As...");
-        JMenuItem saveAllItem = new JMenuItem("Save All"); // NEW
+        JMenuItem saveAllItem = new JMenuItem("Save All"); 
         JMenuItem exitItem = new JMenuItem("Exit");
 
         newItem.addActionListener(e -> performNew());
         openItem.addActionListener(e -> performOpen());
         saveItem.addActionListener(e -> performSave());
+        saveItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK));
         saveAsItem.addActionListener(e -> performSaveAs());
+        saveAsItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
         
         // Add listener and shortcut to the new Save All menu item
-        saveAllItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
         saveAllItem.addActionListener(e -> performSaveAll());
         
         exitItem.addActionListener(e -> {
@@ -808,7 +867,7 @@ public class TextEditorFrame extends JFrame {
         fileMenu.addSeparator();
         fileMenu.add(saveItem);
         fileMenu.add(saveAsItem);
-        fileMenu.add(saveAllItem); // Added to File Menu
+        fileMenu.add(saveAllItem); 
         fileMenu.addSeparator();
         fileMenu.add(exitItem);
 
@@ -899,6 +958,31 @@ public class TextEditorFrame extends JFrame {
         viewMenu.add(whitespaceMenuItem);
         viewMenu.add(eolMenuItem);
 
+        // --- Tools Menu ---
+        JMenu toolsMenu = new JMenu("Tools");
+        boolean hasMenuTools = false;
+        
+        for (int i = 0; i < 8; i++) {
+            String command = props.getCustomToolCommand(i);
+            if (command != null && !command.trim().isEmpty()) {
+                String icon = props.getCustomToolIcon(i);
+                String name = props.getCustomToolName(i);
+                String buttonText = (icon != null && !icon.isEmpty() ? icon + " " : "") + name;
+                
+                JMenuItem toolItem = new JMenuItem(buttonText);
+                final String toolCommand = command;
+                toolItem.addActionListener(e -> executeCustomTool(toolCommand));
+                toolsMenu.add(toolItem);
+                hasMenuTools = true;
+            }
+        }
+        
+        if (!hasMenuTools) {
+            JMenuItem emptyItem = new JMenuItem("No Custom Tools Configured");
+            emptyItem.setEnabled(false);
+            toolsMenu.add(emptyItem);
+        }
+
         // --- Help Menu ---
         JMenu helpMenu = new JMenu("Help");
         JMenuItem generateItem = new JMenuItem("Generate Test File...");
@@ -913,6 +997,7 @@ public class TextEditorFrame extends JFrame {
         menuBar.add(fileMenu);
         menuBar.add(editMenu);
         menuBar.add(viewMenu);
+        menuBar.add(toolsMenu);
         menuBar.add(helpMenu);
 
         return menuBar;

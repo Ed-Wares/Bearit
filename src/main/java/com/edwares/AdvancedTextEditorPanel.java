@@ -1095,6 +1095,19 @@ public class AdvancedTextEditorPanel extends JPanel {
         updateCursorStatus();
     }
 
+    // --- Tool Output Helpers ---
+    public void appendText(String text) {
+        try {
+            Document doc = textArea.getDocument();
+            doc.insertString(doc.getLength(), text, null);
+            textArea.setCaretPosition(doc.getLength());
+        } catch (Exception e) {}
+    }
+
+    public void setCustomTitle(String title) {
+        updateTitle(title);
+    }
+
     public void loadFile(File file) {
         this.activeFile = file;
         fileManager.setFile(file);
