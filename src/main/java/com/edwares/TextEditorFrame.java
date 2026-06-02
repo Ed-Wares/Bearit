@@ -5,6 +5,7 @@ import javax.swing.event.MenuEvent;
 import javax.swing.event.MenuListener;
 import java.awt.*;
 import java.awt.datatransfer.Clipboard;
+import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.*;
 import java.io.File;
@@ -76,6 +77,37 @@ public class TextEditorFrame extends JFrame {
                     // Pass the current tab index to the session saver
                     BearitProperties.getInstance().saveSession(openFiles, tabbedPane.getSelectedIndex());
                     System.exit(0);
+                }
+            }
+        });
+
+        // --- Drag and Drop File Support ---
+        setTransferHandler(new TransferHandler() {
+            @Override
+            public boolean canImport(TransferSupport support) {
+                // Only allow dropping if it contains a list of files
+                return support.isDataFlavorSupported(DataFlavor.javaFileListFlavor);
+            }
+
+            @Override
+            public boolean importData(TransferSupport support) {
+                if (!canImport(support)) {
+                    return false;
+                }
+                try {
+                    @SuppressWarnings("unchecked")
+                    List<File> files = (List<File>) support.getTransferable().getTransferData(DataFlavor.javaFileListFlavor);
+                    
+                    // Open each dropped file in a new tab
+                    for (File file : files) {
+                        if (file.exists() && !file.isDirectory()) {
+                            openFileInTab(file);
+                        }
+                    }
+                    return true;
+                } catch (Exception e) {
+                    JOptionPane.showMessageDialog(TextEditorFrame.this, "Failed to open dropped files: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                    return false;
                 }
             }
         });
@@ -452,7 +484,6 @@ public class TextEditorFrame extends JFrame {
             if (option == JFileChooser.APPROVE_OPTION) {
                 File selected = fileChooser.getSelectedFile();
                 if (saveAsynchronously) {
-                    // Assuming saveAsSynchronously exists per your previous iteration
                     saveResult = editor.saveAsSynchronously(selected);
                 } else {
                     editor.saveAsFile(selected);
@@ -997,7 +1028,7 @@ public class TextEditorFrame extends JFrame {
         menuBar.add(fileMenu);
         menuBar.add(editMenu);
         menuBar.add(viewMenu);
-        menuBar.add(toolsMenu);
+        menuBar.add(toolsMenu); 
         menuBar.add(helpMenu);
 
         return menuBar;
