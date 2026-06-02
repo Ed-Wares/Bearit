@@ -11,7 +11,10 @@ import javax.swing.undo.CannotUndoException;
 import javax.swing.undo.UndoManager;
 import javax.swing.undo.UndoableEdit;
 import java.awt.*;
+import java.awt.datatransfer.Clipboard;
+import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.StringSelection;
+import java.awt.datatransfer.Transferable;
 import java.awt.event.*;
 import java.io.File;
 import java.io.IOException;
@@ -278,6 +281,73 @@ public class AdvancedTextEditorPanel extends JPanel {
                     wasEditorFocused = false;
                 }
                 textArea.getCaret().setSelectionVisible(true);
+            }
+        });
+        
+        // --- Wrap the JTextArea's TransferHandler to correctly intercept OS File Drops ---
+        TransferHandler originalHandler = textArea.getTransferHandler();
+        textArea.setTransferHandler(new TransferHandler() {
+            @Override
+            public boolean canImport(TransferSupport support) {
+                if (support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+                    support.setDropAction(TransferHandler.COPY); // Force the 'Copy/Add' OS Cursor Icon
+                    return true;
+                }
+                return originalHandler != null && originalHandler.canImport(support);
+            }
+
+            @Override
+            public boolean importData(TransferSupport support) {
+                if (support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+                    try {
+                        @SuppressWarnings("unchecked")
+                        java.util.List<File> files = (java.util.List<File>) support.getTransferable().getTransferData(DataFlavor.javaFileListFlavor);
+                        firePropertyChange("filesDropped", null, files);
+                        return true;
+                    } catch (Exception e) {
+                        return false;
+                    }
+                }
+                return originalHandler != null && originalHandler.importData(support);
+            }
+
+            @Override
+            public int getSourceActions(JComponent c) {
+                return originalHandler != null ? originalHandler.getSourceActions(c) : super.getSourceActions(c);
+            }
+
+            @Override
+            public void exportToClipboard(JComponent comp, Clipboard clip, int action) throws IllegalStateException {
+                if (originalHandler != null) {
+                    originalHandler.exportToClipboard(comp, clip, action);
+                } else {
+                    super.exportToClipboard(comp, clip, action);
+                }
+            }
+
+            @Override
+            protected Transferable createTransferable(JComponent c) {
+                if (originalHandler != null) {
+                    try {
+                        java.lang.reflect.Method m = TransferHandler.class.getDeclaredMethod("createTransferable", JComponent.class);
+                        m.setAccessible(true);
+                        return (Transferable) m.invoke(originalHandler, c);
+                    } catch (Exception e) {}
+                }
+                return super.createTransferable(c);
+            }
+
+            @Override
+            protected void exportDone(JComponent source, Transferable data, int action) {
+                if (originalHandler != null) {
+                    try {
+                        java.lang.reflect.Method m = TransferHandler.class.getDeclaredMethod("exportDone", JComponent.class, Transferable.class, int.class);
+                        m.setAccessible(true);
+                        m.invoke(originalHandler, source, data, action);
+                    } catch (Exception e) {}
+                } else {
+                    super.exportDone(source, data, action);
+                }
             }
         });
         

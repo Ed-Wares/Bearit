@@ -81,12 +81,15 @@ public class TextEditorFrame extends JFrame {
             }
         });
 
-        // --- Drag and Drop File Support ---
-        setTransferHandler(new TransferHandler() {
+        // --- Drag and Drop File Support for Frame and Blank Tabs ---
+        TransferHandler fileDropHandler = new TransferHandler() {
             @Override
             public boolean canImport(TransferSupport support) {
-                // Only allow dropping if it contains a list of files
-                return support.isDataFlavorSupported(DataFlavor.javaFileListFlavor);
+                if (support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+                    support.setDropAction(TransferHandler.COPY); 
+                    return true;
+                }
+                return false;
             }
 
             @Override
@@ -108,7 +111,8 @@ public class TextEditorFrame extends JFrame {
                     return false;
                 }
             }
-        });
+        };
+        setTransferHandler(fileDropHandler);
 
         try {
             java.net.URL iconURL = getClass().getResource("/bear.png");
@@ -120,9 +124,27 @@ public class TextEditorFrame extends JFrame {
 
         fileChooser = new JFileChooser();
         tabbedPane = new JTabbedPane();
+        tabbedPane.setTransferHandler(fileDropHandler); 
 
         // Add the permanent "+" dummy tab
         tabbedPane.addTab("+", new JPanel());
+
+        //  Global Tab Right-Click Listener ---
+        tabbedPane.addMouseListener(new MouseAdapter() {
+            public void mousePressed(MouseEvent e) { showPopup(e); }
+            public void mouseReleased(MouseEvent e) { showPopup(e); }
+            private void showPopup(MouseEvent e) {
+                if (e.isPopupTrigger()) {
+                    int index = tabbedPane.indexAtLocation(e.getX(), e.getY());
+                    if (index >= 0 && index < tabbedPane.getTabCount() - 1) { // exclude '+' tab
+                        Component comp = tabbedPane.getComponentAt(index);
+                        if (comp instanceof AdvancedTextEditorPanel) {
+                            createAndShowTabMenu(tabbedPane, e.getX(), e.getY(), index, (AdvancedTextEditorPanel) comp);
+                        }
+                    }
+                }
+            }
+        });
 
         tabbedPane.addChangeListener(e -> {
             if (isUpdatingTabs) return; // Ignore events while we are building/destroying tabs
@@ -231,6 +253,17 @@ public class TextEditorFrame extends JFrame {
 
             editor.addPropertyChangeListener("editorTitle", evt -> updateTabHeader(editor, lblTitle));
             editor.addPropertyChangeListener("unsavedChanges", evt -> updateTabHeader(editor, lblTitle));
+            
+            // --- Hook up the custom drop event from the inner text editor ---
+            editor.addPropertyChangeListener("filesDropped", evt -> {
+                @SuppressWarnings("unchecked")
+                List<File> files = (List<File>) evt.getNewValue();
+                for (File f : files) {
+                    if (f.exists() && !f.isDirectory()) {
+                        openFileInTab(f);
+                    }
+                }
+            });
 
             if (file != null) {
                 editor.loadFile(file);
