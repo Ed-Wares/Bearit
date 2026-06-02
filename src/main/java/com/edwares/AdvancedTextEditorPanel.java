@@ -3,6 +3,7 @@ package com.edwares;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import javax.swing.text.DefaultEditorKit;
 import javax.swing.text.Document;
 import javax.swing.text.PlainDocument;
 import javax.swing.undo.CannotRedoException;
@@ -66,6 +67,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     
     // Tracks intelligent focus state to survive chained background loads
     private boolean wasEditorFocused = false; 
+    private boolean isTransient = false; // --- NEW: Tracks if this is a temporary tab (like Tool Output)
     
     private boolean showWhitespace = false;
     private boolean showEol = false;
@@ -81,7 +83,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     private final Timer settleTimer; 
     private long currentChunkStartOffset = 0;
     
-    // Block Selection Tracking Variables ---
+    // Block Selection Tracking Variables
     private boolean isBlockSelecting = false;
     private boolean isDragging = false; 
     private boolean isBlockArrowNavigating = false;
@@ -103,7 +105,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         public void changedUpdate(DocumentEvent e) { registerEdit(); }
         
         private void registerEdit() {
-            if (!isNavigating && !isCurrentlyPreview) {
+            // Ignore edits if the tab is transient ---
+            if (!isNavigating && !isCurrentlyPreview && !isTransient) {
                 isDirty = true;
                 setUnsavedChanges(true); // Flag the entire file as unsaved
             }
@@ -189,7 +192,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                 if (isBlockSelecting &&e.getKeyCode() == KeyEvent.VK_ALT) {
                     e.consume();
                     return;
-                }                
+                }
                 super.processComponentKeyEvent(e);
             }
 
@@ -266,9 +269,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         // Intelligent Focus Listener ---
         textArea.addFocusListener(new FocusAdapter() {
             @Override
-            public void focusGained(FocusEvent e) {
-                wasEditorFocused = true;
-            }
+            public void focusGained(FocusEvent e) { wasEditorFocused = true; }
             @Override
             public void focusLost(FocusEvent e) {
                 // Only mark focus as lost if the user explicitly clicked away.
@@ -574,7 +575,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         textArea.repaint();
     }
     
-    // --- Public Editor Methods (Invoked by UI Toolbars/Menus) ---
+    // --- Public Editor Methods ---
 
     public void copy() { 
         if (hasValidBlockSelection()) copyBlock();
@@ -1106,6 +1107,14 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     public void setCustomTitle(String title) {
         updateTitle(title);
+    }
+
+    public void setTransient(boolean b) {
+        this.isTransient = b;
+        if (b) {
+            isDirty = false;
+            setUnsavedChanges(false);
+        }
     }
 
     public void loadFile(File file) {

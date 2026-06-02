@@ -91,9 +91,7 @@ public class TextEditorFrame extends JFrame {
 
             @Override
             public boolean importData(TransferSupport support) {
-                if (!canImport(support)) {
-                    return false;
-                }
+                if (!canImport(support)) return false;
                 try {
                     @SuppressWarnings("unchecked")
                     List<File> files = (List<File>) support.getTransferable().getTransferData(DataFlavor.javaFileListFlavor);
@@ -720,6 +718,7 @@ public class TextEditorFrame extends JFrame {
             performNew(); 
             outputPanel = getActiveEditor();
             outputPanel.setCustomTitle("Tool Output");
+            outputPanel.setTransient(true); // Prevent Tool tab from prompting for save
         }
         
         outputPanel.appendText(text);
