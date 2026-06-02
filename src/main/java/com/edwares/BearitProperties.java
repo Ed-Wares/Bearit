@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Properties;
 
 public class BearitProperties {
+    public static final String PROPERTIES_FILENAME = "bearit.properties";
     private static BearitProperties instance;
     private final File propertiesFile;
     private final Properties props;
@@ -53,12 +54,12 @@ public class BearitProperties {
         try {
             File jarPath = new File(BearitProperties.class.getProtectionDomain().getCodeSource().getLocation().toURI());
             if (jarPath.isFile()) {
-                return new File(jarPath.getParentFile(), "bearit.properties");
+                return new File(jarPath.getParentFile(), PROPERTIES_FILENAME);
             }
         } catch (URISyntaxException | IllegalArgumentException e) {
             // Ignore and fallback to current working directory
         }
-        return new File("bearit.properties");
+        return new File(PROPERTIES_FILENAME);
     }
 
     public void load() {
@@ -66,8 +67,9 @@ public class BearitProperties {
         if (!propertiesFile.exists()) {
             createPropertiesFile = true;
             // Load the default properties bundled INSIDE the JAR if no external file exists, and then save it to create the external file for future edits
-            try (java.io.InputStream in = getClass().getResourceAsStream("/Bearit.properties")) {
+            try (java.io.InputStream in = getClass().getResourceAsStream("/" + PROPERTIES_FILENAME)) {
                 if (in != null) {
+                    System.out.println("No external properties file found. Loading defaults from internal resource.");
                     props.load(in);
                 }
             } catch (java.io.IOException e) {
@@ -76,6 +78,7 @@ public class BearitProperties {
         }
         else {
             try (InputStream in = new FileInputStream(propertiesFile)) {
+                System.out.println("Loading properties from file: " + propertiesFile.getAbsolutePath());
                 props.load(in);
             } catch (IOException e) {
                 System.err.println("Failed to load properties: " + e.getMessage());
@@ -109,7 +112,10 @@ public class BearitProperties {
         } catch (NumberFormatException e) {
             System.err.println("Failed to load properties: " + e.getMessage());
         }
-        if (createPropertiesFile) save();
+        if (createPropertiesFile) {
+            System.out.println("Creating new properties file with default settings at: " + propertiesFile.getAbsolutePath());
+            save();
+        }
     }
 
     public void save() {
