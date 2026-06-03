@@ -42,7 +42,34 @@ public class LargeFileManager {
         boolean isPreview
     ) {}
 
-    // CLI usage
+    // --- Dynamic Fast Soft-Wrapper ---
+    /**
+     * Scans the payload and injects \u200B\n (Zero-Width Space + Newline) 
+     * if a continuous line exceeds the user-defined character maximum.
+     */
+    public static String forceWrapLongLinesDynamic(String input, int maxLength, int initialOffset) {
+        if (input == null || input.isEmpty() || maxLength <= 0) return input;
+        
+        StringBuilder sb = new StringBuilder(input.length() + (input.length() / maxLength) * 3);
+        int currentLineLength = initialOffset;
+        
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+            if (c == '\n') {
+                currentLineLength = 0;
+                sb.append(c);
+            } else {
+                if (currentLineLength >= maxLength) {
+                    sb.append('\u200B').append('\n');
+                    currentLineLength = 0;
+                }
+                sb.append(c);
+                currentLineLength++;
+            }
+        }
+        return sb.toString();
+    }
+
     public static void generateTestFile(double sizeInGb) throws IOException {
         File defaultDest = new File(String.format(java.util.Locale.US, "bearit_test_file_%.2fGB.txt", sizeInGb));
         generateTestFile(defaultDest, sizeInGb, null);
@@ -121,7 +148,6 @@ public class LargeFileManager {
 
     public boolean hasFile() { return currentFile != null || pendingSaveAsFile != null; }
     
-    // Safely queues the new file destination instead of instantly overwriting the source ---
     public void setCurrentFile(File file) { 
         this.pendingSaveAsFile = file; 
     }
@@ -130,9 +156,6 @@ public class LargeFileManager {
         return Math.max(totalChunks, dirtyChunks.keySet().stream().max(Integer::compare).orElse(0) + 1);
     }
 
-    /**
-     * Retrieves the exact line offset if the background indexer has processed it.
-     */
     public long getExactLineOffset(int index) {
         if (index == 0) return 1;
         return lineOffsetCache.getOrDefault(index, -1L);
@@ -154,14 +177,9 @@ public class LargeFileManager {
         preloadCache.remove(currentChunkIndex); 
     }
 
-    /**
-     * Spawns a background worker to silently scan the entire file.
-     * Fires the onChunkIndexed callback every time a chunk is perfectly mapped.
-     */
     public void buildIndexCacheAsync(java.util.function.Consumer<Integer> onChunkIndexed) {
         if (currentFile == null || !currentFile.exists()) return;
         
-        // Clear caches prior to building
         boundaryCache.clear();
         previewCache.clear();
         lineOffsetCache.clear();
@@ -174,14 +192,12 @@ public class LargeFileManager {
                 for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
                     if (Thread.currentThread().isInterrupted()) break;
                     
-                    // Force the indexer to use the exact same O(1) boundaries as the UI ---
                     long[] bounds = getChunkBoundaries(chunkIdx);
                     long start = bounds[0];
                     long end = bounds[1];
                     
                     lineOffsetCache.put(chunkIdx, currentGlobalLine);
                     
-                    // 1. Generate memory-safe 8KB UI Preview
                     long previewEnd = Math.min(end, start + 8192); 
                     byte[] previewBytes = new byte[(int)(previewEnd - start)];
                     raf.seek(start);
@@ -193,7 +209,6 @@ public class LargeFileManager {
                     }
                     previewCache.put(chunkIdx, previewStr);
                     
-                    // 2. Exact Line Count using the unified boundaries
                     raf.seek(start);
                     byte[] buffer = new byte[8192];
                     long bytesRead = 0;
@@ -213,7 +228,6 @@ public class LargeFileManager {
                     
                     currentGlobalLine += linesInChunk;
                     
-                    // Ping the UI that this chunk's exact lines are securely mapped!
                     final int completedChunk = chunkIdx;
                     if (onChunkIndexed != null) {
                         javax.swing.SwingUtilities.invokeLater(() -> onChunkIndexed.accept(completedChunk));
@@ -257,7 +271,6 @@ public class LargeFileManager {
         return generateChunkState(currentChunkIndex, requestPreview);
     }
 
-    // --- Expose raw chunk content extraction for background Find Next loops ---
     public String getChunkContent(int index) throws IOException {
         if (dirtyChunks.containsKey(index)) {
             return Files.readString(dirtyChunks.get(index).toPath(), StandardCharsets.UTF_8);
@@ -276,7 +289,6 @@ public class LargeFileManager {
         return "";
     }
 
-    // --- Memory-safe File-wide Global Counting ---
     public long countGlobalMatches(String target) throws IOException {
         long count = 0;
         int virtualTotalChunks = getTotalChunks();
@@ -291,7 +303,6 @@ public class LargeFileManager {
         return count;
     }
 
-    // --- Global Streaming File Replacements ---
     public int replaceAllGlobal(String target, String replacement) throws IOException {
         int totalMatches = 0;
         if (currentFile == null) return totalMatches;
@@ -304,7 +315,6 @@ public class LargeFileManager {
             for (int i = 0; i < virtualTotalChunks; i++) {
                 String chunkContent = getChunkContent(i);
                 String replaced = chunkContent.replace(target, replacement);
-                // (NewLength - OldLength) / (ReplacementLength - TargetLength) gives us the number of matches in this chunk
                 totalMatches += (replaced.length() - chunkContent.length()) / (replacement.length() - target.length());
                 destChannel.write(ByteBuffer.wrap(replaced.getBytes(StandardCharsets.UTF_8)));
             }
@@ -321,7 +331,6 @@ public class LargeFileManager {
         return totalMatches;
     }
 
-    // --- Calculate chunk locations dynamically for Go-To-Line ---
     public int getChunkForLine(long targetLine) throws IOException {
         if (targetLine <= 1) return 0;
         long currentLine = 1;
@@ -357,7 +366,7 @@ public class LargeFileManager {
         }
 
         String content = "";
-        long absoluteStartOffset = 0; // TRACK THE OFFSET
+        long absoluteStartOffset = 0; 
         
         if (dirtyChunks.containsKey(index)) {
             content = Files.readString(dirtyChunks.get(index).toPath(), StandardCharsets.UTF_8);
@@ -365,7 +374,7 @@ public class LargeFileManager {
             absoluteStartOffset = getChunkBoundaries(index)[0];
         } else if (currentFile != null && currentFile.exists()) {
             long[] boundaries = getChunkBoundaries(index);
-            absoluteStartOffset = boundaries[0]; // CAPTURE THE BOUNDARY
+            absoluteStartOffset = boundaries[0]; 
             long bytesToRead = boundaries[1] - boundaries[0];
 
             if (isPreview && bytesToRead > PREVIEW_SIZE) {
@@ -403,29 +412,32 @@ public class LargeFileManager {
     /**
      * Fast O(1) boundary calculation using purely mathematical byte-seeking.
      * Takes ~2ms regardless of if the chunk is at 10MB or 19.9GB.
+     * 500KB Failsafe applied to scanning loops
      */
     private long[] getChunkBoundaries(int index) throws IOException {
         if (boundaryCache.containsKey(index)) return boundaryCache.get(index);
         if (currentFile == null) return new long[]{0, 0};
 
-        long start = (long) index * CHUNK_SIZE; // Mathematical byte jump
+        long start = (long) index * CHUNK_SIZE; 
         long end = Math.min(start + CHUNK_SIZE, currentFile.length());
 
+        final long MAX_SCAN_DISTANCE = 500 * 1024; // 500 KB Failsafe Limit
+
         try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(currentFile, "r")) {
-            // Nudge 'start' forward to the next clean newline boundary
             if (start > 0 && start < currentFile.length()) {
                 raf.seek(start);
-                while (start < currentFile.length()) {
-                    if (Thread.currentThread().isInterrupted()) break; // Respect UI cancellation
+                long scanLimit = Math.min(start + MAX_SCAN_DISTANCE, currentFile.length());
+                while (start < scanLimit) {
+                    if (Thread.currentThread().isInterrupted()) break; 
                     if (raf.read() == '\n') { start++; break; }
                     start++;
                 }
             }
-            // Nudge 'end' forward to the next clean newline boundary
             if (end < currentFile.length()) {
                 raf.seek(end);
-                while (end < currentFile.length()) {
-                    if (Thread.currentThread().isInterrupted()) break; // Respect UI cancellation
+                long scanLimit = Math.min(end + MAX_SCAN_DISTANCE, currentFile.length());
+                while (end < scanLimit) {
+                    if (Thread.currentThread().isInterrupted()) break; 
                     end++;
                     if (raf.read() == '\n') break;
                 }
@@ -458,12 +470,10 @@ public class LargeFileManager {
         return totalFileSize;
     }
 
-    // Safely bridges current source file to pending destination file ---
     public ChunkState saveAll(String currentText) throws IOException {
         File destFile = (pendingSaveAsFile != null) ? pendingSaveAsFile : currentFile;
         if (destFile == null) throw new IllegalStateException("No valid target file to apply save operation.");
         
-        // Commit the current text to the memory cache first
         commitCurrentChunk(currentText);
 
         Path destPath = destFile.toPath();
@@ -493,7 +503,6 @@ public class LargeFileManager {
             Files.move(tempPath, destPath, StandardCopyOption.REPLACE_EXISTING);
         }
 
-        // Successfully copied; permanently switch references
         this.currentFile = destFile;
         this.pendingSaveAsFile = null;
 
@@ -528,15 +537,9 @@ public class LargeFileManager {
         return lineCounter;
     }
 
-    /**
-     * Lazily provides line offsets so the UI doesn't freeze waiting for the background indexer.
-     */
     private long computeAbsoluteLineOffsetLazy(int index) {
         if (index == 0) return 1;
         if (lineOffsetCache.containsKey(index)) return lineOffsetCache.get(index);
-        
-        // If the background indexer hasn't reached this 20GB chunk yet, we estimate the line number 
-        // instantly rather than forcing a 60-second linear disk scan.
         long estimatedAvgLineLength = 85; 
         return ((long) index * CHUNK_SIZE) / estimatedAvgLineLength;
     }    

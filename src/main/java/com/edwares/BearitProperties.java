@@ -243,4 +243,16 @@ public class BearitProperties {
     public void setCustomToolName(int index, String name) {
         if (index >= 0 && index < 8) { customToolNames[index] = name; save(); }
     }
+
+    public int getMaxLineLength() {
+        try {
+            return Integer.parseInt(props.getProperty("max.line.length", "20000"));
+        } catch (NumberFormatException e) {
+            return 20000;
+        }
+    }
+
+    public void setMaxLineLength(int length) {
+        props.setProperty("max.line.length", String.valueOf(length));
+    }
 }

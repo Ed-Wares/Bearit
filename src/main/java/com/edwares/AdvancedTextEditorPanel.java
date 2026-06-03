@@ -3,9 +3,13 @@ package com.edwares;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
-import javax.swing.text.DefaultEditorKit;
+import javax.swing.text.AbstractDocument;
 import javax.swing.text.Document;
+import javax.swing.text.DocumentFilter;
+import javax.swing.text.Element;
 import javax.swing.text.PlainDocument;
+import javax.swing.text.AttributeSet;
+import javax.swing.text.BadLocationException;
 import javax.swing.undo.CannotRedoException;
 import javax.swing.undo.CannotUndoException;
 import javax.swing.undo.UndoManager;
@@ -70,7 +74,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     
     // Tracks intelligent focus state to survive chained background loads
     private boolean wasEditorFocused = false; 
-    private boolean isTransient = false; // --- NEW: Tracks if this is a temporary tab (like Tool Output)
+    private boolean isTransient = false; // --- Tracks if this is a temporary tab (like Tool Output)
     
     private boolean showWhitespace = false;
     private boolean showEol = false;
@@ -515,12 +519,96 @@ public class AdvancedTextEditorPanel extends JPanel {
         add(statusBar, BorderLayout.SOUTH);
     }
     
+    // --- Safe Property Reader ---
+    private int getEditorMaxLineLength() {
+        try {
+            return BearitProperties.getInstance().getMaxLineLength();
+        } catch (Exception e) {
+            return 20000; 
+        }
+    }
+
+    private Document createWrappedDocument() {
+        Document newDoc = new PlainDocument();
+        ((AbstractDocument) newDoc).setDocumentFilter(new DocumentFilter() {
+            @Override
+            public void insertString(FilterBypass fb, int offset, String string, AttributeSet attr) throws BadLocationException {
+                super.insertString(fb, offset, processString(fb, offset, string), attr);
+            }
+            @Override
+            public void replace(FilterBypass fb, int offset, int length, String text, AttributeSet attrs) throws BadLocationException {
+                super.replace(fb, offset, length, processString(fb, offset, text), attrs);
+            }
+            private String processString(FilterBypass fb, int offset, String text) throws BadLocationException {
+                if (text == null || text.isEmpty()) return text;
+                int maxLen = getEditorMaxLineLength();
+                if (maxLen <= 0) return text; 
+                
+                Element root = fb.getDocument().getDefaultRootElement();
+                int lineIdx = root.getElementIndex(offset);
+                int lineStart = root.getElement(lineIdx).getStartOffset();
+                int charsBefore = offset - lineStart;
+                
+                return LargeFileManager.forceWrapLongLinesDynamic(text, maxLen, charsBefore);
+            }
+        });
+        return newDoc;
+    }
+    
+    // --- FIXED: True Line Bound Calculation (Scans Past Soft-Wrap \u200B Markers) ---
+    private int getTrueLineStart(int offset) {
+        try {
+            Document doc = textArea.getDocument();
+            Element root = doc.getDefaultRootElement();
+            int lineIdx = root.getElementIndex(offset);
+            
+            while (lineIdx > 0) {
+                Element prevLine = root.getElement(lineIdx - 1);
+                int prevEnd = prevLine.getEndOffset() - 1; 
+                if (prevEnd >= 1 && "\u200B".equals(doc.getText(prevEnd - 1, 1))) {
+                    lineIdx--; // The previous line ended in a soft wrap, keep scanning backwards
+                } else {
+                    break;
+                }
+            }
+            return root.getElement(lineIdx).getStartOffset();
+        } catch (Exception e) {
+            return offset;
+        }
+    }
+
+    private int getTrueLineEnd(int offset) {
+        try {
+            Document doc = textArea.getDocument();
+            Element root = doc.getDefaultRootElement();
+            int lineIdx = root.getElementIndex(offset);
+            
+            while (lineIdx < root.getElementCount() - 1) {
+                Element currLine = root.getElement(lineIdx);
+                int currEnd = currLine.getEndOffset() - 1; 
+                if (currEnd >= 1 && "\u200B".equals(doc.getText(currEnd - 1, 1))) {
+                    lineIdx++; // The current line ends in a soft wrap, keep scanning forwards
+                } else {
+                    break;
+                }
+            }
+            Element finalLine = root.getElement(lineIdx);
+            int endOff = finalLine.getEndOffset();
+            if (endOff > finalLine.getStartOffset() && doc.getText(endOff - 1, 1).equals("\n")) {
+                return endOff - 1; // Put cursor right before the true newline character
+            }
+            return endOff;
+        } catch (Exception e) {
+            return offset;
+        }
+    }
+    
     private boolean hasValidBlockSelection() {
         return isBlockSelecting && (Math.abs(blockStartX - blockEndX) > 0 || Math.abs(blockStartLine - blockEndLine) > 0);
     }
     
     // --- Block Action Helpers ---
-
+    
     private void moveBlockSelection(int dxChars, int dyLines) {
         try {
             isBlockArrowNavigating = true;
@@ -582,7 +670,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                 int endOffset = Math.max(off1, off2);
                 
                 if (startOffset <= endOffset) {
-                    sb.append(textArea.getText(startOffset, endOffset - startOffset));
+                    sb.append(textArea.getText(startOffset, endOffset - startOffset).replace("\u200B\n", "").replace("\u200B", ""));
                 }
                 if (i < maxLine) sb.append("\n");
             } catch(Exception e) {}
@@ -645,17 +733,34 @@ public class AdvancedTextEditorPanel extends JPanel {
         textArea.repaint();
     }
     
-    // --- Public Editor Methods ---
+    // --- Public Editor Methods explicitly trigger stripped operations ---
 
     public void copy() { 
-        if (hasValidBlockSelection()) copyBlock();
-        else textArea.copy(); 
+        if (hasValidBlockSelection()) {
+            copyBlock();
+        } else {
+            String selected = textArea.getSelectedText();
+            if (selected != null) {
+                selected = selected.replace("\u200B\n", "").replace("\u200B", "");
+                StringSelection selection = new StringSelection(selected);
+                Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, selection);
+            }
+        }
     }
     
     public void cut() { 
         if (!isCurrentlyPreview) {
-            if (hasValidBlockSelection()) cutBlock();
-            else textArea.cut(); 
+            if (hasValidBlockSelection()) {
+                cutBlock();
+            } else {
+                String selected = textArea.getSelectedText();
+                if (selected != null) {
+                    selected = selected.replace("\u200B\n", "").replace("\u200B", "");
+                    StringSelection selection = new StringSelection(selected);
+                    Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, selection);
+                    textArea.replaceSelection(""); 
+                }
+            }
         }
     }
     
@@ -670,7 +775,7 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     public void adjustFontSize(int delta) {
         Font current = textArea.getFont();
-        int newSize = Math.max(8, Math.min(72, current.getSize() + delta)); 
+        int newSize = Math.max(6, Math.min(80, current.getSize() + delta)); 
         setFont(current.deriveFont((float) newSize));
         BearitProperties.getInstance().setFontSize(newSize);
     }
@@ -742,7 +847,7 @@ public class AdvancedTextEditorPanel extends JPanel {
      * edits to the File Manager, ensuring chunks don't accidentally merge.
      */    
     private String getCommitText() {
-        String text = textArea.getText();
+        String text = textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
         if (loadedChunkIndex < fileManager.getTotalChunks() - 1) {
             return text + "\n";
         }
@@ -1147,7 +1252,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         
         documentCache.clear();
         globalUndoManager.discardAllEdits();
-        Document newDoc = new PlainDocument();
+        
+        Document newDoc = createWrappedDocument();
         newDoc.addDocumentListener(editorDocumentListener);
         newDoc.addUndoableEditListener(e -> {
             if (!isNavigating && !isCurrentlyPreview) {
@@ -1164,27 +1270,6 @@ public class AdvancedTextEditorPanel extends JPanel {
         globalScrollBar.setValue(0);
         globalScrollBar.setMaximum(SCROLL_RESOLUTION + globalScrollBar.getVisibleAmount());
         updateCursorStatus();
-    }
-
-    // --- Tool Output Helpers ---
-    public void appendText(String text) {
-        try {
-            Document doc = textArea.getDocument();
-            doc.insertString(doc.getLength(), text, null);
-            textArea.setCaretPosition(doc.getLength());
-        } catch (Exception e) {}
-    }
-
-    public void setCustomTitle(String title) {
-        updateTitle(title);
-    }
-
-    public void setTransient(boolean b) {
-        this.isTransient = b;
-        if (b) {
-            isDirty = false;
-            setUnsavedChanges(false);
-        }
     }
 
     public void loadFile(File file) {
@@ -1312,13 +1397,55 @@ public class AdvancedTextEditorPanel extends JPanel {
         firePropertyChange("editorTitle", oldTitle, newTitle);
     }
 
+    // --- Explicitly override native keys to map directly to our stripped methods ---
     private void setupKeyboardShortcuts() {
         InputMap im = textArea.getInputMap(JComponent.WHEN_FOCUSED);
         ActionMap am = textArea.getActionMap();
 
-        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_HOME, InputEvent.CTRL_DOWN_MASK), "none");
-        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_END, InputEvent.CTRL_DOWN_MASK), "none");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_C, InputEvent.CTRL_DOWN_MASK), "customCopy");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_INSERT, InputEvent.CTRL_DOWN_MASK), "customCopy"); 
+        am.put("customCopy", new AbstractAction() { public void actionPerformed(ActionEvent e) { copy(); }});
 
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_X, InputEvent.CTRL_DOWN_MASK), "customCut");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, InputEvent.SHIFT_DOWN_MASK), "customCut"); 
+        am.put("customCut", new AbstractAction() { public void actionPerformed(ActionEvent e) { cut(); }});
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_V, InputEvent.CTRL_DOWN_MASK), "customPaste");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_INSERT, InputEvent.SHIFT_DOWN_MASK), "customPaste"); 
+        am.put("customPaste", new AbstractAction() { public void actionPerformed(ActionEvent e) { paste(); }});
+        
+        // --- Custom Home/End Keys to bypass Soft-Wraps ---
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_HOME, 0), "customHome");
+        am.put("customHome", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                if (isBlockSelecting || isCurrentlyPreview) return;
+                textArea.setCaretPosition(getTrueLineStart(textArea.getCaretPosition()));
+            }
+        });
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_HOME, InputEvent.SHIFT_DOWN_MASK), "customShiftHome");
+        am.put("customShiftHome", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                if (isCurrentlyPreview) return;
+                textArea.moveCaretPosition(getTrueLineStart(textArea.getCaretPosition()));
+            }
+        });
+        
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_END, 0), "customEnd");
+        am.put("customEnd", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                if (isBlockSelecting || isCurrentlyPreview) return;
+                textArea.setCaretPosition(getTrueLineEnd(textArea.getCaretPosition()));
+            }
+        });
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_END, InputEvent.SHIFT_DOWN_MASK), "customShiftEnd");
+        am.put("customShiftEnd", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                if (isCurrentlyPreview) return;
+                textArea.moveCaretPosition(getTrueLineEnd(textArea.getCaretPosition()));
+            }
+        });
+
+        // Ctrl Home/End Chunk Navigation
         im.put(KeyStroke.getKeyStroke(KeyEvent.VK_HOME, InputEvent.CTRL_DOWN_MASK), "jumpStart");
         am.put("jumpStart", new AbstractAction() {
             public void actionPerformed(ActionEvent e) {
@@ -1382,6 +1509,16 @@ public class AdvancedTextEditorPanel extends JPanel {
         im.put(KeyStroke.getKeyStroke(KeyEvent.VK_SUBTRACT, InputEvent.CTRL_DOWN_MASK), "zoomOutNumPad");
         am.put("zoomOut", new AbstractAction() { public void actionPerformed(ActionEvent e) { adjustFontSize(-2); }});
         am.put("zoomOutNumPad", new AbstractAction() { public void actionPerformed(ActionEvent e) { adjustFontSize(-2); }});
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_UP, InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "blockUp");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "blockDown");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "blockLeft");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "blockRight");
+        
+        am.put("blockUp", new AbstractAction() { public void actionPerformed(ActionEvent e) { moveBlockSelection(0, -1); }});
+        am.put("blockDown", new AbstractAction() { public void actionPerformed(ActionEvent e) { moveBlockSelection(0, 1); }});
+        am.put("blockLeft", new AbstractAction() { public void actionPerformed(ActionEvent e) { moveBlockSelection(-1, 0); }});
+        am.put("blockRight", new AbstractAction() { public void actionPerformed(ActionEvent e) { moveBlockSelection(1, 0); }});
 
         bindWrapAroundNavigation(im, am, KeyEvent.VK_DOWN, 1);
         bindWrapAroundNavigation(im, am, KeyEvent.VK_PAGE_DOWN, 1);
@@ -1592,7 +1729,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         if (doc != null && !isCurrentlyPreview) {
             textArea.setDocument(doc);
         } else {
-            Document newDoc = new PlainDocument();
+            Document newDoc = createWrappedDocument();
             try {
                 String content = state.content();
                 // Strip the trailing newline used strictly for chunk file boundaries
@@ -1698,7 +1835,25 @@ public class AdvancedTextEditorPanel extends JPanel {
         JOptionPane.showMessageDialog(this, message, "System IO Exception Error", JOptionPane.ERROR_MESSAGE);
     }
 
-    // --- Embedded Global Undo Handlers ---
+    public void appendText(String text) {
+        try {
+            Document doc = textArea.getDocument();
+            doc.insertString(doc.getLength(), text, null);
+            textArea.setCaretPosition(doc.getLength());
+        } catch (Exception e) {}
+    }
+
+    public void setCustomTitle(String title) {
+        updateTitle(title);
+    }
+
+    public void setTransient(boolean b) {
+        this.isTransient = b;
+        if (b) {
+            isDirty = false;
+            setUnsavedChanges(false);
+        }
+    }
 
     private static class ChunkAwareEdit implements UndoableEdit {
         final int chunkIndex;
@@ -1741,8 +1896,6 @@ public class AdvancedTextEditorPanel extends JPanel {
         @Override public String getRedoPresentationName() { return inner.getRedoPresentationName(); }
     }
 
-    /*  Instead of isolating history to a single chunk and losing it when you scroll away, we will keep up to 40 chunks (1GB of RAM) active in 
-    an LRU (Least Recently Used) cache. The GlobalUndoManager will intercept every keystroke, tag it with its chunk index, and store it in a single unified timeline. */
     private static class GlobalUndoManager extends UndoManager {
         public int getUndoChunk() {
             UndoableEdit edit = editToBeUndone();
@@ -1825,32 +1978,57 @@ public class AdvancedTextEditorPanel extends JPanel {
             boolean isIndexing = parent.lblIndexingStatus.getText().contains("⚙");
 
             try {
+                Document doc = textArea.getDocument();
+                Element root = doc.getDefaultRootElement();
+                
                 int startOffset = textArea.viewToModel2D(new Point(0, viewportClip.y));
                 int endOffset = textArea.viewToModel2D(new Point(0, viewportClip.y + viewportClip.height + fm.getHeight()));
                 
-                int startLineIdx = textArea.getLineOfOffset(startOffset);
-                int endLineIdx = textArea.getLineOfOffset(endOffset);
+                int startLineIdx = root.getElementIndex(startOffset);
+                int endLineIdx = root.getElementIndex(endOffset);
+
+                int realLines = 0;
+                for(int i = 0; i < startLineIdx; i++) {
+                    int endOff = root.getElement(i).getEndOffset();
+                    if (!(endOff >= 2 && "\u200B".equals(doc.getText(endOff - 2, 1)))) {
+                        realLines++;
+                    }
+                }
 
                 for (int i = startLineIdx; i <= endLineIdx; i++) {
-                    int offset = textArea.getLineStartOffset(i);
+                    int offset = root.getElement(i).getStartOffset();
                     Rectangle r = textArea.modelToView2D(offset).getBounds();
                     
                     if (r.y + r.height < viewportClip.y) continue;
                     if (r.y > viewportClip.y + viewportClip.height) break;
                     
-                    // --- Add ~ symbol if indexing is still in progress ---
-                    String stringLabel = (isIndexing ? "~" : "") + String.valueOf(startLine + i);
-                    int alignedX = getWidth() - fm.stringWidth(stringLabel) - 6;
-                    
-                    if (i == currentLocalLine) {
-                        g.setFont(textArea.getFont().deriveFont(Font.BOLD));
-                        g.setColor(parent.currentTheme.equals("Dark") ? new Color(200, 200, 200) : new Color(40, 40, 40));
-                    } else {
-                        g.setFont(textArea.getFont());
-                        g.setColor(parent.currentTheme.equals("Dark") ? new Color(110, 110, 110) : new Color(110, 110, 110));
+                    boolean prevWasFake = false;
+                    if (i > 0) {
+                        int prevEndOff = root.getElement(i - 1).getEndOffset();
+                        if (prevEndOff >= 2 && "\u200B".equals(doc.getText(prevEndOff - 2, 1))) {
+                            prevWasFake = true;
+                        }
                     }
-                    
-                    g.drawString(stringLabel, alignedX, r.y + fm.getAscent());
+
+                    if (!prevWasFake) {
+                        String stringLabel = (isIndexing ? "~" : "") + String.valueOf(startLine + realLines);
+                        int alignedX = getWidth() - fm.stringWidth(stringLabel) - 6;
+                        
+                        if (i == currentLocalLine) {
+                            g.setFont(textArea.getFont().deriveFont(Font.BOLD));
+                            g.setColor(parent.currentTheme.equals("Dark") ? new Color(200, 200, 200) : new Color(40, 40, 40));
+                        } else {
+                            g.setFont(textArea.getFont());
+                            g.setColor(parent.currentTheme.equals("Dark") ? new Color(110, 110, 110) : new Color(110, 110, 110));
+                        }
+                        
+                        g.drawString(stringLabel, alignedX, r.y + fm.getAscent());
+                    }
+
+                    int thisEndOff = root.getElement(i).getEndOffset();
+                    if (!(thisEndOff >= 2 && "\u200B".equals(doc.getText(thisEndOff - 2, 1)))) {
+                        realLines++;
+                    }
                 }
             } catch (Exception e) {}
         }
