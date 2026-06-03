@@ -42,8 +42,8 @@ public class LargeFileManager {
         boolean isPreview
     ) {}
 
-    // --- Dynamic Fast Soft-Wrapper ---
     /**
+     * Dynamic Fast Soft-Wrapper for Long Lines:
      * Scans the payload and injects \u200B\n (Zero-Width Space + Newline) 
      * if a continuous line exceeds the user-defined character maximum.
      */
@@ -409,11 +409,24 @@ public class LargeFileManager {
         return new ChunkState(content, absoluteStartLine, absoluteStartOffset, index, virtualTotalChunks, hasPrev, hasNext, statusText, fName, isPreview);
     }
 
-    /**
-     * Fast O(1) boundary calculation using purely mathematical byte-seeking.
-     * Takes ~2ms regardless of if the chunk is at 10MB or 19.9GB.
-     * 500KB Failsafe applied to scanning loops
-     */
+    // --- Ultra-fast buffered scanner to eliminate byte-by-byte IO overhead ---
+    private long fastFindNewline(java.io.RandomAccessFile raf, long start, long limit) throws IOException {
+        raf.seek(start);
+        byte[] buf = new byte[16384]; // 16KB Buffer
+        long current = start;
+        while (current < limit) {
+            if (Thread.currentThread().isInterrupted()) break;
+            int toRead = (int) Math.min(buf.length, limit - current);
+            int read = raf.read(buf, 0, toRead);
+            if (read == -1) break;
+            for (int i = 0; i < read; i++) {
+                if (buf[i] == '\n') return current + i + 1;
+            }
+            current += read;
+        }
+        return current; // If no newline is found, execute the hard-cut Failsafe
+    }
+
     private long[] getChunkBoundaries(int index) throws IOException {
         if (boundaryCache.containsKey(index)) return boundaryCache.get(index);
         if (currentFile == null) return new long[]{0, 0};
@@ -425,52 +438,19 @@ public class LargeFileManager {
 
         try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(currentFile, "r")) {
             if (start > 0 && start < currentFile.length()) {
-                raf.seek(start);
-                long scanLimit = Math.min(start + MAX_SCAN_DISTANCE, currentFile.length());
-                while (start < scanLimit) {
-                    if (Thread.currentThread().isInterrupted()) break; 
-                    if (raf.read() == '\n') { start++; break; }
-                    start++;
-                }
+                start = fastFindNewline(raf, start, Math.min(start + MAX_SCAN_DISTANCE, currentFile.length()));
             }
             if (end < currentFile.length()) {
-                raf.seek(end);
-                long scanLimit = Math.min(end + MAX_SCAN_DISTANCE, currentFile.length());
-                while (end < scanLimit) {
-                    if (Thread.currentThread().isInterrupted()) break; 
-                    end++;
-                    if (raf.read() == '\n') break;
-                }
+                end = fastFindNewline(raf, end, Math.min(end + MAX_SCAN_DISTANCE, currentFile.length()));
             }
         }
-        return new long[]{start, end};
+        long[] bounds = new long[]{start, end};
+        boundaryCache.put(index, bounds);
+        return bounds;
     }
 
-    private long findLineStartBoundary(long offset) throws IOException {
-        if (offset <= 0) return 0;
-        if (offset >= totalFileSize) return totalFileSize;
-        try (FileChannel channel = FileChannel.open(currentFile.toPath(), StandardOpenOption.READ)) {
-            ByteBuffer checkBuffer = ByteBuffer.allocate(1);
-            channel.position(offset - 1);
-            channel.read(checkBuffer);
-            checkBuffer.flip();
-            if (checkBuffer.get() == '\n') return offset;
-
-            ByteBuffer scanBuf = ByteBuffer.allocate(4096);
-            channel.position(offset);
-            while (channel.read(scanBuf) > 0) {
-                scanBuf.flip();
-                for (int i = 0; i < scanBuf.limit(); i++) {
-                    if (scanBuf.get(i) == '\n') return offset + i + 1; 
-                }
-                offset += scanBuf.limit();
-                scanBuf.clear();
-            }
-        }
-        return totalFileSize;
-    }
-
-    public ChunkState saveAll(String currentText) throws IOException {
+    // --- FIXED: Accepts BiConsumer callback to provide real-time save progress ---
+    public ChunkState saveAll(String currentText, BiConsumer<Integer, Integer> progressCallback) throws IOException {
         File destFile = (pendingSaveAsFile != null) ? pendingSaveAsFile : currentFile;
         if (destFile == null) throw new IllegalStateException("No valid target file to apply save operation.");
         
@@ -484,6 +464,12 @@ public class LargeFileManager {
              FileChannel srcChannel = (currentFile != null && Files.exists(currentFile.toPath())) ? FileChannel.open(currentFile.toPath(), StandardOpenOption.READ) : null) {
             
             for (int i = 0; i < virtualTotalChunks; i++) {
+                // Publish Progress
+                if (progressCallback != null) {
+                    int percent = (int) (((i + 1) * 100.0) / virtualTotalChunks);
+                    progressCallback.accept(i + 1, percent);
+                }
+                
                 if (dirtyChunks.containsKey(i)) {
                     byte[] bytes = Files.readAllBytes(dirtyChunks.get(i).toPath());
                     destChannel.write(ByteBuffer.wrap(bytes));

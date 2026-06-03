@@ -124,6 +124,7 @@ public class TextEditorFrame extends JFrame {
 
         fileChooser = new JFileChooser();
         tabbedPane = new JTabbedPane();
+        tabbedPane.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT); // --- Forces Mac to align tabs to the left
         tabbedPane.setTransferHandler(fileDropHandler); 
 
         // Add the permanent "+" dummy tab

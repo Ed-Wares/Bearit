@@ -4,9 +4,11 @@ import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.text.AbstractDocument;
+import javax.swing.text.DefaultCaret;
 import javax.swing.text.Document;
 import javax.swing.text.DocumentFilter;
 import javax.swing.text.Element;
+import javax.swing.text.JTextComponent;
 import javax.swing.text.PlainDocument;
 import javax.swing.text.AttributeSet;
 import javax.swing.text.BadLocationException;
@@ -19,6 +21,7 @@ import java.awt.datatransfer.Clipboard;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.StringSelection;
 import java.awt.datatransfer.Transferable;
+import java.awt.dnd.*;
 import java.awt.event.*;
 import java.io.File;
 import java.io.IOException;
@@ -272,6 +275,30 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
         };
         textArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
+        
+        // --- Custom Caret repaints BOTH the old line and new line to prevent highlight ghosting
+        DefaultCaret customCaret = new DefaultCaret() {
+            private Rectangle lastRect = null;
+            
+            @Override
+            protected synchronized void damage(Rectangle r) {
+                if (r != null) {
+                    try {
+                        JTextComponent comp = getComponent();
+                        if (lastRect != null) {
+                            comp.repaint(0, lastRect.y, comp.getWidth(), lastRect.height);
+                        }
+                        comp.repaint(0, r.y, comp.getWidth(), r.height);
+                        lastRect = (Rectangle) r.clone();
+                    } catch (Exception e) {}
+                }
+                super.damage(r);
+            }
+        };
+        customCaret.setUpdatePolicy(DefaultCaret.UPDATE_WHEN_ON_EDT);
+        // Re-enable the blinking cursor (500 milliseconds is the standard OS default) ---
+        customCaret.setBlinkRate(500);
+        textArea.setCaret(customCaret);
         
         // Intelligent Focus Listener ---
         textArea.addFocusListener(new FocusAdapter() {
@@ -555,7 +582,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         return newDoc;
     }
     
-    // --- FIXED: True Line Bound Calculation (Scans Past Soft-Wrap \u200B Markers) ---
+    // --- True Line Bound Calculation (Scans Past Soft-Wrap \u200B Markers) ---
     private int getTrueLineStart(int offset) {
         try {
             Document doc = textArea.getDocument();
@@ -1330,7 +1357,8 @@ public class AdvancedTextEditorPanel extends JPanel {
     
     public boolean saveSynchronously() {
         try {
-            fileManager.saveAll(getCommitText());
+            // --- Pass null to progressCallback since this runs entirely on the main UI thread ---
+            fileManager.saveAll(getCommitText(), null);
             isDirty = false;
             setUnsavedChanges(false);
             return true;
@@ -1346,7 +1374,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             this.activeFile = file;
             fileManager.setCurrentFile(file);
             // Perform the I/O on the current thread (blocking)
-            fileManager.saveAll(getCommitText());
+            fileManager.saveAll(getCommitText(), null);
             
             // Update state synchronously
             isDirty = false;
@@ -1363,16 +1391,28 @@ public class AdvancedTextEditorPanel extends JPanel {
     public String getCurrentTitle() { return currentTitle; }
 
     private void executeSaveRoutine() {
-        lblLoadingStatus.setText("Saving file...");
+        lblLoadingStatus.setText("Saving file... 0%");
         isNavigating = true; 
         
         String saveText = isCurrentlyPreview ? "" : getCommitText();
         
-        new SwingWorker<LargeFileManager.ChunkState, Void>() {
+        // --- Worker now captures Integer progress updates ---
+        new SwingWorker<LargeFileManager.ChunkState, Integer>() {
             @Override
             protected LargeFileManager.ChunkState doInBackground() throws Exception {
-                return fileManager.saveAll(saveText);
+                return fileManager.saveAll(saveText, (chunkIndex, pct) -> {
+                    publish(pct);
+                });
             }
+            
+            @Override
+            protected void process(java.util.List<Integer> chunks) {
+                if (!chunks.isEmpty()) {
+                    int pct = chunks.get(chunks.size() - 1);
+                    lblLoadingStatus.setText("Saving file... " + pct + "%");
+                }
+            }
+            
             @Override
             protected void done() {
                 try {
