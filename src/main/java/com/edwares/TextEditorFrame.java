@@ -679,21 +679,47 @@ public class TextEditorFrame extends JFrame {
     }
 
     // --- Tool Execution Output Redirection ---
-    private void executeCustomTool(String command) {
+    private void executeCustomTool(String rawCommand) {
+        // --- Resolve the %f (Current File) variable ---
+        AdvancedTextEditorPanel activeEditor = getActiveEditor();
+        File activeFile = activeEditor != null ? activeEditor.getActiveFile() : null;
+
+        if (rawCommand.contains("%f") && activeFile == null) {
+            JOptionPane.showMessageDialog(this, "This tool requires a saved file to use '%f'. Please save the current tab to disk first.", "Tool Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        String command = rawCommand;
+        if (command.contains("%f") && activeFile != null) {
+            command = command.replace("%f", activeFile.getAbsolutePath());
+        }
+
+        // --- Resolve the %rp (Running Path) variable ---
+        if (command.contains("%rp")) {
+            String rp;
+            try {
+                rp = new File(TextEditorFrame.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getParent();
+                if (rp == null) rp = System.getProperty("user.dir");
+            } catch (Exception ex) {
+                rp = System.getProperty("user.dir");
+            }
+            command = command.replace("%rp", rp);
+        }
+
+        final String finalCommand = command;
+
         new SwingWorker<Void, String>() {
             @Override
             protected Void doInBackground() throws Exception {
-                publish(">> Executing: " + command + "\n");
+                publish(">> Executing: " + finalCommand + "\n");
                 
-                // Use OS-level shell processing to handle complex commands correctly
                 ProcessBuilder pb = new ProcessBuilder();
                 if (System.getProperty("os.name").toLowerCase().contains("win")) {
-                    pb.command("cmd.exe", "/c", command);
+                    pb.command("cmd.exe", "/c", finalCommand);
                 } else {
-                    pb.command("bash", "-c", command);
+                    pb.command("bash", "-c", finalCommand);
                 }
                 
-                // Redirect standard error directly into standard out so we don't have to manage two reader threads
                 pb.redirectErrorStream(true); 
                 Process process = pb.start();
                 

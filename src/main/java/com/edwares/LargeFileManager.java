@@ -314,8 +314,16 @@ public class LargeFileManager {
         try (FileChannel destChannel = FileChannel.open(tempPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
             for (int i = 0; i < virtualTotalChunks; i++) {
                 String chunkContent = getChunkContent(i);
-                String replaced = chunkContent.replace(target, replacement);
-                totalMatches += (replaced.length() - chunkContent.length()) / (replacement.length() - target.length());
+                // --- Divide-by-Zero Exception eliminated with safe match counting ---
+                int chunkMatches = 0;
+                int index = 0;
+                while ((index = chunkContent.indexOf(target, index)) != -1) {
+                    chunkMatches++;
+                    index += target.length();
+                }
+                totalMatches += chunkMatches;
+
+                String replaced = chunkMatches > 0 ? chunkContent.replace(target, replacement) : chunkContent;
                 destChannel.write(ByteBuffer.wrap(replaced.getBytes(StandardCharsets.UTF_8)));
             }
         }

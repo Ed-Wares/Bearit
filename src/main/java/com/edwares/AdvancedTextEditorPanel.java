@@ -1007,166 +1007,9 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
     }
 
-    private void jumpToLocalLine(long absoluteTargetLine) {
-        long startLine = lineNumberPanel.getStartLine();
-        int localLine = (int) (absoluteTargetLine - startLine);
-        
-        if (localLine >= 0 && localLine < textArea.getLineCount()) {
-            try {
-                int offset = textArea.getLineStartOffset(localLine);
-                textArea.setCaretPosition(offset);
-                textArea.requestFocus();
-            } catch (Exception e) {}
-        }
-    }
-
     private Component getDialogParent() {
         return (searchDialog != null && searchDialog.isVisible()) ? searchDialog : this;
     }
-
-    private void performFindNext(String target) {
-        if (target == null || target.isEmpty()) return;
-
-        int caret = textArea.getCaretPosition();
-        if (textArea.getSelectedText() != null && textArea.getSelectedText().equalsIgnoreCase(target)) {
-            caret = textArea.getSelectionEnd();
-        }
-
-        String text = textArea.getText();
-        int idx = text.indexOf(target, caret);
-        
-        if (idx != -1) {
-            textArea.setCaretPosition(idx);
-            textArea.moveCaretPosition(idx + target.length());
-            return;
-        }
-        
-        lblLoadingStatus.setText("Scanning file for next match...");
-        
-        String commitText = getCommitText();
-        boolean wasDirty = isDirty;
-        isDirty = false;
-        
-        new SwingWorker<Integer, Void>() {
-            int foundIdx = -1;
-            @Override
-            protected Integer doInBackground() throws Exception {
-                if (wasDirty && !isCurrentlyPreview) {
-                    fileManager.commitCurrentChunk(commitText);
-                }
-                int total = fileManager.getTotalChunks();
-                for (int i = loadedChunkIndex + 1; i < total; i++) {
-                    String content = fileManager.getChunkContent(i);
-                    int match = content.indexOf(target);
-                    if (match != -1) {
-                        foundIdx = match;
-                        return i;
-                    }
-                }
-                return -1;
-            }
-            @Override
-            protected void done() {
-                try {
-                    int targetChunk = get();
-                    lblLoadingStatus.setText("");
-                    if (targetChunk != -1) {
-                        triggerAsyncLoad(targetChunk, 0, -1, false, () -> {
-                            textArea.setCaretPosition(foundIdx);
-                            textArea.moveCaretPosition(foundIdx + target.length());
-                        });
-                    } else {
-                        int response = JOptionPane.showConfirmDialog(getDialogParent(), 
-                            "Reached end of file. Start again from the top?", 
-                            "Search Wrap Around", 
-                            JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
-                            
-                        if (response == JOptionPane.YES_OPTION) {
-                            triggerAsyncLoad(0, 1, -1, false, () -> {
-                                textArea.setCaretPosition(0);
-                                performFindNext(target);
-                            });
-                        }
-                    }
-                } catch (Exception e) {}
-            }
-        }.execute();
-    }
-
-    private void performFindPrevious(String target) {
-        if (target == null || target.isEmpty()) return;
-
-        int caret = textArea.getSelectionStart();
-        String text = textArea.getText().substring(0, caret);
-        int idx = text.lastIndexOf(target);
-        
-        if (idx != -1) {
-            textArea.setCaretPosition(idx);
-            textArea.moveCaretPosition(idx + target.length());
-            return;
-        }
-        
-        lblLoadingStatus.setText("Scanning file for previous match...");
-        
-        String commitText = getCommitText();
-        boolean wasDirty = isDirty;
-        isDirty = false;
-        
-        new SwingWorker<Integer, Void>() {
-            int foundIdx = -1;
-            @Override
-            protected Integer doInBackground() throws Exception {
-                if (wasDirty && !isCurrentlyPreview) {
-                    fileManager.commitCurrentChunk(commitText);
-                }
-                for (int i = loadedChunkIndex - 1; i >= 0; i--) {
-                    String content = fileManager.getChunkContent(i);
-                    int match = content.lastIndexOf(target);
-                    if (match != -1) {
-                        foundIdx = match;
-                        return i;
-                    }
-                }
-                return -1;
-            }
-            @Override
-            protected void done() {
-                try {
-                    int targetChunk = get();
-                    lblLoadingStatus.setText("");
-                    if (targetChunk != -1) {
-                        triggerAsyncLoad(targetChunk, 0, -1, false, () -> {
-                            textArea.setCaretPosition(foundIdx);
-                            textArea.moveCaretPosition(foundIdx + target.length());
-                        });
-                    } else {
-                        int response = JOptionPane.showConfirmDialog(getDialogParent(), 
-                            "Reached beginning of file. Search again from the bottom?", 
-                            "Search Wrap Around", 
-                            JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
-                            
-                        if (response == JOptionPane.YES_OPTION) {
-                            int lastChunk = Math.max(0, fileManager.getTotalChunks() - 1);
-                            triggerAsyncLoad(lastChunk, -1, -1, false, () -> {
-                                textArea.setCaretPosition(textArea.getDocument().getLength());
-                                performFindPrevious(target);
-                            });
-                        }
-                    }
-                } catch (Exception e) {}
-            }
-        }.execute();
-    }
-
-    private void performReplace(String target, String replacement) {
-        if (target == null || target.isEmpty()) return;
-        String selected = textArea.getSelectedText();
-        if (selected != null && selected.equalsIgnoreCase(target) && !isCurrentlyPreview) {
-            textArea.replaceSelection(replacement);
-        }
-        performFindNext(target);
-    }
-
     private void performCountMatches(String target) {
         if (target == null || target.isEmpty()) return;
         lblLoadingStatus.setText("Running full file match count...");
@@ -1192,7 +1035,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
         }.execute();
     }
-
+    
     private void performReplaceAll(String target, String replacement) {
         if (target == null || target.isEmpty()) return;
         
@@ -2068,6 +1911,244 @@ public class AdvancedTextEditorPanel extends JPanel {
                     int thisEndOff = root.getElement(i).getEndOffset();
                     if (!(thisEndOff >= 2 && "\u200B".equals(doc.getText(thisEndOff - 2, 1)))) {
                         realLines++;
+                    }
+                }
+            } catch (Exception e) {}
+        }
+    }
+
+    // --- Find Search Offset Mappers ---
+    
+    private int rawToVisualIndex(int rawIndex) {
+        try {
+            String uiText = textArea.getText();
+            int len = uiText.length();
+            int rIdx = 0;
+            int vIdx = 0;
+            while (rIdx < rawIndex && vIdx < len) {
+                char c = uiText.charAt(vIdx);
+                if (c == '\u200B') {
+                    vIdx++;
+                    if (vIdx < len && uiText.charAt(vIdx) == '\n') {
+                        vIdx++;
+                    }
+                } else {
+                    rIdx++;
+                    vIdx++;
+                }
+            }
+            return vIdx;
+        } catch (Exception e) {
+            return rawIndex;
+        }
+    }
+
+    private int visualToRawIndex(int visualIndex) {
+        try {
+            String uiText = textArea.getText();
+            int len = uiText.length();
+            int rIdx = 0;
+            int vIdx = 0;
+            while (vIdx < visualIndex && vIdx < len) {
+                char c = uiText.charAt(vIdx);
+                if (c == '\u200B') {
+                    vIdx++;
+                    if (vIdx < len && uiText.charAt(vIdx) == '\n') {
+                        vIdx++;
+                    }
+                } else {
+                    rIdx++;
+                    vIdx++;
+                }
+            }
+            return rIdx;
+        } catch (Exception e) {
+            return visualIndex;
+        }
+    }
+
+    private void performFindNext(String target) {
+        if (target == null || target.isEmpty()) return;
+
+        int visualCaret = textArea.getCaretPosition();
+        String selected = textArea.getSelectedText();
+        if (selected != null) {
+            String strippedSelection = selected.replace("\u200B\n", "").replace("\u200B", "");
+            if (strippedSelection.equalsIgnoreCase(target)) {
+                visualCaret = textArea.getSelectionEnd();
+            }
+        }
+
+        int rawCaret = visualToRawIndex(visualCaret);
+        String rawText = textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
+        int rawIdx = rawText.indexOf(target, rawCaret);
+        
+        if (rawIdx != -1) {
+            int visualStart = Math.min(rawToVisualIndex(rawIdx), textArea.getDocument().getLength());
+            int visualEnd = Math.min(rawToVisualIndex(rawIdx + target.length()), textArea.getDocument().getLength());
+            textArea.setCaretPosition(visualStart);
+            textArea.moveCaretPosition(visualEnd);
+            return;
+        }
+
+        lblLoadingStatus.setText("Scanning file for next match...");
+        String commitText = getCommitText();
+        boolean wasDirty = isDirty;
+        isDirty = false;
+        
+        new SwingWorker<Integer, Void>() {
+            int foundIdx = -1;
+            @Override
+            protected Integer doInBackground() throws Exception {
+                if (wasDirty && !isCurrentlyPreview) {
+                    fileManager.commitCurrentChunk(commitText);
+                }
+                int total = fileManager.getTotalChunks();
+                for (int i = loadedChunkIndex + 1; i < total; i++) {
+                    String content = fileManager.getChunkContent(i);
+                    int match = content.indexOf(target);
+                    if (match != -1) {
+                        foundIdx = match;
+                        return i;
+                    }
+                }
+                return -1;
+            }
+            @Override
+            protected void done() {
+                try {
+                    int targetChunk = get();
+                    lblLoadingStatus.setText("");
+                    if (targetChunk != -1) {
+                        triggerAsyncLoad(targetChunk, 0, -1, false, () -> {
+                            int visualStart = Math.min(rawToVisualIndex(foundIdx), textArea.getDocument().getLength());
+                            int visualEnd = Math.min(rawToVisualIndex(foundIdx + target.length()), textArea.getDocument().getLength());
+                            textArea.setCaretPosition(visualStart);
+                            textArea.moveCaretPosition(visualEnd);
+                        });
+                    } else {
+                        int response = JOptionPane.showConfirmDialog(getDialogParent(), 
+                            "Reached end of file. Start again from the top?", 
+                            "Search Wrap Around", 
+                            JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+                            
+                        if (response == JOptionPane.YES_OPTION) {
+                            triggerAsyncLoad(0, 1, -1, false, () -> {
+                                textArea.setCaretPosition(0);
+                                performFindNext(target);
+                            });
+                        }
+                    }
+                } catch (Exception e) {}
+            }
+        }.execute();
+    }
+
+    private void performFindPrevious(String target) {
+        if (target == null || target.isEmpty()) return;
+
+        int visualCaret = textArea.getSelectionStart();
+        int rawCaret = visualToRawIndex(visualCaret);
+        String rawText = textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
+        
+        String searchableRawText = rawText.substring(0, rawCaret);
+        int rawIdx = searchableRawText.lastIndexOf(target);
+        
+        if (rawIdx != -1) {
+            int visualStart = Math.min(rawToVisualIndex(rawIdx), textArea.getDocument().getLength());
+            int visualEnd = Math.min(rawToVisualIndex(rawIdx + target.length()), textArea.getDocument().getLength());
+            textArea.setCaretPosition(visualStart);
+            textArea.moveCaretPosition(visualEnd);
+            return;
+        }
+
+        lblLoadingStatus.setText("Scanning file for previous match...");
+        String commitText = getCommitText();
+        boolean wasDirty = isDirty;
+        isDirty = false;
+        
+        new SwingWorker<Integer, Void>() {
+            int foundIdx = -1;
+            @Override
+            protected Integer doInBackground() throws Exception {
+                if (wasDirty && !isCurrentlyPreview) {
+                    fileManager.commitCurrentChunk(commitText);
+                }
+                for (int i = loadedChunkIndex - 1; i >= 0; i--) {
+                    String content = fileManager.getChunkContent(i);
+                    int match = content.lastIndexOf(target);
+                    if (match != -1) {
+                        foundIdx = match;
+                        return i;
+                    }
+                }
+                return -1;
+            }
+            @Override
+            protected void done() {
+                try {
+                    int targetChunk = get();
+                    lblLoadingStatus.setText("");
+                    if (targetChunk != -1) {
+                        triggerAsyncLoad(targetChunk, 0, -1, false, () -> {
+                            int visualStart = Math.min(rawToVisualIndex(foundIdx), textArea.getDocument().getLength());
+                            int visualEnd = Math.min(rawToVisualIndex(foundIdx + target.length()), textArea.getDocument().getLength());
+                            textArea.setCaretPosition(visualStart);
+                            textArea.moveCaretPosition(visualEnd);
+                        });
+                    } else {
+                        int response = JOptionPane.showConfirmDialog(getDialogParent(), 
+                            "Reached beginning of file. Search again from the bottom?", 
+                            "Search Wrap Around", 
+                            JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+                            
+                        if (response == JOptionPane.YES_OPTION) {
+                            int lastChunk = Math.max(0, fileManager.getTotalChunks() - 1);
+                            triggerAsyncLoad(lastChunk, -1, -1, false, () -> {
+                                textArea.setCaretPosition(textArea.getDocument().getLength());
+                                performFindPrevious(target);
+                            });
+                        }
+                    }
+                } catch (Exception e) {}
+            }
+        }.execute();
+    }
+
+    private void performReplace(String target, String replacement) {
+        if (target == null || target.isEmpty()) return;
+        String selected = textArea.getSelectedText();
+        if (selected != null) {
+            String strippedSelection = selected.replace("\u200B\n", "").replace("\u200B", "");
+            if (strippedSelection.equalsIgnoreCase(target) && !isCurrentlyPreview) {
+                textArea.replaceSelection(replacement);
+            }
+        }
+        performFindNext(target);
+    }
+    
+    // --- Jump to Line mapped past soft wraps ---
+    private void jumpToLocalLine(long absoluteTargetLine) {
+        long startLine = lineNumberPanel.getStartLine();
+        long targetRealLineLocal = absoluteTargetLine - startLine; 
+        
+        if (targetRealLineLocal >= 0) {
+            try {
+                Document doc = textArea.getDocument();
+                Element root = doc.getDefaultRootElement();
+                int realLineCount = 0;
+                
+                for (int i = 0; i < root.getElementCount(); i++) {
+                    if (realLineCount == targetRealLineLocal) {
+                        int offset = root.getElement(i).getStartOffset();
+                        textArea.setCaretPosition(offset);
+                        textArea.requestFocus();
+                        return;
+                    }
+                    
+                    int endOff = root.getElement(i).getEndOffset();
+                    if (!(endOff >= 2 && "\u200B".equals(doc.getText(endOff - 2, 1)))) {
+                        realLineCount++;
                     }
                 }
             } catch (Exception e) {}
