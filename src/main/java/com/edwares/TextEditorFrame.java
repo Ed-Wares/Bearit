@@ -13,6 +13,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class TextEditorFrame extends JFrame {
+    // Singleton instance reference for global access (e.g., from static contexts)
+    private static TextEditorFrame instance;
+    
+
     private final JTabbedPane tabbedPane;
     private final JFileChooser fileChooser;
     
@@ -27,7 +31,12 @@ public class TextEditorFrame extends JFrame {
     private JRadioButtonMenuItem lightThemeItem;
     private JRadioButtonMenuItem darkThemeItem;
 
+    public static TextEditorFrame getInstance() {
+        return instance;
+    }
+    
     public TextEditorFrame() {
+        instance = this;
         BearitProperties props = BearitProperties.getInstance();
         
         setTitle("Bearit Text Editor");
