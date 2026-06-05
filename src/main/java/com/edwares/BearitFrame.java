@@ -8,9 +8,12 @@ import java.awt.datatransfer.Clipboard;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.*;
+import java.awt.font.TextAttribute;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class BearitFrame extends JFrame {
     // Singleton instance reference for global access (e.g., from static contexts)
@@ -482,6 +485,28 @@ public class BearitFrame extends JFrame {
         int option = fileChooser.showOpenDialog(this);
         if (option == JFileChooser.APPROVE_OPTION) {
             openFileInTab(fileChooser.getSelectedFile());
+        }
+    }
+
+    private void performReload() {
+        AdvancedTextEditorPanel editor = getActiveEditor();
+        if (editor != null && editor.hasActiveFile()) {
+            
+            // Safety check to prevent accidental data loss
+            if (editor.hasUnsavedChanges()) {
+                int result = JOptionPane.showConfirmDialog(this,
+                    "You have unsaved changes. Reloading will discard them.\nAre you sure you want to reload?",
+                    "Confirm Reload",
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.WARNING_MESSAGE);
+                
+                if (result != JOptionPane.YES_OPTION) {
+                    return; // User canceled the reload
+                }
+            }
+            
+            // Reload the file from disk
+            editor.loadFile(editor.getActiveFile());
         }
     }
 
@@ -1009,6 +1034,7 @@ public class BearitFrame extends JFrame {
         JMenu fileMenu = new JMenu("File");
         JMenuItem newItem = new JMenuItem("New Tab");
         JMenuItem openItem = new JMenuItem("Open...");
+        JMenuItem mnuReload = new JMenuItem("Reload from Disk");
         
         // --- Open Recent Submenu ---
         JMenu recentMenu = new JMenu("Open Recent");
@@ -1040,6 +1066,8 @@ public class BearitFrame extends JFrame {
             @Override public void menuDeselected(MenuEvent e) {}
             @Override public void menuCanceled(MenuEvent e) {}
         });
+        mnuReload.setToolTipText("Discard unsaved changes and reload the file");
+        mnuReload.addActionListener(e -> performReload());        
 
         JMenuItem saveItem = new JMenuItem("Save");
         JMenuItem saveAsItem = new JMenuItem("Save As...");
@@ -1065,6 +1093,7 @@ public class BearitFrame extends JFrame {
         fileMenu.add(newItem);
         fileMenu.add(openItem);
         fileMenu.add(recentMenu);
+        fileMenu.add(mnuReload);
         fileMenu.addSeparator();
         fileMenu.add(saveItem);
         fileMenu.add(saveAsItem);
@@ -1238,16 +1267,123 @@ public class BearitFrame extends JFrame {
         return menuBar;
     }
 
+    /**
+     * Creates a JLabel styled as a clickable web hyperlink without layout jumps.
+     */
+    private JLabel createHyperlink(String text, String url, float fontSize) {
+        JLabel linkLabel = new JLabel(text);
+        linkLabel.setFont(linkLabel.getFont().deriveFont(Font.PLAIN, fontSize));
+        linkLabel.setForeground(new Color(45, 114, 217)); // Modern link blue
+        linkLabel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        
+        // Pre-calculate the underlined font
+        Font originalFont = linkLabel.getFont();
+        Map<TextAttribute, Object> attributes = new HashMap<>(originalFont.getAttributes());
+        attributes.put(TextAttribute.UNDERLINE, TextAttribute.UNDERLINE_ON);
+        Font underlineFont = originalFont.deriveFont(attributes);
+        
+        linkLabel.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseEntered(MouseEvent e) {
+                // Apply the native font underline
+                linkLabel.setFont(underlineFont);
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e) {
+                // Revert to the normal font
+                linkLabel.setFont(originalFont);
+            }
+
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                try {
+                    if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                        Desktop.getDesktop().browse(new java.net.URI(url));
+                    }
+                } catch (Exception ex) {
+                    System.err.println("Failed to open hyperlink: " + ex.getMessage());
+                }
+            }
+        });
+        
+        return linkLabel;
+    }
+
     private void showAboutDialog() {
         String appVersion = BearitApp.class.getPackage().getImplementationVersion(); // get version from pom.xml use <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
-        String aboutMessage = "Bearit Text Editor\n"
-                + "Version: " + appVersion + "\n\n"
-                + "Bearit is a high-performance Java 21 text editor designed specifically to handle massive file sizes, helping your system bear the heavy memory load.\n\n"
-                + "By Ed Jakubowski  EdWaresApp@gmail.com\n";
-                
-        JOptionPane.showMessageDialog(this, 
-                aboutMessage, 
-                "About Bearit", 
-                JOptionPane.INFORMATION_MESSAGE);
+        float bodyFontSize = 14f;
+        float licenseFontSize = 12f;
+        JDialog aboutDialog = new JDialog(this, "About Bearit", true);
+        aboutDialog.setLayout(new BorderLayout(15, 15));
+        aboutDialog.setResizable(false);
+        
+        // Center panel for text and links
+        JPanel infoPanel = new JPanel();
+        infoPanel.setLayout(new BoxLayout(infoPanel, BoxLayout.Y_AXIS));
+        infoPanel.setBorder(BorderFactory.createEmptyBorder(20, 25, 5, 25));
+        
+        JLabel lblName = new JLabel("Bearit Text Editor");
+        lblName.setFont(lblName.getFont().deriveFont(Font.BOLD, 18f));
+        lblName.setAlignmentX(Component.CENTER_ALIGNMENT);
+        
+        JLabel lblVersion = new JLabel("Version: " + appVersion );
+        Font bodyFont = lblName.getFont().deriveFont(Font.PLAIN, bodyFontSize);
+        lblVersion.setAlignmentX(Component.CENTER_ALIGNMENT);
+        lblVersion.setFont(bodyFont);
+
+        JLabel lblInfo = new JLabel("Bearit is a high-performance Java 21 text editor designed specifically to handle massive file sizes, helping your system bear the heavy memory load.");
+        lblInfo.setAlignmentX(Component.CENTER_ALIGNMENT);
+        lblInfo.setFont(bodyFont);
+
+        JLabel lblAuthor = new JLabel("By Ed Jakubowski  EdWaresApp@gmail.com");
+        lblAuthor.setAlignmentX(Component.CENTER_ALIGNMENT);
+        lblAuthor.setFont(bodyFont);
+
+        // --- Create the clickable link using our helper ---
+        JLabel lblWebsite = createHyperlink("Visit EdWares.com", "https://edwares.com", bodyFontSize);
+        lblWebsite.setAlignmentX(Component.CENTER_ALIGNMENT);
+        lblWebsite.setFont(bodyFont);
+
+        // --- Licensing Info (Wrapped in a horizontal FlowLayout) ---
+        JPanel licensePanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 0));
+
+        JLabel lblLicensePre = new JLabel("Licensed under:");
+        lblLicensePre.setForeground(Color.GRAY);
+        lblLicensePre.setFont(lblLicensePre.getFont().deriveFont(licenseFontSize));
+        lblLicensePre.setAlignmentX(Component.CENTER_ALIGNMENT);
+        
+        JLabel lblLicenseLink = createHyperlink("Apache 2.0 License", "https://www.apache.org/licenses/LICENSE-2.0", licenseFontSize);
+        lblLicenseLink.setFont(lblLicenseLink.getFont().deriveFont(licenseFontSize)); // Match the smaller text size
+        lblLicenseLink.setAlignmentX(Component.CENTER_ALIGNMENT);
+        
+        licensePanel.add(lblLicensePre);
+        licensePanel.add(lblLicenseLink);
+        
+        // Add components with a little vertical spacing
+        infoPanel.add(lblName);
+        infoPanel.add(Box.createVerticalStrut(5));
+        infoPanel.add(lblVersion);
+        infoPanel.add(Box.createVerticalStrut(15));
+        infoPanel.add(lblInfo);
+        infoPanel.add(Box.createVerticalStrut(15));
+        infoPanel.add(lblAuthor);
+        infoPanel.add(Box.createVerticalStrut(15));
+        infoPanel.add(lblWebsite);
+        infoPanel.add(Box.createVerticalStrut(20)); // Larger gap before license
+        infoPanel.add(licensePanel);
+        
+        // Bottom panel for the close button
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 15));
+        JButton closeButton = new JButton(" Close ");
+        closeButton.addActionListener(e -> aboutDialog.dispose());
+        buttonPanel.add(closeButton);
+        
+        aboutDialog.add(infoPanel, BorderLayout.CENTER);
+        aboutDialog.add(buttonPanel, BorderLayout.SOUTH);
+        
+        aboutDialog.pack();
+        aboutDialog.setLocationRelativeTo(this); // Center on the main editor window
+        aboutDialog.setVisible(true);
     }
 }

@@ -2461,6 +2461,13 @@ public class AdvancedTextEditorPanel extends JPanel {
         return proper.toString();
     }
 
+    public void selectAll() {
+        if (!isCurrentlyPreview) {
+            textArea.selectAll();
+            textArea.requestFocusInWindow();
+        }
+    }
+
     // --- Context Menu Setup ---
     private JPopupMenu createContextMenu() {
         JPopupMenu contextMenu = new JPopupMenu();
@@ -2479,6 +2486,9 @@ public class AdvancedTextEditorPanel extends JPanel {
         
         JMenuItem mnuPaste = new JMenuItem("Paste");
         mnuPaste.addActionListener(e -> paste());
+
+        JMenuItem mnuSelectAll = new JMenuItem("Select All");
+        mnuSelectAll.addActionListener(e -> selectAll());
 
         JMenuItem searchItem = new JMenuItem("Search & Replace...");
         searchItem.addActionListener(e -> showSearchDialog());
@@ -2508,6 +2518,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         contextMenu.add(mnuCut);
         contextMenu.add(mnuCopy);
         contextMenu.add(mnuPaste);
+        contextMenu.add(mnuSelectAll);
         contextMenu.addSeparator();
         contextMenu.add(searchItem);
         contextMenu.add(gotoItem);
