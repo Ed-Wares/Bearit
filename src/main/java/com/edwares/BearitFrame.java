@@ -12,9 +12,9 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
-public class TextEditorFrame extends JFrame {
+public class BearitFrame extends JFrame {
     // Singleton instance reference for global access (e.g., from static contexts)
-    private static TextEditorFrame instance;
+    private static BearitFrame instance;
     
 
     private final JTabbedPane tabbedPane;
@@ -31,11 +31,11 @@ public class TextEditorFrame extends JFrame {
     private JRadioButtonMenuItem lightThemeItem;
     private JRadioButtonMenuItem darkThemeItem;
 
-    public static TextEditorFrame getInstance() {
+    public static BearitFrame getInstance() {
         return instance;
     }
-    
-    public TextEditorFrame() {
+
+    public BearitFrame() {
         instance = this;
         BearitProperties props = BearitProperties.getInstance();
         
@@ -116,7 +116,7 @@ public class TextEditorFrame extends JFrame {
                     }
                     return true;
                 } catch (Exception e) {
-                    JOptionPane.showMessageDialog(TextEditorFrame.this, "Failed to open dropped files: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                    JOptionPane.showMessageDialog(BearitFrame.this, "Failed to open dropped files: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
                     return false;
                 }
             }
@@ -349,10 +349,10 @@ public class TextEditorFrame extends JFrame {
                             Desktop.getDesktop().open(targetFile.getParentFile());
                         }
                     } else {
-                        JOptionPane.showMessageDialog(TextEditorFrame.this, "Desktop integration is not supported on this platform.", "Error", JOptionPane.ERROR_MESSAGE);
+                        JOptionPane.showMessageDialog(BearitFrame.this, "Desktop integration is not supported on this platform.", "Error", JOptionPane.ERROR_MESSAGE);
                     }
                 } catch (Exception ex) {
-                    JOptionPane.showMessageDialog(TextEditorFrame.this, "Could not open file explorer: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                    JOptionPane.showMessageDialog(BearitFrame.this, "Could not open file explorer: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
                 }
             });
         }
@@ -659,14 +659,14 @@ public class TextEditorFrame extends JFrame {
                                     return;
                                 }
                                 if (result.exists()) {
-                                    JOptionPane.showMessageDialog(TextEditorFrame.this, 
+                                    JOptionPane.showMessageDialog(BearitFrame.this, 
                                         "Successfully generated test file:\n" + result.getAbsolutePath(), 
                                         "Generation Complete", JOptionPane.INFORMATION_MESSAGE);
                                     openFileInTab(result);
                                 }
                             } catch (Exception ex) {
                                 destFile.delete(); 
-                                JOptionPane.showMessageDialog(TextEditorFrame.this, 
+                                JOptionPane.showMessageDialog(BearitFrame.this, 
                                     "Failed to generate test file.\nError Details: " + ex.getMessage(), 
                                     "Generation Error", JOptionPane.ERROR_MESSAGE);
                             }
@@ -707,7 +707,7 @@ public class TextEditorFrame extends JFrame {
         if (command.contains("%rp")) {
             String rp;
             try {
-                rp = new File(TextEditorFrame.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getParent();
+                rp = new File(BearitFrame.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getParent();
                 if (rp == null) rp = System.getProperty("user.dir");
             } catch (Exception ex) {
                 rp = System.getProperty("user.dir");
@@ -882,10 +882,44 @@ public class TextEditorFrame extends JFrame {
     }
 
     /**
-     * Helper to load an icon, style a JButton, and safely fallback to text if missing.
+     * Helper to load an icon, style a JButton, safely fallback to text, and apply clean custom hover effects.
      */
     private JButton createIconButton(String iconName, String fallbackText, String tooltip, ActionListener action) {
-        JButton button = new JButton();
+        JButton button = new JButton() {
+            boolean isHovered = false;
+
+            {
+                addMouseListener(new MouseAdapter() {
+                    @Override
+                    public void mouseEntered(MouseEvent e) {
+                        if (isEnabled()) { isHovered = true; repaint(); }
+                    }
+                    @Override
+                    public void mouseExited(MouseEvent e) {
+                        isHovered = false; repaint();
+                    }
+                });
+            }
+
+            @Override
+            protected void paintComponent(Graphics g) {
+                // Manually paint our clean hover effect BEFORE the button paints its icon
+                if (isHovered && isEnabled()) {
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    // Turn on anti-aliasing for smooth rounded corners
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    
+                    // Semi-transparent gray
+                    g2.setColor(new Color(150, 150, 150, 60)); 
+                    
+                    // Draw a subtle rounded rectangle 
+                    g2.fillRoundRect(2, 2, getWidth() - 4, getHeight() - 4, 8, 8);
+                    g2.dispose();
+                }
+                super.paintComponent(g);
+            }
+        };
+
         button.setToolTipText(tooltip);
         if (action != null) {
             button.addActionListener(action);
@@ -894,22 +928,59 @@ public class TextEditorFrame extends JFrame {
         java.net.URL iconUrl = getClass().getResource("/icons/" + iconName);
         if (iconUrl != null) {
             button.setIcon(new ImageIcon(iconUrl));
-            button.setBorderPainted(false);
-            button.setFocusPainted(false);
-            button.setContentAreaFilled(false);
         } else {
-            // Fallback for missing icons
             button.setText(fallbackText);
         }
+        
+        // Strip away ALL default OS borders and painting
+        button.setBorderPainted(false);
+        button.setFocusPainted(false);
+        button.setContentAreaFilled(false); 
+        button.setOpaque(false); // Essential to let the parent toolbar paint underneath it first
         
         return button;
     }
 
     /**
-     * Helper to load an icon, style a JToggleButton, and safely fallback to text if missing.
+     * Helper to load an icon, style a JToggleButton, and safely render custom active/hover states.
      */
     private JToggleButton createIconToggleButton(String iconName, String fallbackText, String tooltip, ActionListener action) {
-        JToggleButton button = new JToggleButton();
+        JToggleButton button = new JToggleButton() {
+            boolean isHovered = false;
+
+            {
+                addMouseListener(new MouseAdapter() {
+                    @Override
+                    public void mouseEntered(MouseEvent e) {
+                        if (isEnabled()) { isHovered = true; repaint(); }
+                    }
+                    @Override
+                    public void mouseExited(MouseEvent e) {
+                        isHovered = false; repaint();
+                    }
+                });
+            }
+
+            @Override
+            protected void paintComponent(Graphics g) {
+                // Manually paint active/hover states
+                if ((isSelected() || isHovered) && isEnabled()) {
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    
+                    if (isSelected()) {
+                        g2.setColor(new Color(150, 150, 150, 100)); // Darker when permanently toggled on
+                    } else {
+                        g2.setColor(new Color(150, 150, 150, 60));  // Lighter when just hovered
+                    }
+                    
+                    g2.fillRoundRect(2, 2, getWidth() - 4, getHeight() - 4, 8, 8);
+                    g2.dispose();
+                }
+                super.paintComponent(g);
+            }
+        };
+
         button.setToolTipText(tooltip);
         if (action != null) {
             button.addActionListener(action);
@@ -918,13 +989,14 @@ public class TextEditorFrame extends JFrame {
         java.net.URL iconUrl = getClass().getResource("/icons/" + iconName);
         if (iconUrl != null) {
             button.setIcon(new ImageIcon(iconUrl));
-            button.setBorderPainted(false);
-            button.setFocusPainted(false);
-            button.setContentAreaFilled(false);
         } else {
-            // Fallback for missing icons
             button.setText(fallbackText);
         }
+        
+        button.setBorderPainted(false);
+        button.setFocusPainted(false);
+        button.setContentAreaFilled(false);
+        button.setOpaque(false);
         
         return button;
     }
@@ -957,7 +1029,7 @@ public class TextEditorFrame extends JFrame {
                             if (f.exists()) {
                                 openFileInTab(f);
                             } else {
-                                JOptionPane.showMessageDialog(TextEditorFrame.this, 
+                                JOptionPane.showMessageDialog(BearitFrame.this, 
                                     "File not found: " + path, "Error", JOptionPane.ERROR_MESSAGE);
                             }
                         });

@@ -33,7 +33,7 @@ public class BearitApp {
             // THIS CALLBACK RUNS ON THE PRIMARY INSTANCE WHEN A SECONDARY INSTANCE SENDS A FILE
             
             // Assuming TextEditorFrame acts as a Singleton, or you can retrieve the active frame
-            TextEditorFrame mainFrame = TextEditorFrame.getInstance(); 
+            BearitFrame mainFrame = BearitFrame.getInstance(); 
             
             if (mainFrame != null) {
                 // Route the incoming file to your existing load method
@@ -60,7 +60,7 @@ public class BearitApp {
         }
 
         SwingUtilities.invokeLater(() -> {
-            TextEditorFrame editor = new TextEditorFrame();
+            BearitFrame editor = new BearitFrame();
             
             // If a file was provided via command line on the FIRST boot, load it
             if (cli.getFileToOpen() != null) {
