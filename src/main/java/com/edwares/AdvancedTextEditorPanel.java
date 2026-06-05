@@ -390,12 +390,25 @@ public class AdvancedTextEditorPanel extends JPanel {
                 }
             }
         });
-        
-        // Mouse Block Selection ---
+
+        // --- Generate the popup menu once for reuse ---
+        JPopupMenu editorContextMenu = createContextMenu();
+
+        // Mouse Listeners (Updated for Popup Menu & Block Selection) ---
         textArea.addMouseListener(new MouseAdapter() {
+            
+            // Helper method to catch cross-platform right-clicks
+            private void checkPopup(MouseEvent e) {
+                if (e.isPopupTrigger()) {
+                    editorContextMenu.show(textArea, e.getX(), e.getY());
+                }
+            }
+
             @Override
             public void mousePressed(MouseEvent e) {
-                if (e.isAltDown()) {
+                checkPopup(e); // Check for Mac/Linux right-click
+                
+                if (e.isAltDown() && !e.isPopupTrigger()) {
                     isBlockSelecting = true;
                     textArea.requestFocusInWindow(); 
                     try {
@@ -408,7 +421,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                         lastKnownCaretPos = offset;
                         textArea.setCaretPosition(offset);
                     } catch(Exception ex){}
-                } else {
+                } else if (!e.isPopupTrigger()) {
                     isBlockSelecting = false;
                 }
                 textArea.repaint();
@@ -416,6 +429,8 @@ public class AdvancedTextEditorPanel extends JPanel {
 
             @Override
             public void mouseReleased(MouseEvent e) {
+                checkPopup(e); // Check for Windows right-click
+                
                 SwingUtilities.invokeLater(() -> isDragging = false);
             }
         });
@@ -2387,5 +2402,118 @@ public class AdvancedTextEditorPanel extends JPanel {
                 }
             } catch (Exception e) {}
         }
+    }
+
+    // --- Text Case Conversion Methods ---
+// --- Text Case Conversion Methods ---
+
+    public void convertSelectionCase(String mode) {
+        if (isCurrentlyPreview) return; // Don't allow edits in preview mode
+        
+        String selected = textArea.getSelectedText();
+        if (selected == null || selected.isEmpty()) return;
+        
+        // Capture the exact start position of the selection
+        int selectionStart = textArea.getSelectionStart();
+        
+        // Strip out the hidden soft-wrap markers before processing
+        String cleanSelection = selected.replace("\u200B\n", "").replace("\u200B", "");
+        String replacement = cleanSelection;
+        
+        switch (mode.toUpperCase()) {
+            case "LOWER":
+                replacement = cleanSelection.toLowerCase();
+                break;
+            case "UPPER":
+                replacement = cleanSelection.toUpperCase();
+                break;
+            case "PROPER":
+                replacement = toProperCase(cleanSelection);
+                break;
+        }
+        
+        // Only replace if the text actually changed
+        if (!replacement.equals(cleanSelection)) {
+            textArea.replaceSelection(replacement);
+            
+            // Re-apply the selection highlighting
+            // The end position is simply the start position + the length of the new text
+            textArea.setSelectionStart(selectionStart);
+            textArea.setSelectionEnd(selectionStart + replacement.length());
+        }
+    }
+
+    private String toProperCase(String input) {
+        StringBuilder proper = new StringBuilder();
+        boolean nextIsCapital = true;
+        
+        for (char c : input.toCharArray()) {
+            if (Character.isWhitespace(c)) {
+                proper.append(c);
+                nextIsCapital = true; // The next character after a space/newline should be capitalized
+            } else if (nextIsCapital) {
+                proper.append(Character.toUpperCase(c));
+                nextIsCapital = false;
+            } else {
+                proper.append(Character.toLowerCase(c));
+            }
+        }
+        return proper.toString();
+    }
+
+    // --- Context Menu Setup ---
+    private JPopupMenu createContextMenu() {
+        JPopupMenu contextMenu = new JPopupMenu();
+
+        JMenuItem mnuUndo = new JMenuItem("Undo");
+        mnuUndo.addActionListener(e -> undo());
+        
+        JMenuItem mnuRedo = new JMenuItem("Redo");
+        mnuRedo.addActionListener(e -> redo());
+        
+        JMenuItem mnuCut = new JMenuItem("Cut");
+        mnuCut.addActionListener(e -> cut());
+        
+        JMenuItem mnuCopy = new JMenuItem("Copy");
+        mnuCopy.addActionListener(e -> copy());
+        
+        JMenuItem mnuPaste = new JMenuItem("Paste");
+        mnuPaste.addActionListener(e -> paste());
+
+        JMenuItem searchItem = new JMenuItem("Search & Replace...");
+        searchItem.addActionListener(e -> showSearchDialog());
+
+        JMenuItem gotoItem = new JMenuItem("Go To Line...");
+        gotoItem.addActionListener(e -> showGotoLineDialog());
+
+        // Convert Case Sub-Menu
+        JMenu convertCaseMenu = new JMenu("Convert Case");
+        JMenuItem mnuLower = new JMenuItem("lower case");
+        mnuLower.addActionListener(e -> convertSelectionCase("LOWER"));
+        
+        JMenuItem mnuUpper = new JMenuItem("UPPER CASE");
+        mnuUpper.addActionListener(e -> convertSelectionCase("UPPER"));
+        
+        JMenuItem mnuProper = new JMenuItem("Proper Case");
+        mnuProper.addActionListener(e -> convertSelectionCase("PROPER"));
+
+        convertCaseMenu.add(mnuLower);
+        convertCaseMenu.add(mnuUpper);
+        convertCaseMenu.add(mnuProper);
+
+        // Assemble the popup menu
+        contextMenu.add(mnuUndo);
+        contextMenu.add(mnuRedo);
+        contextMenu.addSeparator();
+        contextMenu.add(mnuCut);
+        contextMenu.add(mnuCopy);
+        contextMenu.add(mnuPaste);
+        contextMenu.addSeparator();
+        contextMenu.add(searchItem);
+        contextMenu.add(gotoItem);
+        contextMenu.addSeparator();
+        contextMenu.add(convertCaseMenu);
+
+        return contextMenu;
     }
 }

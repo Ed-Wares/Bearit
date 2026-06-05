@@ -1096,6 +1096,25 @@ public class BearitFrame extends JFrame {
         searchItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().showSearchDialog(); });
         gotoItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().showGotoLineDialog(); });
 
+        // --- Convert Case Sub-Menu ---
+        JMenu convertCaseMenu = new JMenu("Convert Case");
+        JMenuItem mnuLowerCase = new JMenuItem("lower case");
+        mnuLowerCase.addActionListener(e -> {
+            if (getActiveEditor() != null) getActiveEditor().convertSelectionCase("LOWER");
+        });
+        JMenuItem mnuUpperCase = new JMenuItem("UPPER CASE");
+        mnuUpperCase.addActionListener(e -> {
+            if (getActiveEditor() != null) getActiveEditor().convertSelectionCase("UPPER");
+        });
+        JMenuItem mnuProperCase = new JMenuItem("Proper Case");
+        mnuProperCase.addActionListener(e -> {
+            if (getActiveEditor() != null) getActiveEditor().convertSelectionCase("PROPER");
+        });
+        
+        convertCaseMenu.add(mnuLowerCase);
+        convertCaseMenu.add(mnuUpperCase);
+        convertCaseMenu.add(mnuProperCase);
+
         editMenu.add(undoItem);
         editMenu.add(redoItem);
         editMenu.addSeparator();
@@ -1105,6 +1124,8 @@ public class BearitFrame extends JFrame {
         editMenu.addSeparator();
         editMenu.add(searchItem);
         editMenu.add(gotoItem);
+        editMenu.addSeparator();
+        editMenu.add(convertCaseMenu);
 
         // --- View Menu ---
         JMenu viewMenu = new JMenu("View");
