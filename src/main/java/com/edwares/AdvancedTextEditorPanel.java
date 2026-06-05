@@ -21,12 +21,13 @@ import java.awt.datatransfer.Clipboard;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.StringSelection;
 import java.awt.datatransfer.Transferable;
-import java.awt.dnd.*;
 import java.awt.event.*;
 import java.io.File;
 import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * A highly scalable, reusable text editor component designed to handle massive files 
@@ -105,9 +106,17 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     private String currentTitle = "Untitled";
 
+    // --- Search Dialog Components ---
     private JDialog searchDialog;
     private JComboBox<String> comboSearch;
     private JComboBox<String> comboReplace;
+    private JCheckBox chkCaseInsensitive;
+    private JCheckBox chkRegex;
+    private JButton btnFindPrev;
+    private JButton btnFindNext;
+    private JButton btnCount;
+    private JButton btnReplace;
+    private JButton btnReplaceAll;
 
     private final DocumentListener editorDocumentListener = new DocumentListener() {
         public void insertUpdate(DocumentEvent e) { registerEdit(); }
@@ -199,7 +208,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                 }
                 // System.out.println("Processing Key Event: " + KeyEvent.getKeyText(e.getKeyCode()) + " | ID: " + e.getID());
                 // Swallow Alt key to prevent it from stealing focus for the menu bar
-                if (isBlockSelecting &&e.getKeyCode() == KeyEvent.VK_ALT) {
+                if (isBlockSelecting && e.getKeyCode() == KeyEvent.VK_ALT) {
                     e.consume();
                     return;
                 }
@@ -951,9 +960,37 @@ public class AdvancedTextEditorPanel extends JPanel {
     private Component getDialogParent() {
         return (searchDialog != null && searchDialog.isVisible()) ? searchDialog : this;
     }
+
+    // --- Added Search Dialog Helper Components ---
+    
+    // Globally compile the search term correctly based on case insensitivity and regex checkboxes
+    private Pattern getSearchPattern(String target) {
+        int flags = 0;
+        if (chkCaseInsensitive != null && chkCaseInsensitive.isSelected()) {
+            flags |= Pattern.CASE_INSENSITIVE;
+        }
+        if (chkRegex == null || !chkRegex.isSelected()) {
+            target = Pattern.quote(target);
+        }
+        return Pattern.compile(target, flags);
+    }
+    
+    // UI Locking state manager for search dialog
+    private void setSearchDialogEnabled(boolean enabled) {
+        if (comboSearch != null) comboSearch.setEnabled(enabled);
+        if (comboReplace != null) comboReplace.setEnabled(enabled);
+        if (chkCaseInsensitive != null) chkCaseInsensitive.setEnabled(enabled);
+        if (chkRegex != null) chkRegex.setEnabled(enabled);
+        if (btnFindPrev != null) btnFindPrev.setEnabled(enabled);
+        if (btnFindNext != null) btnFindNext.setEnabled(enabled);
+        if (btnCount != null) btnCount.setEnabled(enabled);
+        if (btnReplace != null) btnReplace.setEnabled(enabled);
+        if (btnReplaceAll != null) btnReplaceAll.setEnabled(enabled);
+    }
     
     private void performCountMatches(String target) {
         if (target == null || target.isEmpty()) return;
+        setSearchDialogEnabled(false);
         lblLoadingStatus.setText("Running full file match count...");
         
         String commitText = getCommitText();
@@ -966,14 +1003,23 @@ public class AdvancedTextEditorPanel extends JPanel {
                 if (wasDirty && !isCurrentlyPreview) {
                     fileManager.commitCurrentChunk(commitText);
                 }
-                return fileManager.countGlobalMatches(target);
+                long count = 0;
+                Pattern p = getSearchPattern(target);
+                for (int i = 0; i < fileManager.getTotalChunks(); i++) {
+                    String content = fileManager.getChunkContent(i);
+                    Matcher m = p.matcher(content);
+                    while (m.find()) count++;
+                }
+                return count;
             }
             @Override
             protected void done() {
                 try {
                     lblLoadingStatus.setText("");
                     JOptionPane.showMessageDialog(getDialogParent(), "Total occurrences found: " + get(), "Match Count", JOptionPane.INFORMATION_MESSAGE);
-                } catch (Exception e) {}
+                } catch (Exception e) {} finally {
+                    setSearchDialogEnabled(true);
+                }
             }
         }.execute();
     }
@@ -981,46 +1027,48 @@ public class AdvancedTextEditorPanel extends JPanel {
     private void performReplaceAll(String target, String replacement) {
         if (target == null || target.isEmpty()) return;
         
-        if (!fileManager.hasFile()) {
-            textArea.setText(textArea.getText().replace(target, replacement));
-            return;
-        }
+        setSearchDialogEnabled(false);
+        lblLoadingStatus.setText("Replacing all in current editor...");
         
-        lblLoadingStatus.setText("Replacing occurrences globally...");
-        
-        String commitText = getCommitText();
-        boolean wasDirty = isDirty;
-        isDirty = false;
-        
-        // SwingWorker returns Integer (the replacement count) ---
-        new SwingWorker<Integer, Void>() {
+        SwingWorker<Integer, Void> worker = new SwingWorker<Integer, Void>() {
+            String newText = null;
+            
             @Override
             protected Integer doInBackground() throws Exception {
-                if (wasDirty && !isCurrentlyPreview) {
-                    fileManager.commitCurrentChunk(commitText);
+                Pattern p = getSearchPattern(target);
+                String text = textArea.getText();
+                Matcher m = p.matcher(text);
+                
+                int count = 0;
+                while(m.find()) count++;
+                
+                if (count > 0) {
+                    String rep = (chkRegex != null && chkRegex.isSelected()) ? replacement : Matcher.quoteReplacement(replacement);
+                    m.reset();
+                    newText = m.replaceAll(rep);
                 }
-                return fileManager.replaceAllGlobal(target, replacement);
+                return count;
             }
+            
             @Override
             protected void done() {
                 try {
-                    int count = get(); // Retrieve the count
-                    documentCache.clear(); 
-                    globalUndoManager.discardAllEdits();
-                    setUnsavedChanges(true); 
-                    
-                    triggerAsyncLoad(loadedChunkIndex, 0, -1, false, () -> {
-                        lblLoadingStatus.setText("");
-                        JOptionPane.showMessageDialog(getDialogParent(), 
-                            "Global replacement complete.\nTotal replacements: " + count, 
-                            "Replace All", JOptionPane.INFORMATION_MESSAGE);
-                    });
-                } catch (Exception e) {
+                    int count = get();
+                    if (count > 0 && newText != null) {
+                        textArea.setText(newText);
+                        isDirty = true;
+                        setUnsavedChanges(true);
+                    }
                     lblLoadingStatus.setText("");
+                    JOptionPane.showMessageDialog(getDialogParent(), "Replaced " + count + " occurrences in the current editor.", "Replace All", JOptionPane.INFORMATION_MESSAGE);
+                } catch (Exception e) {
                     showError("Replace all failed: " + e.getMessage());
+                } finally {
+                    setSearchDialogEnabled(true);
                 }
             }
-        }.execute();
+        };
+        worker.execute();
     }
 
     public void undo() { 
@@ -1600,7 +1648,6 @@ public class AdvancedTextEditorPanel extends JPanel {
         chunkLoadProgressBar.setVisible(false);
 
         lineNumberPanel.setStartLine(state.startLine());
-        
         updateTitle(state.fileName() + (isCurrentlyPreview ? " [PREVIEW]" : ""));
         
         int maxScrollRange = state.totalChunks() * SCROLL_RESOLUTION;
@@ -1731,9 +1778,10 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     public void showSearchDialog() {
-        if (searchDialog == null) {
+        boolean isFirstOpen = (searchDialog == null);
+
+        if (isFirstOpen) {
             Window parentWindow = SwingUtilities.getWindowAncestor(this);
-            // Include dynamic tab name in the title
             searchDialog = new JDialog(parentWindow, "🔍 Search & Replace - " + currentTitle);
             searchDialog.setModal(false);
             searchDialog.setAlwaysOnTop(true);
@@ -1749,27 +1797,34 @@ public class AdvancedTextEditorPanel extends JPanel {
             gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0;
             inputPanel.add(new JLabel("Find:"), gbc);
             
-            gbc.gridx = 1; gbc.gridy = 0; gbc.weightx = 1.0;
+            gbc.gridx = 1; gbc.gridy = 0; gbc.weightx = 1.0; gbc.gridwidth = 2;
             comboSearch = new JComboBox<>();
             comboSearch.setEditable(true);
             comboSearch.setPreferredSize(new Dimension(250, 26));
             inputPanel.add(comboSearch, gbc);
             
-            gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0;
+            gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0; gbc.gridwidth = 1;
             inputPanel.add(new JLabel("Replace:"), gbc);
             
-            gbc.gridx = 1; gbc.gridy = 1; gbc.weightx = 1.0;
+            gbc.gridx = 1; gbc.gridy = 1; gbc.weightx = 1.0; gbc.gridwidth = 2;
             comboReplace = new JComboBox<>();
             comboReplace.setEditable(true);
             comboReplace.setPreferredSize(new Dimension(250, 26));
             inputPanel.add(comboReplace, gbc);
             
+            chkCaseInsensitive = new JCheckBox("Case Insensitive");
+            chkRegex = new JCheckBox("Regular Expression");
+            gbc.gridx = 1; gbc.gridy = 2; gbc.weightx = 0.5; gbc.gridwidth = 1;
+            inputPanel.add(chkCaseInsensitive, gbc);
+            gbc.gridx = 2; gbc.gridy = 2; gbc.weightx = 0.5;
+            inputPanel.add(chkRegex, gbc);
+
             JPanel pnlBtns = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-            JButton btnFindPrev = new JButton("⬆ Previous");
-            JButton btnFindNext = new JButton("⬇ Next");
-            JButton btnCount = new JButton("Count Matches");
-            JButton btnReplace = new JButton("Replace");
-            JButton btnReplaceAll = new JButton("Replace All");
+            btnFindPrev = new JButton("⬆ Previous");
+            btnFindNext = new JButton("⬇ Next");
+            btnCount = new JButton("Count Matches");
+            btnReplace = new JButton("Replace");
+            btnReplaceAll = new JButton("Replace All");
             
             // Replaced default JComboBox ActionListeners with KeyListeners bound directly to the text field
             // to stop it from randomly executing searches when focus is lost
@@ -1844,7 +1899,6 @@ public class AdvancedTextEditorPanel extends JPanel {
         try {
             DefaultComboBoxModel<String> sModel = new DefaultComboBoxModel<>();
             for (String s : BearitProperties.getInstance().getSearchHistory()) sModel.addElement(s);
-            
             Object currentSearch = comboSearch.getEditor().getItem();
             comboSearch.setModel(sModel);
             if (currentSearch != null && !currentSearch.toString().isEmpty()) {
@@ -1853,7 +1907,6 @@ public class AdvancedTextEditorPanel extends JPanel {
 
             DefaultComboBoxModel<String> rModel = new DefaultComboBoxModel<>();
             for (String s : BearitProperties.getInstance().getReplaceHistory()) rModel.addElement(s);
-            
             Object currentReplace = comboReplace.getEditor().getItem();
             comboReplace.setModel(rModel);
             if (currentReplace != null && !currentReplace.toString().isEmpty()) {
@@ -1861,9 +1914,20 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
         } catch (Exception e) {}
 
-        // Ensure title stays fully in sync if dialog was merely hidden previously
+        // --- Auto Populate Logic ---
+        if (isFirstOpen) {
+            comboSearch.setSelectedIndex(-1);
+            comboSearch.getEditor().setItem("");
+            comboReplace.setSelectedIndex(-1);
+            comboReplace.getEditor().setItem("");
+        }
+
+        String selectedText = textArea.getSelectedText();
+        if (selectedText != null && !selectedText.isEmpty()) {
+            comboSearch.getEditor().setItem(selectedText.replace("\u200B\n", "").replace("\u200B", ""));
+        }
+
         searchDialog.setTitle("🔍 Search & Replace - " + currentTitle);
-        
         searchDialog.setVisible(true);
         comboSearch.requestFocus();
         Component editorComp = comboSearch.getEditor().getEditorComponent();
@@ -1874,7 +1938,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
         }
     }
-
+    
     private static class ChunkAwareEdit implements UndoableEdit {
         final int chunkIndex;
         final UndoableEdit inner;
@@ -2106,25 +2170,29 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     private void performFindNext(String target) {
         if (target == null || target.isEmpty()) return;
+        setSearchDialogEnabled(false);
 
+        Pattern p = getSearchPattern(target);
         int visualCaret = textArea.getCaretPosition();
         String selected = textArea.getSelectedText();
+        
         if (selected != null) {
             String strippedSelection = selected.replace("\u200B\n", "").replace("\u200B", "");
-            if (strippedSelection.equalsIgnoreCase(target)) {
+            if (p.matcher(strippedSelection).matches()) {
                 visualCaret = textArea.getSelectionEnd();
             }
         }
 
         int rawCaret = visualToRawIndex(visualCaret);
         String rawText = textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
-        int rawIdx = rawText.indexOf(target, rawCaret);
+        Matcher m = p.matcher(rawText);
         
-        if (rawIdx != -1) {
-            int visualStart = Math.min(rawToVisualIndex(rawIdx), textArea.getDocument().getLength());
-            int visualEnd = Math.min(rawToVisualIndex(rawIdx + target.length()), textArea.getDocument().getLength());
+        if (m.find(rawCaret)) {
+            int visualStart = Math.min(rawToVisualIndex(m.start()), textArea.getDocument().getLength());
+            int visualEnd = Math.min(rawToVisualIndex(m.end()), textArea.getDocument().getLength());
             textArea.setCaretPosition(visualStart);
             textArea.moveCaretPosition(visualEnd);
+            setSearchDialogEnabled(true);
             return;
         }
 
@@ -2135,6 +2203,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         
         new SwingWorker<Integer, Void>() {
             int foundIdx = -1;
+            int foundLen = 0;
             @Override
             protected Integer doInBackground() throws Exception {
                 if (wasDirty && !isCurrentlyPreview) {
@@ -2143,9 +2212,10 @@ public class AdvancedTextEditorPanel extends JPanel {
                 int total = fileManager.getTotalChunks();
                 for (int i = loadedChunkIndex + 1; i < total; i++) {
                     String content = fileManager.getChunkContent(i);
-                    int match = content.indexOf(target);
-                    if (match != -1) {
-                        foundIdx = match;
+                    Matcher mc = p.matcher(content);
+                    if (mc.find()) {
+                        foundIdx = mc.start();
+                        foundLen = mc.end() - mc.start();
                         return i;
                     }
                 }
@@ -2159,7 +2229,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                     if (targetChunk != -1) {
                         triggerAsyncLoad(targetChunk, 0, -1, false, () -> {
                             int visualStart = Math.min(rawToVisualIndex(foundIdx), textArea.getDocument().getLength());
-                            int visualEnd = Math.min(rawToVisualIndex(foundIdx + target.length()), textArea.getDocument().getLength());
+                            int visualEnd = Math.min(rawToVisualIndex(foundIdx + foundLen), textArea.getDocument().getLength());
                             textArea.setCaretPosition(visualStart);
                             textArea.moveCaretPosition(visualEnd);
                         });
@@ -2176,26 +2246,39 @@ public class AdvancedTextEditorPanel extends JPanel {
                             });
                         }
                     }
-                } catch (Exception e) {}
+                } catch (Exception e) {
+                } finally {
+                    setSearchDialogEnabled(true);
+                }
             }
         }.execute();
     }
 
     private void performFindPrevious(String target) {
         if (target == null || target.isEmpty()) return;
+        setSearchDialogEnabled(false);
 
+        Pattern p = getSearchPattern(target);
         int visualCaret = textArea.getSelectionStart();
         int rawCaret = visualToRawIndex(visualCaret);
         String rawText = textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
         
         String searchableRawText = rawText.substring(0, rawCaret);
-        int rawIdx = searchableRawText.lastIndexOf(target);
+        Matcher m = p.matcher(searchableRawText);
         
-        if (rawIdx != -1) {
-            int visualStart = Math.min(rawToVisualIndex(rawIdx), textArea.getDocument().getLength());
-            int visualEnd = Math.min(rawToVisualIndex(rawIdx + target.length()), textArea.getDocument().getLength());
+        int lastIdx = -1;
+        int lastLen = 0;
+        while (m.find()) {
+            lastIdx = m.start();
+            lastLen = m.end() - m.start();
+        }
+        
+        if (lastIdx != -1) {
+            int visualStart = Math.min(rawToVisualIndex(lastIdx), textArea.getDocument().getLength());
+            int visualEnd = Math.min(rawToVisualIndex(lastIdx + lastLen), textArea.getDocument().getLength());
             textArea.setCaretPosition(visualStart);
             textArea.moveCaretPosition(visualEnd);
+            setSearchDialogEnabled(true);
             return;
         }
 
@@ -2206,6 +2289,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         
         new SwingWorker<Integer, Void>() {
             int foundIdx = -1;
+            int foundLen = 0;
             @Override
             protected Integer doInBackground() throws Exception {
                 if (wasDirty && !isCurrentlyPreview) {
@@ -2213,9 +2297,16 @@ public class AdvancedTextEditorPanel extends JPanel {
                 }
                 for (int i = loadedChunkIndex - 1; i >= 0; i--) {
                     String content = fileManager.getChunkContent(i);
-                    int match = content.lastIndexOf(target);
-                    if (match != -1) {
-                        foundIdx = match;
+                    Matcher mc = p.matcher(content);
+                    int tempIdx = -1;
+                    int tempLen = 0;
+                    while (mc.find()) {
+                        tempIdx = mc.start();
+                        tempLen = mc.end() - mc.start();
+                    }
+                    if (tempIdx != -1) {
+                        foundIdx = tempIdx;
+                        foundLen = tempLen;
                         return i;
                     }
                 }
@@ -2229,7 +2320,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                     if (targetChunk != -1) {
                         triggerAsyncLoad(targetChunk, 0, -1, false, () -> {
                             int visualStart = Math.min(rawToVisualIndex(foundIdx), textArea.getDocument().getLength());
-                            int visualEnd = Math.min(rawToVisualIndex(foundIdx + target.length()), textArea.getDocument().getLength());
+                            int visualEnd = Math.min(rawToVisualIndex(foundIdx + foundLen), textArea.getDocument().getLength());
                             textArea.setCaretPosition(visualStart);
                             textArea.moveCaretPosition(visualEnd);
                         });
@@ -2247,24 +2338,30 @@ public class AdvancedTextEditorPanel extends JPanel {
                             });
                         }
                     }
-                } catch (Exception e) {}
+                } catch (Exception e) {
+                } finally {
+                    setSearchDialogEnabled(true);
+                }
             }
         }.execute();
     }
 
     private void performReplace(String target, String replacement) {
         if (target == null || target.isEmpty()) return;
+        
         String selected = textArea.getSelectedText();
         if (selected != null) {
             String strippedSelection = selected.replace("\u200B\n", "").replace("\u200B", "");
-            if (strippedSelection.equalsIgnoreCase(target) && !isCurrentlyPreview) {
-                textArea.replaceSelection(replacement);
+            Pattern p = getSearchPattern(target);
+            if (p.matcher(strippedSelection).matches() && !isCurrentlyPreview) {
+                String rep = (chkRegex != null && chkRegex.isSelected()) ? replacement : Matcher.quoteReplacement(replacement);
+                Matcher m = p.matcher(strippedSelection);
+                textArea.replaceSelection(m.replaceFirst(rep));
             }
         }
         performFindNext(target);
     }
     
-    // --- Jump to Line mapped past soft wraps ---
     private void jumpToLocalLine(long absoluteTargetLine) {
         long startLine = lineNumberPanel.getStartLine();
         long targetRealLineLocal = absoluteTargetLine - startLine; 
