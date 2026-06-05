@@ -897,7 +897,7 @@ public class BearitFrame extends JFrame {
                 }
                 
                 final String toolCommand = command; // Must be effectively final for lambda
-                JButton customBtn = createIconButton(finalIconName, name, "Executes: " + toolCommand, e -> executeCustomTool(toolCommand));
+                JButton customBtn = createIconButton(finalIconName, name, name, e -> executeCustomTool(toolCommand));
                 
                 toolBar.add(customBtn);
             }
@@ -1336,7 +1336,7 @@ public class BearitFrame extends JFrame {
         lblInfo.setAlignmentX(Component.CENTER_ALIGNMENT);
         lblInfo.setFont(bodyFont);
 
-        JLabel lblAuthor = new JLabel("By Ed Jakubowski  EdWaresApp@gmail.com");
+        JLabel lblAuthor = new JLabel("By Edward Jakubowski  EdWaresApp@gmail.com");
         lblAuthor.setAlignmentX(Component.CENTER_ALIGNMENT);
         lblAuthor.setFont(bodyFont);
 
