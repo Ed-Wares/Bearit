@@ -294,4 +294,14 @@ public class BearitProperties {
         props.setProperty(key, String.join(":::", list));
         // Be sure to call your property save method here (e.g., save() or saveProperties())
     }    
+
+    public boolean isAutoFocusToolOutput() {
+        // Default to false so existing behavior remains the same for users
+        return Boolean.parseBoolean(props.getProperty("autoFocusToolOutput", "false"));
+    }
+
+    public void setAutoFocusToolOutput(boolean focus) {
+        props.setProperty("autoFocusToolOutput", String.valueOf(focus));
+        save(); // Call your existing method to write to disk
+    }
 }

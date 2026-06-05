@@ -791,7 +791,7 @@ public class BearitFrame extends JFrame {
     
     private void appendToolOutput(String text) {
         AdvancedTextEditorPanel outputPanel = null;
-        
+
         // Find existing output tab
         for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
             Component c = tabbedPane.getComponentAt(i);
@@ -799,8 +799,9 @@ public class BearitFrame extends JFrame {
                 AdvancedTextEditorPanel p = (AdvancedTextEditorPanel) c;
                 if ("Tool Output".equals(p.getCurrentTitle())) {
                     outputPanel = p;
-                    if (tabbedPane.getSelectedIndex() != i) {
-                        tabbedPane.setSelectedIndex(i);
+                    // Only switch the active tab if the user has the setting enabled
+                    if (tabbedPane.getSelectedIndex() != i && BearitProperties.getInstance().isAutoFocusToolOutput()) {
+                        tabbedPane.setSelectedIndex(i); // tool output tab already exists, switch to it
                     }
                     break;
                 }
@@ -809,10 +810,14 @@ public class BearitFrame extends JFrame {
         
         // Create if missing
         if (outputPanel == null) {
+            int currentTabIndex = tabbedPane.getSelectedIndex();
             performNew(); 
             outputPanel = getActiveEditor();
             outputPanel.setCustomTitle("Tool Output");
             outputPanel.setTransient(true); // Prevent Tool tab from prompting for save
+            if (!BearitProperties.getInstance().isAutoFocusToolOutput()) {
+                tabbedPane.setSelectedIndex(currentTabIndex); // Switch back to original File tab if user doesn't want auto-focus
+            }
         }
         
         outputPanel.appendText(text);
@@ -1227,6 +1232,23 @@ public class BearitFrame extends JFrame {
 
         // --- Tools Menu ---
         JMenu toolsMenu = new JMenu("Tools");
+
+        JCheckBoxMenuItem chkFocusOutput = new JCheckBoxMenuItem("Auto-Focus Tool Output Tab");
+        chkFocusOutput.setToolTipText("Switch to the output tab automatically when a tool runs");
+        
+        // Load initial state
+        boolean currentFocusState = BearitProperties.getInstance().isAutoFocusToolOutput();
+        chkFocusOutput.setSelected(currentFocusState);
+        
+        // Toggle state on click
+        chkFocusOutput.addActionListener(e -> {
+            boolean isChecked = chkFocusOutput.isSelected();
+            BearitProperties.getInstance().setAutoFocusToolOutput(isChecked);
+        });
+        
+        toolsMenu.add(chkFocusOutput);
+        toolsMenu.addSeparator();
+
         boolean hasMenuTools = false;
         
         for (int i = 0; i < 8; i++) {
