@@ -45,6 +45,12 @@ public class ShortcutUtil {
     }
 
     private static void createWindowsShortcut(File lnkFile, File jarFile, File iconFile) {
+
+        String osName = System.getProperty("os.name").toLowerCase();
+        // Check if the OS name contains "win" if not, we are not on Windows and should skip shortcut creation
+        if (!osName.contains("win")) {
+            return;
+        }
         // Use ProcessHandle to find the exact executable that launched this process
         Optional<String> command = ProcessHandle.current().info().command();
 
