@@ -104,3 +104,10 @@ This will create a 10GB file called bearit_test_file_10.00GB.txt for testing pur
 
 * Ctrl + Minus: Decrease font size
 
+* Ctrl + N: New File
+
+* Ctrl + O: Open file
+
+* Ctrl + S: Save file
+
+* Ctrl + Shift + S: Save file as

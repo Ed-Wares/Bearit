@@ -1033,9 +1033,10 @@ public class BearitFrame extends JFrame {
         // --- File Menu ---
         JMenu fileMenu = new JMenu("File");
         JMenuItem newItem = new JMenuItem("New Tab");
+        newItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_N, InputEvent.CTRL_DOWN_MASK));
         JMenuItem openItem = new JMenuItem("Open...");
-        JMenuItem mnuReload = new JMenuItem("Reload from Disk");
-        
+        openItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_O, InputEvent.CTRL_DOWN_MASK));
+
         // --- Open Recent Submenu ---
         JMenu recentMenu = new JMenu("Open Recent");
         recentMenu.addMenuListener(new MenuListener() {
@@ -1066,9 +1067,22 @@ public class BearitFrame extends JFrame {
             @Override public void menuDeselected(MenuEvent e) {}
             @Override public void menuCanceled(MenuEvent e) {}
         });
+
+        JMenuItem mnuReload = new JMenuItem("Reload from Disk");
+        mnuReload.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_R, InputEvent.CTRL_DOWN_MASK));
         mnuReload.setToolTipText("Discard unsaved changes and reload the file");
         mnuReload.addActionListener(e -> performReload());        
-
+        
+        // --- Print Option ---
+        JMenuItem mnuPrint = new JMenuItem("Print...");
+        mnuPrint.setToolTipText("Print the current file");
+        mnuPrint.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_P, InputEvent.CTRL_DOWN_MASK)); // Ctrl+P
+        mnuPrint.addActionListener(e -> {
+            if (getActiveEditor() != null) {
+                getActiveEditor().printFile();
+            }
+        });
+        
         JMenuItem saveItem = new JMenuItem("Save");
         JMenuItem saveAsItem = new JMenuItem("Save As...");
         JMenuItem saveAllItem = new JMenuItem("Save All"); 
@@ -1094,6 +1108,8 @@ public class BearitFrame extends JFrame {
         fileMenu.add(openItem);
         fileMenu.add(recentMenu);
         fileMenu.add(mnuReload);
+        fileMenu.addSeparator();
+        fileMenu.add(mnuPrint);
         fileMenu.addSeparator();
         fileMenu.add(saveItem);
         fileMenu.add(saveAsItem);

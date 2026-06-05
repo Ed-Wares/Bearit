@@ -49,6 +49,7 @@ public class BearitApp {
         // If we failed to get the lock, we successfully passed the file to the primary instance.
         // We must exit now to prevent a second GUI from booting.
         if (!isPrimaryInstance) {
+            System.out.println("Another instance is running. Passing arguments and exiting.");
             System.exit(0);
         }
 

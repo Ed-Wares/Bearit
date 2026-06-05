@@ -22,8 +22,10 @@ import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.StringSelection;
 import java.awt.datatransfer.Transferable;
 import java.awt.event.*;
+import java.awt.print.PrinterException;
 import java.io.File;
 import java.io.IOException;
+import java.text.MessageFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -2526,5 +2528,48 @@ public class AdvancedTextEditorPanel extends JPanel {
         contextMenu.add(convertCaseMenu);
 
         return contextMenu;
+    }
+
+    // --- Print Functionality ---
+    public void printFile() {
+        if (textArea == null || textArea.getText().isEmpty()) {
+            JOptionPane.showMessageDialog(getDialogParent(), "The document is empty.", "Print", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        // Create a header showing the filename, and a footer showing the page number
+        MessageFormat header = new MessageFormat("File: " + currentTitle);
+        MessageFormat footer = new MessageFormat("Page - {0}");
+
+        // Let the user know we are preparing the print job
+        lblLoadingStatus.setText("Preparing print job...");
+
+        // Printing blocks the thread it runs on while the OS dialog is open and spooling.
+        // We run it on a background thread so the main UI remains responsive.
+        Thread printThread = new Thread(() -> {
+            try {
+                // The print() method automatically opens the native OS print dialog
+                // true = show print dialog, null = default print service, true = interactive
+                boolean complete = textArea.print(header, footer, true, null, null, true);
+                
+                SwingUtilities.invokeLater(() -> {
+                    lblLoadingStatus.setText("");
+                    if (complete) {
+                        System.out.println("Printing completed.");
+                    } else {
+                        System.out.println("Printing was cancelled by the user.");
+                    }
+                });
+
+            } catch (PrinterException pe) {
+                SwingUtilities.invokeLater(() -> {
+                    lblLoadingStatus.setText("");
+                    showError("Printing failed: " + pe.getMessage());
+                });
+            }
+        });
+        
+        printThread.setDaemon(true);
+        printThread.start();
     }
 }
