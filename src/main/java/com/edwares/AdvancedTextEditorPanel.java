@@ -106,8 +106,8 @@ public class AdvancedTextEditorPanel extends JPanel {
     private String currentTitle = "Untitled";
 
     private JDialog searchDialog;
-    private JTextField txtSearch;
-    private JTextField txtReplace;
+    private JComboBox<String> comboSearch;
+    private JComboBox<String> comboReplace;
 
     private final DocumentListener editorDocumentListener = new DocumentListener() {
         public void insertUpdate(DocumentEvent e) { registerEdit(); }
@@ -388,6 +388,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             public void mousePressed(MouseEvent e) {
                 if (e.isAltDown()) {
                     isBlockSelecting = true;
+                    textArea.requestFocusInWindow(); 
                     try {
                         blockStartLine = textArea.getLineOfOffset(textArea.viewToModel2D(e.getPoint()));
                         blockStartX = e.getX();
@@ -398,6 +399,8 @@ public class AdvancedTextEditorPanel extends JPanel {
                         lastKnownCaretPos = offset;
                         textArea.setCaretPosition(offset);
                     } catch(Exception ex){}
+                } else {
+                    isBlockSelecting = false;
                 }
                 textArea.repaint();
             }
@@ -413,6 +416,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             public void mouseDragged(MouseEvent e) {
                 isDragging = true;
                 if (e.isAltDown() || isBlockSelecting) {
+                    textArea.requestFocusInWindow(); 
                     if (!isBlockSelecting) {
                         isBlockSelecting = true;
                         try {
@@ -761,7 +765,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
     
     // --- Public Editor Methods explicitly trigger stripped operations ---
-
+    
     public void copy() { 
         if (hasValidBlockSelection()) {
             copyBlock();
@@ -868,7 +872,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             firePropertyChange("unsavedChanges", old, b);
         }
     }
-
+ 
     /**
      * Helper to safely append the hidden boundary newline before committing
      * edits to the File Manager, ensuring chunks don't accidentally merge.
@@ -902,69 +906,6 @@ public class AdvancedTextEditorPanel extends JPanel {
                 lblCursorInfo.setText(String.format("Line: %d | Col: %d | Sel: %d - %d (width: %d)", absoluteLine, col, selStart, selEnd, width));
             }
         } catch (Exception e) {}
-    }
-
-    public void showSearchDialog() {
-        if (searchDialog == null) {
-            Window parentWindow = SwingUtilities.getWindowAncestor(this);
-            searchDialog = new JDialog(parentWindow, "🔍 Search & Replace");
-            searchDialog.setModal(false);
-            searchDialog.setAlwaysOnTop(true);
-            searchDialog.setResizable(false); 
-            searchDialog.setLayout(new BorderLayout());
-            
-            JPanel inputPanel = new JPanel(new GridBagLayout());
-            inputPanel.setBorder(BorderFactory.createEmptyBorder(15, 15, 10, 15));
-            GridBagConstraints gbc = new GridBagConstraints();
-            gbc.fill = GridBagConstraints.HORIZONTAL;
-            gbc.insets = new Insets(5, 5, 5, 5);
-            
-            gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0;
-            inputPanel.add(new JLabel("Find:"), gbc);
-            
-            gbc.gridx = 1; gbc.gridy = 0; gbc.weightx = 1.0;
-            txtSearch = new JTextField(25);
-            inputPanel.add(txtSearch, gbc);
-            
-            gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0;
-            inputPanel.add(new JLabel("Replace:"), gbc);
-            
-            gbc.gridx = 1; gbc.gridy = 1; gbc.weightx = 1.0;
-            txtReplace = new JTextField(25);
-            inputPanel.add(txtReplace, gbc);
-            
-            JPanel pnlBtns = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-            JButton btnFindPrev = new JButton("⬆ Previous");
-            JButton btnFindNext = new JButton("⬇ Next");
-            JButton btnReplace = new JButton("Replace");
-            JButton btnCount = new JButton("Count Matches");
-            JButton btnReplaceAll = new JButton("Replace All");
-            
-            txtSearch.addActionListener(e -> performFindNext(txtSearch.getText()));
-            txtReplace.addActionListener(e -> performReplace(txtSearch.getText(), txtReplace.getText()));
-            
-            btnFindPrev.addActionListener(e -> performFindPrevious(txtSearch.getText()));
-            btnFindNext.addActionListener(e -> performFindNext(txtSearch.getText()));
-            btnReplace.addActionListener(e -> performReplace(txtSearch.getText(), txtReplace.getText()));
-            btnCount.addActionListener(e -> performCountMatches(txtSearch.getText()));
-            btnReplaceAll.addActionListener(e -> performReplaceAll(txtSearch.getText(), txtReplace.getText()));
-            
-            pnlBtns.add(btnFindPrev);
-            pnlBtns.add(btnFindNext);
-            pnlBtns.add(btnCount);
-            pnlBtns.add(btnReplace);
-            pnlBtns.add(btnReplaceAll);
-            
-            searchDialog.add(inputPanel, BorderLayout.CENTER);
-            searchDialog.add(pnlBtns, BorderLayout.SOUTH);
-            searchDialog.pack();
-            searchDialog.setLocationRelativeTo(this);
-        }
-        searchDialog.setVisible(true);
-        txtSearch.requestFocus();
-        if (!txtSearch.getText().isEmpty()) {
-            txtSearch.selectAll();
-        }
     }
 
     public void showGotoLineDialog() {
@@ -1010,6 +951,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     private Component getDialogParent() {
         return (searchDialog != null && searchDialog.isVisible()) ? searchDialog : this;
     }
+    
     private void performCountMatches(String target) {
         if (target == null || target.isEmpty()) return;
         lblLoadingStatus.setText("Running full file match count...");
@@ -1035,7 +977,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
         }.execute();
     }
-    
+
     private void performReplaceAll(String target, String replacement) {
         if (target == null || target.isEmpty()) return;
         
@@ -1193,9 +1135,17 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     public void saveAsFile(File file) {
-        this.activeFile = file;
-        fileManager.setCurrentFile(file);
-        executeSaveRoutine();
+        try {
+            fileManager.setCurrentFile(file);
+            executeSaveRoutine();
+            
+            this.activeFile = file;
+            setUnsavedChanges(false);
+            isDirty = false;
+            updateTitle(file.getName());
+        } catch (Exception e) {
+            showError("Could not save file: " + e.getMessage());
+        }
     }
     
     public boolean saveSynchronously() {
@@ -1278,6 +1228,11 @@ public class AdvancedTextEditorPanel extends JPanel {
         this.currentTitle = newTitle;
         // Fires a standard Swing property change event so the parent window can update its JFrame title
         firePropertyChange("editorTitle", oldTitle, newTitle);
+        
+        // Dynamically update the search dialog title if it's currently open
+        if (searchDialog != null && searchDialog.isVisible()) {
+            searchDialog.setTitle("🔍 Search & Replace - " + newTitle);
+        }
     }
 
     // --- Explicitly override native keys to map directly to our stripped methods ---
@@ -1738,6 +1693,188 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
     }
 
+    // --- Search Helper Methods ---
+    private String getSearchText() {
+        Object item = comboSearch.getEditor().getItem();
+        return item != null ? item.toString() : "";
+    }
+
+    private String getReplaceText() {
+        Object item = comboReplace.getEditor().getItem();
+        return item != null ? item.toString() : "";
+    }
+
+    private void updateSearchHistory(String target) {
+        if (target == null || target.isEmpty()) return;
+        try {
+            BearitProperties.getInstance().addSearchHistory(target);
+            updateComboModel(comboSearch, target);
+        } catch (Exception e) {}
+    }
+
+    private void updateReplaceHistory(String target) {
+        if (target == null || target.isEmpty()) return;
+        try {
+            BearitProperties.getInstance().addReplaceHistory(target);
+            updateComboModel(comboReplace, target);
+        } catch (Exception e) {}
+    }
+
+    private void updateComboModel(JComboBox<String> combo, String item) {
+        DefaultComboBoxModel<String> model = (DefaultComboBoxModel<String>) combo.getModel();
+        model.removeElement(item);
+        model.insertElementAt(item, 0);
+        combo.setSelectedIndex(0);
+        if (model.getSize() > 15) {
+            model.removeElementAt(model.getSize() - 1);
+        }
+    }
+
+    public void showSearchDialog() {
+        if (searchDialog == null) {
+            Window parentWindow = SwingUtilities.getWindowAncestor(this);
+            // Include dynamic tab name in the title
+            searchDialog = new JDialog(parentWindow, "🔍 Search & Replace - " + currentTitle);
+            searchDialog.setModal(false);
+            searchDialog.setAlwaysOnTop(true);
+            searchDialog.setResizable(false); 
+            searchDialog.setLayout(new BorderLayout());
+            
+            JPanel inputPanel = new JPanel(new GridBagLayout());
+            inputPanel.setBorder(BorderFactory.createEmptyBorder(15, 15, 10, 15));
+            GridBagConstraints gbc = new GridBagConstraints();
+            gbc.fill = GridBagConstraints.HORIZONTAL;
+            gbc.insets = new Insets(5, 5, 5, 5);
+            
+            gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0;
+            inputPanel.add(new JLabel("Find:"), gbc);
+            
+            gbc.gridx = 1; gbc.gridy = 0; gbc.weightx = 1.0;
+            comboSearch = new JComboBox<>();
+            comboSearch.setEditable(true);
+            comboSearch.setPreferredSize(new Dimension(250, 26));
+            inputPanel.add(comboSearch, gbc);
+            
+            gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0;
+            inputPanel.add(new JLabel("Replace:"), gbc);
+            
+            gbc.gridx = 1; gbc.gridy = 1; gbc.weightx = 1.0;
+            comboReplace = new JComboBox<>();
+            comboReplace.setEditable(true);
+            comboReplace.setPreferredSize(new Dimension(250, 26));
+            inputPanel.add(comboReplace, gbc);
+            
+            JPanel pnlBtns = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+            JButton btnFindPrev = new JButton("⬆ Previous");
+            JButton btnFindNext = new JButton("⬇ Next");
+            JButton btnCount = new JButton("Count Matches");
+            JButton btnReplace = new JButton("Replace");
+            JButton btnReplaceAll = new JButton("Replace All");
+            
+            // Replaced default JComboBox ActionListeners with KeyListeners bound directly to the text field
+            // to stop it from randomly executing searches when focus is lost
+            Component searchEditor = comboSearch.getEditor().getEditorComponent();
+            searchEditor.addKeyListener(new KeyAdapter() {
+                @Override
+                public void keyPressed(KeyEvent e) {
+                    if (e.getKeyCode() == KeyEvent.VK_ENTER) {
+                        String txt = getSearchText();
+                        updateSearchHistory(txt);
+                        performFindNext(txt);
+                    }
+                }
+            });
+            
+            Component replaceEditor = comboReplace.getEditor().getEditorComponent();
+            replaceEditor.addKeyListener(new KeyAdapter() {
+                @Override
+                public void keyPressed(KeyEvent e) {
+                    if (e.getKeyCode() == KeyEvent.VK_ENTER) {
+                        String stxt = getSearchText();
+                        String rtxt = getReplaceText();
+                        updateSearchHistory(stxt);
+                        updateReplaceHistory(rtxt);
+                        performReplace(stxt, rtxt);
+                    }
+                }
+            });
+            
+            btnFindPrev.addActionListener(e -> {
+                String txt = getSearchText();
+                updateSearchHistory(txt);
+                performFindPrevious(txt);
+            });
+            btnFindNext.addActionListener(e -> {
+                String txt = getSearchText();
+                updateSearchHistory(txt);
+                performFindNext(txt);
+            });
+            btnReplace.addActionListener(e -> {
+                String stxt = getSearchText();
+                String rtxt = getReplaceText();
+                updateSearchHistory(stxt);
+                updateReplaceHistory(rtxt);
+                performReplace(stxt, rtxt);
+            });
+            btnCount.addActionListener(e -> {
+                String txt = getSearchText();
+                updateSearchHistory(txt);
+                performCountMatches(txt);
+            });
+            btnReplaceAll.addActionListener(e -> {
+                String stxt = getSearchText();
+                String rtxt = getReplaceText();
+                updateSearchHistory(stxt);
+                updateReplaceHistory(rtxt);
+                performReplaceAll(stxt, rtxt);
+            });
+            
+            pnlBtns.add(btnFindPrev);
+            pnlBtns.add(btnFindNext);
+            pnlBtns.add(btnCount);
+            pnlBtns.add(btnReplace);
+            pnlBtns.add(btnReplaceAll);
+            
+            searchDialog.add(inputPanel, BorderLayout.CENTER);
+            searchDialog.add(pnlBtns, BorderLayout.SOUTH);
+            searchDialog.pack();
+            searchDialog.setLocationRelativeTo(this);
+        }
+        
+        try {
+            DefaultComboBoxModel<String> sModel = new DefaultComboBoxModel<>();
+            for (String s : BearitProperties.getInstance().getSearchHistory()) sModel.addElement(s);
+            
+            Object currentSearch = comboSearch.getEditor().getItem();
+            comboSearch.setModel(sModel);
+            if (currentSearch != null && !currentSearch.toString().isEmpty()) {
+                comboSearch.getEditor().setItem(currentSearch);
+            }
+
+            DefaultComboBoxModel<String> rModel = new DefaultComboBoxModel<>();
+            for (String s : BearitProperties.getInstance().getReplaceHistory()) rModel.addElement(s);
+            
+            Object currentReplace = comboReplace.getEditor().getItem();
+            comboReplace.setModel(rModel);
+            if (currentReplace != null && !currentReplace.toString().isEmpty()) {
+                comboReplace.getEditor().setItem(currentReplace);
+            }
+        } catch (Exception e) {}
+
+        // Ensure title stays fully in sync if dialog was merely hidden previously
+        searchDialog.setTitle("🔍 Search & Replace - " + currentTitle);
+        
+        searchDialog.setVisible(true);
+        comboSearch.requestFocus();
+        Component editorComp = comboSearch.getEditor().getEditorComponent();
+        if (editorComp instanceof JTextField) {
+            JTextField tf = (JTextField) editorComp;
+            if (!tf.getText().isEmpty()) {
+                tf.selectAll();
+            }
+        }
+    }
+
     private static class ChunkAwareEdit implements UndoableEdit {
         final int chunkIndex;
         final UndoableEdit inner;
@@ -1918,7 +2055,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     // --- Find Search Offset Mappers ---
-    
+
     private int rawToVisualIndex(int rawIndex) {
         try {
             String uiText = textArea.getText();

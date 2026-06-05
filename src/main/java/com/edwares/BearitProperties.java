@@ -255,4 +255,43 @@ public class BearitProperties {
     public void setMaxLineLength(int length) {
         props.setProperty("max.line.length", String.valueOf(length));
     }
+
+    public java.util.List<String> getSearchHistory() {
+        return getHistoryList("search.history");
+    }
+
+    public void addSearchHistory(String term) {
+        addHistoryItem("search.history", term, 15);
+    }
+
+    public java.util.List<String> getReplaceHistory() {
+        return getHistoryList("replace.history");
+    }
+
+    public void addReplaceHistory(String term) {
+        addHistoryItem("replace.history", term, 15);
+    }
+
+    private java.util.List<String> getHistoryList(String key) {
+        java.util.List<String> list = new java.util.ArrayList<>();
+        String raw = props.getProperty(key, "");
+        if (!raw.isEmpty()) {
+            String[] items = raw.split(":::");
+            for (String item : items) {
+                if (!item.isEmpty()) list.add(item);
+            }
+        }
+        return list;
+    }
+
+    private void addHistoryItem(String key, String term, int max) {
+        java.util.List<String> list = getHistoryList(key);
+        list.remove(term); // Remove if it already exists to move it to the top
+        list.add(0, term);
+        while (list.size() > max) {
+            list.remove(list.size() - 1);
+        }
+        props.setProperty(key, String.join(":::", list));
+        // Be sure to call your property save method here (e.g., save() or saveProperties())
+    }    
 }
