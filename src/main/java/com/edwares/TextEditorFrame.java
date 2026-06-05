@@ -785,55 +785,34 @@ public class TextEditorFrame extends JFrame {
     }
 
     // --- UI Setup ---
-
+    // Creates the main toolbar with icons, tooltips, and action listeners
     private JToolBar createToolBar() {
         JToolBar toolBar = new JToolBar();
         toolBar.setFloatable(false);
         toolBar.setMargin(new Insets(2, 5, 2, 5));
 
-        JButton btnNew = new JButton("📄 New");
-        JButton btnOpen = new JButton("📂 Open");
-        JButton btnSave = new JButton("💾 Save");
-        JButton btnSaveAs = new JButton("💾 Save As...");
+        // --- File Operations ---
+        JButton btnNew = createIconButton("insert_drive_file.png", "New", "Create a new document tab", e -> performNew());
+        JButton btnOpen = createIconButton("folder_open.png", "Open", "Open an existing file", e -> performOpen());
+        JButton btnSave = createIconButton("save.png", "Save", "Save current tab", e -> performSave());
+        JButton btnSaveAs = createIconButton("save_as.png", "Save As", "Save As...", e -> performSaveAs());
         
-        JButton btnUndo = new JButton("↩ Undo");
-        JButton btnRedo = new JButton("↪ Redo");
+        // --- Edit Operations ---
+        JButton btnUndo = createIconButton("undo.png", "Undo", "Undo last edit", e -> { if (getActiveEditor() != null) getActiveEditor().undo(); });
+        JButton btnRedo = createIconButton("redo.png", "Redo", "Redo last edit", e -> { if (getActiveEditor() != null) getActiveEditor().redo(); });
         
-        JButton btnCut = new JButton("✂ Cut");
-        JButton btnCopy = new JButton("📋 Copy");
-        JButton btnPaste = new JButton("📝 Paste");
+        JButton btnCut = createIconButton("content_cut.png", "Cut", "Cut selected text", e -> { if (getActiveEditor() != null) getActiveEditor().cut(); });
+        JButton btnCopy = createIconButton("content_copy.png", "Copy", "Copy selected text", e -> { if (getActiveEditor() != null) getActiveEditor().copy(); });
+        JButton btnPaste = createIconButton("content_paste.png", "Paste", "Paste text from clipboard", e -> { if (getActiveEditor() != null) getActiveEditor().paste(); });
         
-        JButton btnSearch = new JButton("🔍 Search");
-        JButton btnGoto = new JButton("📍 Go To Line");
+        // --- Search / Navigate ---
+        JButton btnSearch = createIconButton("search.png", "Search", "Search and Replace across full file", e -> { if (getActiveEditor() != null) getActiveEditor().showSearchDialog(); });
+        JButton btnGoto = createIconButton("location_on.png", "Go To", "Jump to specific line number", e -> { if (getActiveEditor() != null) getActiveEditor().showGotoLineDialog(); });
 
-        btnWordWrap = new JToggleButton("↩ Wrap");
+        // --- Toggle Buttons ---
+        btnWordWrap = createIconToggleButton("wrap_text.png", "Wrap", "Toggle global Word Wrap mode", null);
         boolean currentWrapState = BearitProperties.getInstance().isWordWrap();
         btnWordWrap.setSelected(currentWrapState);
-
-        btnNew.setToolTipText("Create a new document tab");
-        btnOpen.setToolTipText("Open an existing file");
-        btnSave.setToolTipText("Save current tab");
-        btnUndo.setToolTipText("Undo last edit");
-        btnRedo.setToolTipText("Redo last edit");
-        btnCut.setToolTipText("Cut selected text");
-        btnCopy.setToolTipText("Copy selected text");
-        btnPaste.setToolTipText("Paste text from clipboard");
-        btnSearch.setToolTipText("Search and Replace across full file");
-        btnGoto.setToolTipText("Jump to specific line number");
-        btnWordWrap.setToolTipText("Toggle global Word Wrap mode");
-
-        btnNew.addActionListener(e -> performNew());
-        btnOpen.addActionListener(e -> performOpen());
-        btnSave.addActionListener(e -> performSave());
-        btnSaveAs.addActionListener(e -> performSaveAs());
-        
-        btnUndo.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().undo(); });
-        btnRedo.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().redo(); });
-        btnCut.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().cut(); });
-        btnCopy.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().copy(); });
-        btnPaste.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().paste(); });
-        btnSearch.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().showSearchDialog(); });
-        btnGoto.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().showGotoLineDialog(); });
 
         // Synchronize Toolbar and Menu Checkbox visually
         ActionListener wrapToggleAction = e -> {
@@ -844,6 +823,7 @@ public class TextEditorFrame extends JFrame {
         };
         btnWordWrap.addActionListener(wrapToggleAction);
 
+        // --- Assembly ---
         toolBar.add(btnNew);
         toolBar.add(btnOpen);
         toolBar.add(btnSave);
@@ -861,7 +841,7 @@ public class TextEditorFrame extends JFrame {
         toolBar.addSeparator();
         toolBar.add(btnWordWrap);
 
-        // Custom Tools Implementation
+        // --- Custom Tools Implementation ---
         BearitProperties props = BearitProperties.getInstance();
         boolean hasCustomTools = false;
         
@@ -873,21 +853,71 @@ public class TextEditorFrame extends JFrame {
                     hasCustomTools = true;
                 }
                 
-                String icon = props.getCustomToolIcon(i);
+                String iconProp = props.getCustomToolIcon(i);
                 String name = props.getCustomToolName(i);
                 
-                String buttonText = (icon != null && !icon.isEmpty() ? icon + " " : "") + name;
-                JButton customBtn = new JButton(buttonText);
-                customBtn.setToolTipText("Executes: " + command);
+                // Fallback to "build.png" if the properties file is missing a defined icon
+                String finalIconName = (iconProp != null && !iconProp.trim().isEmpty()) ? iconProp.trim() : "build.png";
+                if (!finalIconName.endsWith(".png")) {
+                    finalIconName += ".png";
+                }
                 
-                final String toolCommand = command;
-                customBtn.addActionListener(e -> executeCustomTool(toolCommand));
+                final String toolCommand = command; // Must be effectively final for lambda
+                JButton customBtn = createIconButton(finalIconName, name, "Executes: " + toolCommand, e -> executeCustomTool(toolCommand));
                 
                 toolBar.add(customBtn);
             }
         }
 
         return toolBar;
+    }
+
+    /**
+     * Helper to load an icon, style a JButton, and safely fallback to text if missing.
+     */
+    private JButton createIconButton(String iconName, String fallbackText, String tooltip, ActionListener action) {
+        JButton button = new JButton();
+        button.setToolTipText(tooltip);
+        if (action != null) {
+            button.addActionListener(action);
+        }
+        
+        java.net.URL iconUrl = getClass().getResource("/icons/" + iconName);
+        if (iconUrl != null) {
+            button.setIcon(new ImageIcon(iconUrl));
+            button.setBorderPainted(false);
+            button.setFocusPainted(false);
+            button.setContentAreaFilled(false);
+        } else {
+            // Fallback for missing icons
+            button.setText(fallbackText);
+        }
+        
+        return button;
+    }
+
+    /**
+     * Helper to load an icon, style a JToggleButton, and safely fallback to text if missing.
+     */
+    private JToggleButton createIconToggleButton(String iconName, String fallbackText, String tooltip, ActionListener action) {
+        JToggleButton button = new JToggleButton();
+        button.setToolTipText(tooltip);
+        if (action != null) {
+            button.addActionListener(action);
+        }
+        
+        java.net.URL iconUrl = getClass().getResource("/icons/" + iconName);
+        if (iconUrl != null) {
+            button.setIcon(new ImageIcon(iconUrl));
+            button.setBorderPainted(false);
+            button.setFocusPainted(false);
+            button.setContentAreaFilled(false);
+        } else {
+            // Fallback for missing icons
+            button.setText(fallbackText);
+        }
+        
+        return button;
     }
 
     private JMenuBar createMenuBar() {
