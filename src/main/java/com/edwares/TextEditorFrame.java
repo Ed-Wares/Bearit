@@ -1105,11 +1105,24 @@ public class TextEditorFrame extends JFrame {
 
         // --- Help Menu ---
         JMenu helpMenu = new JMenu("Help");
+
+        JMenuItem mnuInstallContextMenu = new JMenuItem("Install OS Context Menu");
+        mnuInstallContextMenu.setToolTipText("Add 'Edit with Bearit' to your system's right-click menu.");
+        mnuInstallContextMenu.addActionListener(e -> ContextMenuInstaller.install(this));
+
+        JMenuItem mnuUninstallContextMenu = new JMenuItem("Remove OS Context Menu");
+        mnuUninstallContextMenu.setToolTipText("Remove 'Edit with Bearit' from your system's right-click menu.");
+        mnuUninstallContextMenu.addActionListener(e -> ContextMenuInstaller.uninstall(this));
+
+        
         JMenuItem generateItem = new JMenuItem("Generate Test File...");
         generateItem.addActionListener(e -> performGenerateTestFile());
         JMenuItem aboutItem = new JMenuItem("About Bearit...");
         aboutItem.addActionListener(e -> showAboutDialog());
-        
+
+        helpMenu.add(mnuInstallContextMenu);
+        helpMenu.add(mnuUninstallContextMenu);
+        helpMenu.addSeparator();
         helpMenu.add(generateItem);
         helpMenu.addSeparator();
         helpMenu.add(aboutItem);
