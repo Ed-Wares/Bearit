@@ -137,6 +137,7 @@ public class BearitFrame extends JFrame {
         fileChooser = new JFileChooser();
         tabbedPane = new JTabbedPane();
         tabbedPane.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT); // --- Forces Mac to align tabs to the left
+        tabbedPane.setUI(new javax.swing.plaf.basic.BasicTabbedPaneUI()); // --- Fixes the weird Mac "centered" tab behavior
         tabbedPane.setTransferHandler(fileDropHandler); 
 
         // Add the permanent "+" dummy tab
