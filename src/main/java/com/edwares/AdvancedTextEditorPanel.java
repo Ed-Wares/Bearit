@@ -1121,6 +1121,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                     // Reload the current chunk so the UI reflects the new text
                     triggerAsyncLoad(loadedChunkIndex, 0, -1, false, () -> {
                         lblLoadingStatus.setText("");
+                        restartBackgroundIndexer();
                         JOptionPane.showMessageDialog(getDialogParent(), 
                             "Global replacement complete.\nTotal replacements: " + count, 
                             "Replace All", JOptionPane.INFORMATION_MESSAGE);
@@ -1200,13 +1201,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         updateCursorStatus();
     }
 
-    public void loadFile(File file) {
-        this.activeFile = file;
-        fileManager.setFile(file);
-        
+    private void restartBackgroundIndexer() {
         lblIndexingStatus.setText("⚙ Indexing lines: 0%");
-        
-        // Callback automatically fires as background indexer progresses
         fileManager.buildIndexCacheAsync((indexedChunk) -> {
             int total = Math.max(1, fileManager.getTotalChunks());
             int pct = (int) (((indexedChunk + 1) * 100.0) / total);
@@ -1214,20 +1210,25 @@ public class AdvancedTextEditorPanel extends JPanel {
             if (indexedChunk < total - 1) {
                 lblIndexingStatus.setText("⚙ Indexing lines: " + pct + "%");
             } else {
-                lblIndexingStatus.setText(""); // Complete, hide label
+                lblIndexingStatus.setText(""); // Complete
             }
             
-            // If the chunk we are looking at was just processed, correct the line numbers instantly!
+            // If the chunk we are currently looking at finishes indexing, snap the numbers into place
             if (indexedChunk == loadedChunkIndex) {
                 long exactLine = fileManager.getExactLineOffset(loadedChunkIndex);
                 if (exactLine != -1 && exactLine != lineNumberPanel.getStartLine()) {
                     lineNumberPanel.setStartLine(exactLine);
                     updateCursorStatus();
-                    lineNumberPanel.repaint(); // Force clean redraw
+                    lineNumberPanel.repaint(); 
                 }
             }
         }); 
+    }
 
+    public void loadFile(File file) {
+        this.activeFile = file;
+        fileManager.setFile(file);
+        restartBackgroundIndexer();
         isDirty = false;
         setUnsavedChanges(false);
         loadedChunkIndex = 0;
@@ -1270,6 +1271,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             fileManager.saveAll(getCommitText(), null);
             isDirty = false;
             setUnsavedChanges(false);
+            restartBackgroundIndexer();
             return true;
         } catch (Exception e) {
             showError("Failed to save file: " + e.getMessage());
@@ -1288,6 +1290,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             // Update state synchronously
             isDirty = false;
             setUnsavedChanges(false);
+            restartBackgroundIndexer();
             return true;
         } catch (Exception e) {
             showError("Failed to save file: " + e.getMessage());
@@ -1329,6 +1332,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                     setUnsavedChanges(false);
                     pendingTargetChunk = -1;
                     applyStateUpdates(get(), 0, -1, null);
+                    restartBackgroundIndexer();
                 } catch (Exception ex) {
                     showError("Streaming save operation failure: " + ex.getMessage());
                 } finally {
@@ -1347,7 +1351,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         
         // Dynamically update the search dialog title if it's currently open
         if (searchDialog != null && searchDialog.isVisible()) {
-            searchDialog.setTitle("🔍 Search & Replace - " + newTitle);
+            searchDialog.setTitle("Search & Replace - " + newTitle);
         }
     }
 

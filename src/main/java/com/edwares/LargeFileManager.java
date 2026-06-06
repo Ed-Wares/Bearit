@@ -32,6 +32,7 @@ public class LargeFileManager {
     private final Map<Integer, long[]> boundaryCache = new ConcurrentHashMap<>();
     private final Map<Integer, String> previewCache = new ConcurrentHashMap<>();
     private final Map<Integer, Long> lineOffsetCache = new ConcurrentHashMap<>();    
+    private final Map<Integer, Long> chunkLineDeltas = new ConcurrentHashMap<>(); // ADD THIS
 
     public record ChunkState(
         String content, 
@@ -139,6 +140,7 @@ public class LargeFileManager {
         this.totalFileSize = 0;
         clearDirtyChunks();
         preloadCache.clear();
+        clearIndexCaches(); 
     }
 
     public void setFile(File file) {
@@ -147,6 +149,7 @@ public class LargeFileManager {
         this.currentChunkIndex = 0;
         clearDirtyChunks();
         preloadCache.clear();
+        clearIndexCaches();
         updateFileMetrics();
     }
 
@@ -179,6 +182,21 @@ public class LargeFileManager {
         Files.writeString(tempFile.toPath(), text, StandardCharsets.UTF_8);
         dirtyChunks.put(currentChunkIndex, tempFile);
         preloadCache.remove(currentChunkIndex); 
+        
+        // --- Calculate Line Delta for instant UI updates ---
+        if (lineOffsetCache.containsKey(currentChunkIndex) && lineOffsetCache.containsKey(currentChunkIndex + 1)) {
+            long originalLines = lineOffsetCache.get(currentChunkIndex + 1) - lineOffsetCache.get(currentChunkIndex);
+            // Ultra-fast character stream filter to count newlines
+            long newLines = text.chars().filter(ch -> ch == '\n').count();
+            chunkLineDeltas.put(currentChunkIndex, newLines - originalLines);
+        }
+    }
+
+    private void clearIndexCaches() {
+        boundaryCache.clear();
+        previewCache.clear();
+        lineOffsetCache.clear();
+        chunkLineDeltas.clear();
     }
 
     public void buildIndexCacheAsync(java.util.function.Consumer<Integer> onChunkIndexed) {
@@ -365,6 +383,7 @@ public class LargeFileManager {
         }
 
         clearDirtyChunks();
+        clearIndexCaches();
         updateFileMetrics();
         return totalMatches;
     }
@@ -487,7 +506,7 @@ public class LargeFileManager {
         return bounds;
     }
 
-    // --- FIXED: Accepts BiConsumer callback to provide real-time save progress ---
+    // --- Accepts BiConsumer callback to provide real-time save progress ---
     public ChunkState saveAll(String currentText, BiConsumer<Integer, Integer> progressCallback) throws IOException {
         File destFile = (pendingSaveAsFile != null) ? pendingSaveAsFile : currentFile;
         if (destFile == null) throw new IllegalStateException("No valid target file to apply save operation.");
@@ -531,6 +550,7 @@ public class LargeFileManager {
         this.pendingSaveAsFile = null;
 
         clearDirtyChunks();
+        clearIndexCaches();
         updateFileMetrics();
         return loadCurrentChunk(false); 
     }
@@ -563,10 +583,22 @@ public class LargeFileManager {
 
     private long computeAbsoluteLineOffsetLazy(int index) {
         if (index == 0) return 1;
-        if (lineOffsetCache.containsKey(index)) return lineOffsetCache.get(index);
-        long estimatedAvgLineLength = 85; 
-        return ((long) index * CHUNK_SIZE) / estimatedAvgLineLength;
-    }    
+        long baseLine;
+        
+        if (lineOffsetCache.containsKey(index)) {
+            baseLine = lineOffsetCache.get(index);
+        } else {
+            long estimatedAvgLineLength = 85; 
+            baseLine = ((long) index * CHUNK_SIZE) / estimatedAvgLineLength;
+        }
+        
+        // Apply any unsaved deltas from preceding dirty chunks
+        for (int i = 0; i < index; i++) {
+            baseLine += chunkLineDeltas.getOrDefault(i, 0L);
+        }
+        
+        return baseLine;
+    }
 
     private long countLinesInStream(InputStream in) throws IOException {
         long count = 0;
