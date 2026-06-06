@@ -1129,6 +1129,7 @@ public class BearitFrame extends JFrame {
         JMenuItem cutItem = new JMenuItem("Cut");
         JMenuItem copyItem = new JMenuItem("Copy");
         JMenuItem pasteItem = new JMenuItem("Paste");
+        JMenuItem selectAllItem = new JMenuItem("Select All");
         JMenuItem searchItem = new JMenuItem("Search & Replace...");
         JMenuItem gotoItem = new JMenuItem("Go To Line...");
 
@@ -1143,6 +1144,8 @@ public class BearitFrame extends JFrame {
         cutItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().cut(); });
         copyItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().copy(); });
         pasteItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().paste(); });
+        selectAllItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().selectAll(); });
+
         searchItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().showSearchDialog(); });
         gotoItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().showGotoLineDialog(); });
 
@@ -1171,6 +1174,7 @@ public class BearitFrame extends JFrame {
         editMenu.add(cutItem);
         editMenu.add(copyItem);
         editMenu.add(pasteItem);
+        editMenu.add(selectAllItem);
         editMenu.addSeparator();
         editMenu.add(searchItem);
         editMenu.add(gotoItem);

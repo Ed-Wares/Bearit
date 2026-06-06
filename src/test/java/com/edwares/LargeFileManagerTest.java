@@ -8,6 +8,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -46,7 +47,9 @@ public class LargeFileManagerTest {
         fileManager.setFile(testFile);
 
         // Act
-        fileManager.replaceAllGlobal("Error 404", "Warning 200");
+        // Convert the search string to a Pattern, and provide dummy callbacks for progress and cancellation
+        Pattern searchPattern = Pattern.compile(Pattern.quote("Error 404"));
+        fileManager.replaceAllGlobal(searchPattern, "Warning 200", pct -> {}, () -> false);
 
         // Assert
         String updatedContent = Files.readString(testFile.toPath());

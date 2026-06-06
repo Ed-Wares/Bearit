@@ -8,6 +8,10 @@ import java.nio.file.*;
 import java.util.Map;
 import java.util.concurrent.*;
 import java.util.function.BiConsumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 public class LargeFileManager {
     private static final int CHUNK_SIZE = 25 * 1024 * 1024; 
@@ -303,7 +307,7 @@ public class LargeFileManager {
         return count;
     }
 
-    public int replaceAllGlobal(String target, String replacement) throws IOException {
+    public int replaceAllGlobal(Pattern pattern, String replacement, Consumer<Integer> progressPublisher, Supplier<Boolean> isCancelled) throws IOException {
         int totalMatches = 0;
         if (currentFile == null) return totalMatches;
         
@@ -313,21 +317,47 @@ public class LargeFileManager {
 
         try (FileChannel destChannel = FileChannel.open(tempPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
             for (int i = 0; i < virtualTotalChunks; i++) {
-                String chunkContent = getChunkContent(i);
-                // --- Divide-by-Zero Exception eliminated with safe match counting ---
-                int chunkMatches = 0;
-                int index = 0;
-                while ((index = chunkContent.indexOf(target, index)) != -1) {
-                    chunkMatches++;
-                    index += target.length();
+                
+                // Check if the user closed the dialog before processing the chunk
+                if (isCancelled != null && isCancelled.get()) {
+                    destChannel.close();
+                    Files.deleteIfExists(tempPath); // Clean up the aborted temp file
+                    return 0; 
                 }
+
+                String chunkContent = getChunkContent(i);
+                Matcher m = pattern.matcher(chunkContent);
+                
+                // StringBuffer is required here for broad Java version compatibility with Matcher
+                StringBuffer sb = new StringBuffer(); 
+                int chunkMatches = 0;
+                
+                // Perform Regex Replacement safely while checking for cancellation mid-chunk
+                while (m.find()) {
+                    if (isCancelled != null && isCancelled.get()) {
+                        destChannel.close();
+                        Files.deleteIfExists(tempPath);
+                        return 0;
+                    }
+                    m.appendReplacement(sb, replacement);
+                    chunkMatches++;
+                }
+                m.appendTail(sb);
+                
                 totalMatches += chunkMatches;
 
-                String replaced = chunkMatches > 0 ? chunkContent.replace(target, replacement) : chunkContent;
-                destChannel.write(ByteBuffer.wrap(replaced.getBytes(StandardCharsets.UTF_8)));
+                // Write the replaced text chunk to the temporary file
+                destChannel.write(ByteBuffer.wrap(sb.toString().getBytes(StandardCharsets.UTF_8)));
+                
+                // Publish Progress back to the UI
+                if (progressPublisher != null) {
+                    int percent = (int) (((i + 1) * 100.0) / virtualTotalChunks);
+                    progressPublisher.accept(percent);
+                }
             }
         }
 
+        // If we reach here, the job finished completely without cancellation. Commit the changes to disk.
         try {
             Files.move(tempPath, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException ioEx) {

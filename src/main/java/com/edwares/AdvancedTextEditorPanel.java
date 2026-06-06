@@ -119,6 +119,8 @@ public class AdvancedTextEditorPanel extends JPanel {
     private JButton btnCount;
     private JButton btnReplace;
     private JButton btnReplaceAll;
+    private JButton btnSwap;
+    private SwingWorker<?, ?> activeSearchWorker = null; // Tracks the currently running search/replace background thread
 
     private final DocumentListener editorDocumentListener = new DocumentListener() {
         public void insertUpdate(DocumentEvent e) { registerEdit(); }
@@ -1003,18 +1005,19 @@ public class AdvancedTextEditorPanel extends JPanel {
         if (btnCount != null) btnCount.setEnabled(enabled);
         if (btnReplace != null) btnReplace.setEnabled(enabled);
         if (btnReplaceAll != null) btnReplaceAll.setEnabled(enabled);
+        if (btnSwap != null) btnSwap.setEnabled(enabled);
     }
     
-    private void performCountMatches(String target) {
+    public void performCountMatches(String target) {
         if (target == null || target.isEmpty()) return;
         setSearchDialogEnabled(false);
-        lblLoadingStatus.setText("Running full file match count...");
+        lblLoadingStatus.setText("Running full file match count... 0%");
         
         String commitText = getCommitText();
         boolean wasDirty = isDirty;
         isDirty = false;
         
-        new SwingWorker<Long, Void>() {
+        activeSearchWorker = new SwingWorker<Long, Integer>() {
             @Override
             protected Long doInBackground() throws Exception {
                 if (wasDirty && !isCurrentlyPreview) {
@@ -1022,70 +1025,118 @@ public class AdvancedTextEditorPanel extends JPanel {
                 }
                 long count = 0;
                 Pattern p = getSearchPattern(target);
-                for (int i = 0; i < fileManager.getTotalChunks(); i++) {
+                int totalChunks = fileManager.getTotalChunks();
+                
+                for (int i = 0; i < totalChunks; i++) {
+                    // ABORT check
+                    if (isCancelled()) return count; 
+
                     String content = fileManager.getChunkContent(i);
                     Matcher m = p.matcher(content);
-                    while (m.find()) count++;
-                }
-                return count;
-            }
-            @Override
-            protected void done() {
-                try {
-                    lblLoadingStatus.setText("");
-                    JOptionPane.showMessageDialog(getDialogParent(), "Total occurrences found: " + get(), "Match Count", JOptionPane.INFORMATION_MESSAGE);
-                } catch (Exception e) {} finally {
-                    setSearchDialogEnabled(true);
-                }
-            }
-        }.execute();
-    }
-
-    private void performReplaceAll(String target, String replacement) {
-        if (target == null || target.isEmpty()) return;
-        
-        setSearchDialogEnabled(false);
-        lblLoadingStatus.setText("Replacing all in current editor...");
-        
-        SwingWorker<Integer, Void> worker = new SwingWorker<Integer, Void>() {
-            String newText = null;
-            
-            @Override
-            protected Integer doInBackground() throws Exception {
-                Pattern p = getSearchPattern(target);
-                String text = textArea.getText();
-                Matcher m = p.matcher(text);
-                
-                int count = 0;
-                while(m.find()) count++;
-                
-                if (count > 0) {
-                    String rep = (chkRegex != null && chkRegex.isSelected()) ? replacement : Matcher.quoteReplacement(replacement);
-                    m.reset();
-                    newText = m.replaceAll(rep);
-                }
-                return count;
-            }
-            
-            @Override
-            protected void done() {
-                try {
-                    int count = get();
-                    if (count > 0 && newText != null) {
-                        textArea.setText(newText);
-                        isDirty = true;
-                        setUnsavedChanges(true);
+                    while (m.find()) {
+                        if (isCancelled()) return count; // Inner ABORT check
+                        count++;
                     }
-                    lblLoadingStatus.setText("");
-                    JOptionPane.showMessageDialog(getDialogParent(), "Replaced " + count + " occurrences in the current editor.", "Replace All", JOptionPane.INFORMATION_MESSAGE);
+                    
+                    int pct = (int) (((i + 1) / (double) totalChunks) * 100);
+                    publish(pct);
+                }
+                return count;
+            }
+            
+            @Override
+            protected void process(java.util.List<Integer> chunks) {
+                if (!chunks.isEmpty()) {
+                    int pct = chunks.get(chunks.size() - 1);
+                    lblLoadingStatus.setText("Running full file match count... " + pct + "%");
+                }
+            }
+            
+            @Override
+            protected void done() {
+                try {
+                    if (isCancelled()) return; // Don't show dialog if aborted
+                    JOptionPane.showMessageDialog(getDialogParent(), "Total occurrences found: " + get(), "Match Count", JOptionPane.INFORMATION_MESSAGE);
                 } catch (Exception e) {
-                    showError("Replace all failed: " + e.getMessage());
                 } finally {
+                    lblLoadingStatus.setText("");
                     setSearchDialogEnabled(true);
                 }
             }
         };
-        worker.execute();
+        activeSearchWorker.execute();
+    }
+
+    public void performReplaceAll(String target, String replacement) {
+        if (target == null || target.isEmpty()) return;
+        
+        setSearchDialogEnabled(false);
+        lblLoadingStatus.setText("Replacing all globally... 0%");
+        
+        String commitText = getCommitText();
+        boolean wasDirty = isDirty;
+        isDirty = false;
+
+        activeSearchWorker = new SwingWorker<Integer, Integer>() {
+            @Override
+            protected Integer doInBackground() throws Exception {
+                // Save any pending edits in the current view before global replace starts
+                if (wasDirty && !isCurrentlyPreview) {
+                    fileManager.commitCurrentChunk(commitText);
+                }
+
+                // Compile the global search settings
+                Pattern p = getSearchPattern(target);
+                String rep = (chkRegex != null && chkRegex.isSelected()) ? replacement : Matcher.quoteReplacement(replacement);
+                
+                // Pass the logic down to the file manager, injecting lambda callbacks 
+                // for both the progress publisher and the cancellation checker.
+                return fileManager.replaceAllGlobal(p, rep, 
+                    pct -> publish(pct), 
+                    () -> isCancelled()
+                );
+            }
+            
+            @Override
+            protected void process(java.util.List<Integer> chunks) {
+                if (isCancelled()) return;
+                if (!chunks.isEmpty()) {
+                    int pct = chunks.get(chunks.size() - 1);
+                    lblLoadingStatus.setText("Replacing all globally... " + pct + "%");
+                }
+            }
+            
+            @Override
+            protected void done() {
+                try {
+                    if (isCancelled()) return; 
+                    
+                    int count = get();
+                    
+                    // Wipe the caches since the entire global file just changed
+                    documentCache.clear(); 
+                    globalUndoManager.discardAllEdits();
+                    setUnsavedChanges(true); 
+                    
+                    // Reload the current chunk so the UI reflects the new text
+                    triggerAsyncLoad(loadedChunkIndex, 0, -1, false, () -> {
+                        lblLoadingStatus.setText("");
+                        JOptionPane.showMessageDialog(getDialogParent(), 
+                            "Global replacement complete.\nTotal replacements: " + count, 
+                            "Replace All", JOptionPane.INFORMATION_MESSAGE);
+                    });
+                    
+                } catch (Exception e) {
+                    if (!isCancelled()) {
+                        showError("Replace all failed: " + e.getMessage());
+                    }
+                } finally {
+                    lblLoadingStatus.setText("");
+                    setSearchDialogEnabled(true);
+                }
+            }
+        };
+        activeSearchWorker.execute();
     }
 
     public void undo() { 
@@ -1799,43 +1850,80 @@ public class AdvancedTextEditorPanel extends JPanel {
 
         if (isFirstOpen) {
             Window parentWindow = SwingUtilities.getWindowAncestor(this);
-            searchDialog = new JDialog(parentWindow, "🔍 Search & Replace - " + currentTitle);
+            searchDialog = new JDialog(parentWindow, "Search & Replace - " + currentTitle);
             searchDialog.setModal(false);
             searchDialog.setAlwaysOnTop(true);
-            searchDialog.setResizable(false); 
+            searchDialog.setResizable(true); 
             searchDialog.setLayout(new BorderLayout());
             
+            // --- WINDOW LISTENER ---
+            searchDialog.addWindowListener(new WindowAdapter() {
+                @Override
+                public void windowClosing(WindowEvent e) {
+                    // Cancel the background task if it is currently running
+                    if (activeSearchWorker != null && !activeSearchWorker.isDone()) {
+                        activeSearchWorker.cancel(true);
+                        lblLoadingStatus.setText("");
+                        setSearchDialogEnabled(true);
+                    }
+                }
+            });
+
             JPanel inputPanel = new JPanel(new GridBagLayout());
             inputPanel.setBorder(BorderFactory.createEmptyBorder(15, 15, 10, 15));
             GridBagConstraints gbc = new GridBagConstraints();
             gbc.fill = GridBagConstraints.HORIZONTAL;
             gbc.insets = new Insets(5, 5, 5, 5);
             
-            gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0;
+            // --- ROW 0: Find Label ---
+            gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0; gbc.gridheight = 1;
             inputPanel.add(new JLabel("Find:"), gbc);
             
-            gbc.gridx = 1; gbc.gridy = 0; gbc.weightx = 1.0; gbc.gridwidth = 2;
+            // --- ROW 0: Find Combo Box ---
+            gbc.gridx = 1; gbc.gridy = 0; gbc.weightx = 1.0; 
             comboSearch = new JComboBox<>();
             comboSearch.setEditable(true);
             comboSearch.setPreferredSize(new Dimension(250, 26));
             inputPanel.add(comboSearch, gbc);
+
+            // --- ROW 0 & 1: Swap Button (Spans vertically across both fields) ---
+            gbc.gridx = 2; gbc.gridy = 0; gbc.weightx = 0; gbc.gridheight = 2; 
+            gbc.fill = GridBagConstraints.VERTICAL; // Stretch to fill the height of both rows
+            btnSwap = new JButton("⇅");
+            btnSwap.setToolTipText("Swap Find and Replace text");
+            btnSwap.setMargin(new Insets(2, 6, 2, 6)); // Make it a bit wider
+            btnSwap.addActionListener(e -> {
+                String currentSearch = getSearchText();
+                String currentReplace = getReplaceText();
+                comboSearch.getEditor().setItem(currentReplace);
+                comboReplace.getEditor().setItem(currentSearch);
+            });
+            inputPanel.add(btnSwap, gbc);
             
-            gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0; gbc.gridwidth = 1;
+            // --- ROW 1: Replace Label ---
+            gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0; gbc.gridheight = 1;
+            gbc.fill = GridBagConstraints.HORIZONTAL;
             inputPanel.add(new JLabel("Replace:"), gbc);
             
-            gbc.gridx = 1; gbc.gridy = 1; gbc.weightx = 1.0; gbc.gridwidth = 2;
+            // --- ROW 1: Replace Combo Box ---
+            gbc.gridx = 1; gbc.gridy = 1; gbc.weightx = 1.0; 
             comboReplace = new JComboBox<>();
             comboReplace.setEditable(true);
             comboReplace.setPreferredSize(new Dimension(250, 26));
             inputPanel.add(comboReplace, gbc);
             
+            // --- ROW 2: Checkboxes (Wrapped in a horizontal panel) ---
+            JPanel optionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
             chkCaseInsensitive = new JCheckBox("Case Insensitive");
             chkRegex = new JCheckBox("Regular Expression");
-            gbc.gridx = 1; gbc.gridy = 2; gbc.weightx = 0.5; gbc.gridwidth = 1;
-            inputPanel.add(chkCaseInsensitive, gbc);
-            gbc.gridx = 2; gbc.gridy = 2; gbc.weightx = 0.5;
-            inputPanel.add(chkRegex, gbc);
+            optionsPanel.add(chkCaseInsensitive);
+            optionsPanel.add(Box.createHorizontalStrut(20)); // Spacer
+            optionsPanel.add(chkRegex);
 
+            gbc.gridx = 1; gbc.gridy = 2; gbc.weightx = 1.0; gbc.gridwidth = 2; 
+            inputPanel.add(optionsPanel, gbc);
+
+            // --- Buttons Panel ---
             JPanel pnlBtns = new JPanel(new FlowLayout(FlowLayout.RIGHT));
             btnFindPrev = new JButton("⬆ Previous");
             btnFindNext = new JButton("⬇ Next");
@@ -1843,8 +1931,6 @@ public class AdvancedTextEditorPanel extends JPanel {
             btnReplace = new JButton("Replace");
             btnReplaceAll = new JButton("Replace All");
             
-            // Replaced default JComboBox ActionListeners with KeyListeners bound directly to the text field
-            // to stop it from randomly executing searches when focus is lost
             Component searchEditor = comboSearch.getEditor().getEditorComponent();
             searchEditor.addKeyListener(new KeyAdapter() {
                 @Override
@@ -1944,7 +2030,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             comboSearch.getEditor().setItem(selectedText.replace("\u200B\n", "").replace("\u200B", ""));
         }
 
-        searchDialog.setTitle("🔍 Search & Replace - " + currentTitle);
+        searchDialog.setTitle("Search & Replace - " + currentTitle);
         searchDialog.setVisible(true);
         comboSearch.requestFocus();
         Component editorComp = comboSearch.getEditor().getEditorComponent();
@@ -2218,16 +2304,22 @@ public class AdvancedTextEditorPanel extends JPanel {
         boolean wasDirty = isDirty;
         isDirty = false;
         
-        new SwingWorker<Integer, Void>() {
+        activeSearchWorker = new SwingWorker<Integer, Integer>() {
             int foundIdx = -1;
             int foundLen = 0;
+            
             @Override
             protected Integer doInBackground() throws Exception {
                 if (wasDirty && !isCurrentlyPreview) {
                     fileManager.commitCurrentChunk(commitText);
                 }
                 int total = fileManager.getTotalChunks();
+                int chunksToScan = total - (loadedChunkIndex + 1);
+                int chunksScanned = 0;
+                
                 for (int i = loadedChunkIndex + 1; i < total; i++) {
+                    if (isCancelled()) return -1; // ABORT check
+
                     String content = fileManager.getChunkContent(i);
                     Matcher mc = p.matcher(content);
                     if (mc.find()) {
@@ -2235,14 +2327,27 @@ public class AdvancedTextEditorPanel extends JPanel {
                         foundLen = mc.end() - mc.start();
                         return i;
                     }
+                    
+                    chunksScanned++;
+                    int pct = (int) ((chunksScanned / (double) Math.max(1, chunksToScan)) * 100);
+                    publish(pct);
                 }
                 return -1;
             }
+            
+            @Override
+            protected void process(java.util.List<Integer> chunks) {
+                if (!chunks.isEmpty()) {
+                    int pct = chunks.get(chunks.size() - 1);
+                    lblLoadingStatus.setText("Scanning file for next match... " + pct + "%");
+                }
+            }
+            
             @Override
             protected void done() {
                 try {
+                    if (isCancelled()) return; // Don't prompt wrap-around if aborted
                     int targetChunk = get();
-                    lblLoadingStatus.setText("");
                     if (targetChunk != -1) {
                         triggerAsyncLoad(targetChunk, 0, -1, false, () -> {
                             int visualStart = Math.min(rawToVisualIndex(foundIdx), textArea.getDocument().getLength());
@@ -2265,10 +2370,12 @@ public class AdvancedTextEditorPanel extends JPanel {
                     }
                 } catch (Exception e) {
                 } finally {
+                    lblLoadingStatus.setText("");
                     setSearchDialogEnabled(true);
                 }
             }
-        }.execute();
+        };
+        activeSearchWorker.execute();
     }
 
     private void performFindPrevious(String target) {
@@ -2299,25 +2406,33 @@ public class AdvancedTextEditorPanel extends JPanel {
             return;
         }
 
-        lblLoadingStatus.setText("Scanning file for previous match...");
+        lblLoadingStatus.setText("Scanning file for previous match... 0%");
         String commitText = getCommitText();
         boolean wasDirty = isDirty;
         isDirty = false;
         
-        new SwingWorker<Integer, Void>() {
+        activeSearchWorker = new SwingWorker<Integer, Integer>() {
             int foundIdx = -1;
             int foundLen = 0;
+            
             @Override
             protected Integer doInBackground() throws Exception {
                 if (wasDirty && !isCurrentlyPreview) {
                     fileManager.commitCurrentChunk(commitText);
                 }
+                
+                int chunksToScan = loadedChunkIndex;
+                int chunksScanned = 0;
+                
                 for (int i = loadedChunkIndex - 1; i >= 0; i--) {
+                    if (isCancelled()) return -1; // ABORT check
+
                     String content = fileManager.getChunkContent(i);
                     Matcher mc = p.matcher(content);
                     int tempIdx = -1;
                     int tempLen = 0;
                     while (mc.find()) {
+                        if (isCancelled()) return -1; // Inner ABORT check
                         tempIdx = mc.start();
                         tempLen = mc.end() - mc.start();
                     }
@@ -2326,12 +2441,26 @@ public class AdvancedTextEditorPanel extends JPanel {
                         foundLen = tempLen;
                         return i;
                     }
+                    
+                    chunksScanned++;
+                    int pct = (int) ((chunksScanned / (double) Math.max(1, chunksToScan)) * 100);
+                    publish(pct);
                 }
                 return -1;
             }
+            
+            @Override
+            protected void process(java.util.List<Integer> chunks) {
+                if (!chunks.isEmpty()) {
+                    int pct = chunks.get(chunks.size() - 1);
+                    lblLoadingStatus.setText("Scanning file for previous match... " + pct + "%");
+                }
+            }
+            
             @Override
             protected void done() {
                 try {
+                    if (isCancelled()) return; // Don't prompt wrap-around if aborted
                     int targetChunk = get();
                     lblLoadingStatus.setText("");
                     if (targetChunk != -1) {
@@ -2357,10 +2486,12 @@ public class AdvancedTextEditorPanel extends JPanel {
                     }
                 } catch (Exception e) {
                 } finally {
+                    lblLoadingStatus.setText("");
                     setSearchDialogEnabled(true);
                 }
             }
-        }.execute();
+        };
+        activeSearchWorker.execute();
     }
 
     private void performReplace(String target, String replacement) {
