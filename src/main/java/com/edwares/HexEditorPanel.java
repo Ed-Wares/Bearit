@@ -4,11 +4,14 @@ import javax.swing.*;
 import javax.swing.border.Border;
 import javax.swing.table.*;
 import java.awt.*;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.function.Consumer;
 
 public class HexEditorPanel extends JPanel {
     private JTable hexTable;
@@ -22,6 +25,12 @@ public class HexEditorPanel extends JPanel {
     private JTextField lblDosTime, lblWin32Time;
     private JTextField txtGoto;
     private JComboBox<Integer> comboBytesPerRow;
+
+    // --- Status Bar UI ---
+    private JLabel lblStatus;
+    private JLabel lblChunkPosition;
+    private Consumer<Boolean> onPrevChunk;
+    private Consumer<Boolean> onNextChunk;  
 
     private Runnable onDataChanged;
 
@@ -117,6 +126,11 @@ public class HexEditorPanel extends JPanel {
 
                 if (nextRow < table.getRowCount()) {
                     table.changeSelection(nextRow, nextCol, false, false);
+                } else {
+                    // --- Typing past the end loads the next chunk ---
+                    if (onNextChunk != null && hexTable.isEnabled()) {
+                        onNextChunk.accept(false); // Spawns cursor at the top of the new chunk
+                    }
                 }
             }
         };
@@ -131,9 +145,111 @@ public class HexEditorPanel extends JPanel {
         hexTable.getSelectionModel().addListSelectionListener(e -> updateInspector());
         hexTable.getColumnModel().getSelectionModel().addListSelectionListener(e -> updateInspector());
 
-        add(new JScrollPane(hexTable), BorderLayout.CENTER);
+        JScrollPane scrollPane = new JScrollPane(hexTable);
+        add(scrollPane, BorderLayout.CENTER);
+
+        JScrollBar vBar = scrollPane.getVerticalScrollBar();
+
+        // --- Seamless Mouse Wheel Scrolling ---
+        scrollPane.addMouseWheelListener(e -> {
+            if (!hexTable.isEnabled()) return; // Prevent spamming while chunk is loading
+            
+            int max = vBar.getMaximum() - vBar.getVisibleAmount();
+            
+            // Use a small 2-pixel margin of error to account for fractional layout rounding
+            if (e.getWheelRotation() > 0 && vBar.getValue() >= max - 2) {
+                if (onNextChunk != null) onNextChunk.accept(false); // false = cursor spawns at top
+            } 
+            else if (e.getWheelRotation() < 0 && vBar.getValue() <= 2) {
+                if (onPrevChunk != null) onPrevChunk.accept(true); // true = cursor spawns at bottom
+            }
+        });
+
+        // --- Seamless Scrollbar Thumb Dragging ---
+        vBar.addAdjustmentListener(e -> {
+            if (!hexTable.isEnabled()) return;
+            
+            // Only act if the user is actively clicking and dragging the scroll thumb
+            if (e.getValueIsAdjusting()) {
+                int max = vBar.getMaximum() - vBar.getVisibleAmount();
+                
+                if (e.getValue() >= max - 2) {
+                    if (onNextChunk != null) onNextChunk.accept(false);
+                } else if (e.getValue() <= 2) {
+                    if (onPrevChunk != null) onPrevChunk.accept(true);
+                }
+            }
+        });
+
+        // --- Seamless Keyboard Arrow Navigation ---
+        hexTable.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent e) {
+                if (!hexTable.isEnabled()) return;
+                
+                int row = hexTable.getSelectedRow();
+                int col = hexTable.getSelectedColumn();
+                int maxRow = hexTable.getRowCount() - 1;
+                
+                if (e.getKeyCode() == KeyEvent.VK_DOWN && row == maxRow) {
+                    if (onNextChunk != null) onNextChunk.accept(false);
+                    e.consume();
+                } else if (e.getKeyCode() == KeyEvent.VK_UP && row == 0) {
+                    if (onPrevChunk != null) onPrevChunk.accept(true);
+                    e.consume();
+                } else if (e.getKeyCode() == KeyEvent.VK_RIGHT && row == maxRow && col == hexTable.getColumnCount() - 1) {
+                    if (onNextChunk != null) onNextChunk.accept(false);
+                    e.consume();
+                } else if (e.getKeyCode() == KeyEvent.VK_LEFT && row == 0 && col == 1) {
+                    if (onPrevChunk != null) onPrevChunk.accept(true);
+                    e.consume();
+                }
+            }
+        });
+
         add(createInspectorPanel(), BorderLayout.EAST);
+        add(createStatusBar(), BorderLayout.SOUTH);
         updateColumnWidths();
+    }
+
+    private JPanel createStatusBar() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBorder(BorderFactory.createEmptyBorder(3, 5, 3, 5));
+        
+        // Group the labels into a left-aligned container
+        JPanel leftPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        
+        lblChunkPosition = new JLabel(" Chunk 1 of 1 ");
+        lblChunkPosition.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 15)); // Add spacing on the right
+        
+        lblStatus = new JLabel("Ready");
+        
+        // Add them to the flow layout in the desired order
+        leftPanel.add(lblChunkPosition);
+        leftPanel.add(lblStatus);
+        
+        // Anchor the entire group to the left side of the bottom panel
+        panel.add(leftPanel, BorderLayout.WEST);
+        
+        return panel;
+    }
+
+    public void setStatus(String message) {
+        lblStatus.setText(message);
+    }
+
+    public void setOnPrevChunk(java.util.function.Consumer<Boolean> listener) { this.onPrevChunk = listener; }
+    public void setOnNextChunk(java.util.function.Consumer<Boolean> listener) { this.onNextChunk = listener; }
+
+    public void updateChunkStatus(int currentIdx, int totalChunks) {
+        lblChunkPosition.setText(String.format(" Chunk %d of %d ", currentIdx, totalChunks));
+    }
+
+    public void setUIEnabled(boolean enabled) {
+        hexTable.setEnabled(enabled);
+        txtGoto.setEnabled(enabled);
+        comboBytesPerRow.setEnabled(enabled);
+        // We let updateChunkStatus handle the button states
     }
 
     /**

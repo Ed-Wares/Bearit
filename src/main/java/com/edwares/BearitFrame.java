@@ -788,9 +788,12 @@ public class BearitFrame extends JFrame {
             restoredTextPanel.repaint();
             tabbedPane.revalidate();
             tabbedPane.repaint();
+
+            // --- Grab the chunk index from the hex wrapper in case the user navigated ---
+            int targetChunk = hexWrapper.getCurrentLoadedChunk();
             
             // --- Pass the cursor update into the async completion callback! ---
-            restoredTextPanel.triggerAsyncLoad(restoredTextPanel.getLoadedChunkIndex(), 0, -1, false, () -> {
+            restoredTextPanel.triggerAsyncLoad(targetChunk, 0, -1, false, () -> {
                 if (targetOffset != -1) {
                     restoredTextPanel.setRawCaretPosition(targetOffset);
                 }

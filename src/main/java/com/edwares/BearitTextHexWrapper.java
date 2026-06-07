@@ -22,6 +22,18 @@ public class BearitTextHexWrapper extends JPanel {
         });
 
         add(hexEditor, BorderLayout.CENTER);
+
+        // --- Wire up the chunk navigation ---
+        hexEditor.setOnPrevChunk((cursorAtBottom) -> navigateToChunk(currentLoadedChunk - 1, cursorAtBottom));
+        hexEditor.setOnNextChunk((cursorAtBottom) -> navigateToChunk(currentLoadedChunk + 1, cursorAtBottom));
+
+        add(hexEditor, BorderLayout.CENTER);
+        
+        // --- INITIALIZE UI ---
+        currentLoadedChunk = hiddenTextEditor.getLoadedChunkIndex();
+        LargeFileManager fm = hiddenTextEditor.getFileManager();
+        hexEditor.updateChunkStatus(currentLoadedChunk + 1, Math.max(1, fm.getTotalChunks()));
+        
         loadCurrentChunkFromBearit();
         
         // --- Sync the initial cursor position to the ASCII side ---
@@ -111,4 +123,56 @@ public class BearitTextHexWrapper extends JPanel {
         return hexEditor.getSelectedByteOffset();
     }
 
+    public int getCurrentLoadedChunk() {
+        return currentLoadedChunk;
+    }
+
+    // Add the boolean parameter to the method signature
+    private void navigateToChunk(int newIndex, boolean cursorAtBottom) {
+        LargeFileManager fm = hiddenTextEditor.getFileManager();
+        if (newIndex < 0 || newIndex >= fm.getTotalChunks()) return;
+
+        if (isDirty) {
+            applyHexEdits(); 
+        }
+
+        hexEditor.setStatus("Loading chunk " + (newIndex + 1) + "...");
+        hexEditor.setUIEnabled(false);
+
+        SwingWorker<Void, Void> worker = new SwingWorker<>() {
+            byte[] rawBytes;
+            long offset;
+            
+            @Override
+            protected Void doInBackground() throws Exception {
+                fm.setBinaryMode(true);
+                rawBytes = fm.getChunkBytes(newIndex);
+                offset = fm.getChunkBoundaries(newIndex)[0];
+                return null;
+            }
+            
+            @Override
+            protected void done() {
+                try {
+                    currentLoadedChunk = newIndex;
+                    hexEditor.loadData(rawBytes, offset);
+                    hexEditor.updateChunkStatus(currentLoadedChunk + 1, fm.getTotalChunks());
+                    hexEditor.setStatus("Ready");
+                    
+                    // --- NEW: Place the cursor precisely where it belongs ---
+                    if (cursorAtBottom && rawBytes.length > 0) {
+                        hexEditor.setSelectedByteOffset(rawBytes.length - 1);
+                    } else {
+                        hexEditor.setSelectedByteOffset(0); 
+                    }
+                    
+                } catch (Exception e) {
+                    hexEditor.setStatus("Error loading chunk");
+                } finally {
+                    hexEditor.setUIEnabled(true);
+                }
+            }
+        };
+        worker.execute();
+    }
 }
