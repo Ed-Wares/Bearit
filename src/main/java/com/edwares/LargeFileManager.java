@@ -23,6 +23,7 @@ public class LargeFileManager {
     private int currentChunkIndex = 0;
     private int totalChunks = 1;
     private long totalFileSize = 0;
+    private boolean isBinaryMode = false;
 
     private final Map<Integer, File> dirtyChunks = new ConcurrentHashMap<>();
     private final ExecutorService preloader = Executors.newSingleThreadExecutor();
@@ -157,6 +158,11 @@ public class LargeFileManager {
     
     public void setCurrentFile(File file) { 
         this.pendingSaveAsFile = file; 
+    }
+
+    public void setBinaryMode(boolean isBinary) {
+        this.isBinaryMode = isBinary;
+        clearIndexCaches(); // Re-calculate boundaries strictly mathematically
     }
 
     public int getTotalChunks() {
@@ -484,27 +490,56 @@ public class LargeFileManager {
         return current; // If no newline is found, execute the hard-cut Failsafe
     }
 
-    private long[] getChunkBoundaries(int index) throws IOException {
+    public long[] getChunkBoundaries(int index) throws IOException {
         if (boundaryCache.containsKey(index)) return boundaryCache.get(index);
         if (currentFile == null) return new long[]{0, 0};
 
         long start = (long) index * CHUNK_SIZE; 
         long end = Math.min(start + CHUNK_SIZE, currentFile.length());
 
-        final long MAX_SCAN_DISTANCE = 500 * 1024; // 500 KB Failsafe Limit
-
-        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(currentFile, "r")) {
-            if (start > 0 && start < currentFile.length()) {
-                start = fastFindNewline(raf, start, Math.min(start + MAX_SCAN_DISTANCE, currentFile.length()));
-            }
-            if (end < currentFile.length()) {
-                end = fastFindNewline(raf, end, Math.min(end + MAX_SCAN_DISTANCE, currentFile.length()));
+        // ONLY scan for newlines if we are in Text Mode
+        if (!isBinaryMode) {
+            final long MAX_SCAN_DISTANCE = 500 * 1024; // 500 KB Failsafe
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(currentFile, "r")) {
+                if (start > 0 && start < currentFile.length()) {
+                    start = fastFindNewline(raf, start, Math.min(start + MAX_SCAN_DISTANCE, currentFile.length()));
+                }
+                if (end < currentFile.length()) {
+                    end = fastFindNewline(raf, end, Math.min(end + MAX_SCAN_DISTANCE, currentFile.length()));
+                }
             }
         }
+        
         long[] bounds = new long[]{start, end};
         boundaryCache.put(index, bounds);
         return bounds;
     }
+
+    public byte[] getChunkBytes(int index) throws IOException {
+        if (dirtyChunks.containsKey(index)) {
+            return Files.readAllBytes(dirtyChunks.get(index).toPath());
+        } else if (currentFile != null && currentFile.exists()) {
+            long[] boundaries = getChunkBoundaries(index);
+            long bytesToRead = boundaries[1] - boundaries[0];
+            if (bytesToRead > 0) {
+                try (FileChannel channel = FileChannel.open(currentFile.toPath(), StandardOpenOption.READ)) {
+                    ByteBuffer buffer = ByteBuffer.allocate((int) bytesToRead);
+                    channel.position(boundaries[0]);
+                    channel.read(buffer);
+                    return buffer.array();
+                }
+            }
+        }
+        return new byte[0];
+    }
+
+    public void commitCurrentChunkBytes(int index, byte[] data) throws IOException {
+        File tempFile = Files.createTempFile("bearit_chunk_" + index + "_", ".tmp").toFile();
+        tempFile.deleteOnExit();
+        Files.write(tempFile.toPath(), data);
+        dirtyChunks.put(index, tempFile);
+        preloadCache.remove(index); 
+    }    
 
     // --- Accepts BiConsumer callback to provide real-time save progress ---
     public ChunkState saveAll(String currentText, BiConsumer<Integer, Integer> progressCallback) throws IOException {

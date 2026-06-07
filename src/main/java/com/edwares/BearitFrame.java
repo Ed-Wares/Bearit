@@ -374,8 +374,22 @@ public class BearitFrame extends JFrame {
     }
 
     private void closeTab(AdvancedTextEditorPanel editor) {
+        // --- Find the exact index of this editor (it might be wrapped in Hex Mode) ---
+        int targetIdx = -1;
+        for (int i = 0; i < tabbedPane.getTabCount(); i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            if (c == editor || (c instanceof BearitTextHexWrapper && ((BearitTextHexWrapper) c).getHiddenTextEditor() == editor)) {
+                targetIdx = i;
+                break;
+            }
+        }
+
+        if (targetIdx == -1) return; // Safety fallback in case the tab is already gone
+
         if (editor.hasUnsavedChanges()) {
-            tabbedPane.setSelectedComponent(editor); 
+            // CRITICAL FIX: Select by index so the TabbedPane doesn't crash if it's a Hex Wrapper
+            tabbedPane.setSelectedIndex(targetIdx); 
+            
             int opt = JOptionPane.showConfirmDialog(this, 
                 "Save changes to " + editor.getCurrentTitle() + "?", 
                 "Unsaved Changes", 
@@ -395,7 +409,8 @@ public class BearitFrame extends JFrame {
         
         isUpdatingTabs = true; // Engage lock
         try {
-            tabbedPane.remove(editor);
+            // Remove by index to guarantee the wrapper OR the editor gets completely removed
+            tabbedPane.remove(targetIdx);
             
             // If all functional tabs are closed (only the "+" remains), open a fresh one
             if (tabbedPane.getTabCount() == 1) {
@@ -442,11 +457,24 @@ public class BearitFrame extends JFrame {
     }
 
     private AdvancedTextEditorPanel getActiveEditor() {
-        Component c = tabbedPane.getSelectedComponent();
+        int idx = tabbedPane.getSelectedIndex();
+        if (idx == -1) return null;
+        
+        Component c = tabbedPane.getComponentAt(idx);
+        
         if (c instanceof AdvancedTextEditorPanel) {
             return (AdvancedTextEditorPanel) c;
+        } else if (c instanceof BearitTextHexWrapper) {
+            BearitTextHexWrapper wrapper = (BearitTextHexWrapper) c;
+            
+            // Force the JTextArea to sync with the hex bytes before we return it.
+            // This guarantees Save, Save As, and Close Tab actions have the freshest data!
+            wrapper.syncToHiddenEditor(); 
+            
+            return wrapper.getHiddenTextEditor();
         }
-        return null; 
+        
+        return null;
     }
 
     private void updateFrameTitle() {
@@ -713,6 +741,66 @@ public class BearitFrame extends JFrame {
         }
     }
 
+    private void toggleHexModeForCurrentTab(boolean enableHex) {
+        int idx = tabbedPane.getSelectedIndex();
+        if (idx == -1) return;
+
+        Component current = tabbedPane.getComponentAt(idx);
+
+        if (enableHex && current instanceof AdvancedTextEditorPanel) {
+            AdvancedTextEditorPanel textPanel = (AdvancedTextEditorPanel) current;
+            
+            if (textPanel.hasUnsavedChanges()) {
+                JOptionPane.showMessageDialog(this, "Please save your text changes before switching to Hex Mode.");
+                return;
+            }
+
+            BearitTextHexWrapper hexWrapper = new BearitTextHexWrapper(textPanel);
+            tabbedPane.setComponentAt(idx, hexWrapper);
+
+        } else if (!enableHex && current instanceof BearitTextHexWrapper) {
+            BearitTextHexWrapper hexWrapper = (BearitTextHexWrapper) current;
+            
+            if (hexWrapper.isDirty()) {
+                int result = JOptionPane.showConfirmDialog(this, 
+                    "Apply your hex edits to the document before switching back to text mode?\n\n(Select 'No' to discard your hex edits)", 
+                    "Apply Hex Edits", JOptionPane.YES_NO_CANCEL_OPTION);
+                    
+                if (result == JOptionPane.CANCEL_OPTION || result == JOptionPane.CLOSED_OPTION) {
+                    return; 
+                } else if (result == JOptionPane.YES_OPTION) {
+                    hexWrapper.applyHexEdits();
+                } else {
+                    hexWrapper.discardHexEdits();
+                }
+            }
+            
+            // --- Capture the selected hex offset BEFORE syncing and swapping ---
+            int targetOffset = hexWrapper.getHexSelectedByteOffset();
+            
+            hexWrapper.syncToHiddenEditor(); 
+            hexWrapper.cleanupAndRevert();
+            
+            AdvancedTextEditorPanel restoredTextPanel = hexWrapper.getHiddenTextEditor();
+            tabbedPane.setComponentAt(idx, restoredTextPanel);
+            
+            restoredTextPanel.revalidate();
+            restoredTextPanel.repaint();
+            tabbedPane.revalidate();
+            tabbedPane.repaint();
+            
+            // --- Pass the cursor update into the async completion callback! ---
+            restoredTextPanel.triggerAsyncLoad(restoredTextPanel.getLoadedChunkIndex(), 0, -1, false, () -> {
+                if (targetOffset != -1) {
+                    restoredTextPanel.setRawCaretPosition(targetOffset);
+                }
+                // Force the text area to instantly grab the keyboard focus 
+                // so the user sees the blinking caret and can resume typing immediately
+                restoredTextPanel.focusEditor();
+            });            
+        }
+    }
+
     // --- Tool Execution Output Redirection ---
     private void executeCustomTool(String rawCommand) {
         // --- Resolve the %f (Current File) variable ---
@@ -854,6 +942,16 @@ public class BearitFrame extends JFrame {
         boolean currentWrapState = BearitProperties.getInstance().isWordWrap();
         btnWordWrap.setSelected(currentWrapState);
 
+        // Hex Mode Toggle (for current tab only)
+        JToggleButton btnToggleHex = createIconToggleButton("h_mobiledata_badge.png", "Hex", "Toggle Hex Editor for current tab", null);
+        btnToggleHex.addActionListener(e -> toggleHexModeForCurrentTab(btnToggleHex.isSelected()));
+        
+        // Add a tab listener so the toggle button stays accurate when switching between files
+        tabbedPane.addChangeListener(e -> {
+            Component c = tabbedPane.getSelectedComponent();
+            btnToggleHex.setSelected(c instanceof BearitTextHexWrapper);
+        });
+
         // Synchronize Toolbar and Menu Checkbox visually
         ActionListener wrapToggleAction = e -> {
             boolean isChecked = ((AbstractButton) e.getSource()).isSelected();
@@ -880,6 +978,8 @@ public class BearitFrame extends JFrame {
         toolBar.add(btnGoto);
         toolBar.addSeparator();
         toolBar.add(btnWordWrap);
+        toolBar.add(btnToggleHex);
+
 
         // --- Custom Tools Implementation ---
         BearitProperties props = BearitProperties.getInstance();

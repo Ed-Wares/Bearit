@@ -893,7 +893,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         return hasUnsavedChanges;
     }
 
-    private void setUnsavedChanges(boolean b) {
+    public void setUnsavedChanges(boolean b) {
         if (this.hasUnsavedChanges != b) {
             boolean old = this.hasUnsavedChanges;
             this.hasUnsavedChanges = b;
@@ -1526,7 +1526,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         });
     }
 
-    private void triggerAsyncLoad(int targetChunk, int direction, double localPercentForScroll, boolean requestPreview, Runnable postLoadAction) {
+    public void triggerAsyncLoad(int targetChunk, int direction, double localPercentForScroll, boolean requestPreview, Runnable postLoadAction) {
         if (isNavigating) return;
         settleTimer.stop(); 
 
@@ -2706,5 +2706,62 @@ public class AdvancedTextEditorPanel extends JPanel {
         
         printThread.setDaemon(true);
         printThread.start();
+    }
+
+    public LargeFileManager getFileManager() {
+        return fileManager;
+    }
+
+    public int getLoadedChunkIndex() {
+        return loadedChunkIndex;
+    }
+
+    public void forceSetText(String text) {
+        // Capture the exact save state before the JTextArea ruins it
+        boolean hadUnsavedAsterisk = this.hasUnsavedChanges(); 
+        
+        if (documentCache != null) {
+            documentCache.clear();
+        }
+        
+        if (textArea != null) {
+            // This triggers the background DocumentListener, which erroneously flags the file as dirty
+            textArea.setText(text);
+            textArea.setCaretPosition(0);
+        }
+        
+        // Forcefully restore the exact state to whatever it was a millisecond ago
+        this.isDirty = false; // Reset local text edits since we just forced a full synchronized override
+        setUnsavedChanges(hadUnsavedAsterisk);
+    }
+
+    public int getRawCaretPosition() {
+        if (textArea == null) return 0;
+        return visualToRawIndex(textArea.getCaretPosition());
+    }
+
+    public void setRawCaretPosition(int rawIndex) {
+        if (textArea == null) return;
+        
+        int visualIdx = rawToVisualIndex(rawIndex);
+        if (visualIdx >= 0 && visualIdx <= textArea.getDocument().getLength()) {
+            textArea.setCaretPosition(visualIdx);
+            
+            // Auto-scroll the text area to ensure the new cursor position is visible on screen
+            try {
+                java.awt.Rectangle viewRect = textArea.modelToView2D(visualIdx).getBounds();
+                textArea.scrollRectToVisible(viewRect);
+            } catch (Exception e) {
+                // Ignore layout exceptions if UI hasn't fully rendered yet
+            }
+        }
+    }
+        
+    public void focusEditor() {
+        if (textArea != null) {
+            // requestFocusInWindow is the safest way to grab focus in Swing 
+            // without overriding OS-level window layering
+            textArea.requestFocusInWindow();
+        }
     }
 }
