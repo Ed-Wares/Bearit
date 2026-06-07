@@ -775,11 +775,11 @@ public class BearitFrame extends JFrame {
                 }
             }
             
-            // --- Capture the selected hex offset BEFORE syncing and swapping ---
-            int targetOffset = hexWrapper.getHexSelectedByteOffset();
+            // --- Capture the exact GLOBAL byte offset before reverting ---
+            long targetGlobalOffset = hexWrapper.getHexEditor().getGlobalSelectedByteOffset();
             
             hexWrapper.syncToHiddenEditor(); 
-            hexWrapper.cleanupAndRevert();
+            hexWrapper.cleanupAndRevert(); // This sets binary mode back to FALSE!
             
             AdvancedTextEditorPanel restoredTextPanel = hexWrapper.getHiddenTextEditor();
             tabbedPane.setComponentAt(idx, restoredTextPanel);
@@ -788,19 +788,40 @@ public class BearitFrame extends JFrame {
             restoredTextPanel.repaint();
             tabbedPane.revalidate();
             tabbedPane.repaint();
-
-            // --- Grab the chunk index from the hex wrapper in case the user navigated ---
-            int targetChunk = hexWrapper.getCurrentLoadedChunk();
             
-            // --- Pass the cursor update into the async completion callback! ---
-            restoredTextPanel.triggerAsyncLoad(targetChunk, 0, -1, false, () -> {
-                if (targetOffset != -1) {
-                    restoredTextPanel.setRawCaretPosition(targetOffset);
+            // --- Find which Text Chunk contains this global offset (snapped to newlines) ---
+            LargeFileManager fm = restoredTextPanel.getFileManager();
+            int finalTargetTextChunk = 0;
+            int finalTargetRawCaret = 0;
+            
+            try {
+                for (int i = 0; i < fm.getTotalChunks(); i++) {
+                    long[] bounds = fm.getChunkBoundaries(i);
+                    if ((targetGlobalOffset >= bounds[0] && targetGlobalOffset < bounds[1]) || i == fm.getTotalChunks() - 1) {
+                        finalTargetTextChunk = i;
+                        int localByteOffset = (int)(targetGlobalOffset - bounds[0]);
+                        
+                        // --- Convert bytes back to a string to find JTextArea character index ---
+                        byte[] chunkBytes = fm.getChunkBytes(finalTargetTextChunk);
+                        String textUpToCursor = new String(chunkBytes, 0, Math.min(localByteOffset, chunkBytes.length), java.nio.charset.StandardCharsets.UTF_8);
+                        
+                        // Remove '\r' so the final visual index matches JTextArea perfectly
+                        finalTargetRawCaret = textUpToCursor.replace("\r", "").length();
+                        break;
+                    }
                 }
-                // Force the text area to instantly grab the keyboard focus 
-                // so the user sees the blinking caret and can resume typing immediately
+            } catch (Exception ex) {
+                ex.printStackTrace();
+            }
+            
+            // Pass the perfectly calculated final variables into the async callback
+            final int chunkToLoad = finalTargetTextChunk;
+            final int caretToSet = finalTargetRawCaret;
+            
+            restoredTextPanel.triggerAsyncLoad(chunkToLoad, 0, -1, false, () -> {
+                restoredTextPanel.setRawCaretPosition(caretToSet);
                 restoredTextPanel.focusEditor();
-            });            
+            });
         }
     }
 

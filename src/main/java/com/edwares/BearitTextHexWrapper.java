@@ -20,26 +20,57 @@ public class BearitTextHexWrapper extends JPanel {
             isDirty = true;
             hiddenTextEditor.setUnsavedChanges(true); 
         });
-
-        add(hexEditor, BorderLayout.CENTER);
-
         // --- Wire up the chunk navigation ---
-        hexEditor.setOnPrevChunk((cursorAtBottom) -> navigateToChunk(currentLoadedChunk - 1, cursorAtBottom));
-        hexEditor.setOnNextChunk((cursorAtBottom) -> navigateToChunk(currentLoadedChunk + 1, cursorAtBottom));
-        // --- Wire up the drag-jump logic ---
-        hexEditor.setOnJumpToChunk(chunkIdx -> navigateToChunk(chunkIdx, false));
+        // Update existing listeners to pass 'null' for the exact offset
+        hexEditor.setOnPrevChunk((cursorAtBottom) -> navigateToChunk(currentLoadedChunk - 1, cursorAtBottom, null));
+        hexEditor.setOnNextChunk((cursorAtBottom) -> navigateToChunk(currentLoadedChunk + 1, cursorAtBottom, null));
+        hexEditor.setOnJumpToChunk(chunkIdx -> navigateToChunk(chunkIdx, false, null));
+
+        // --- Wire up the Global Goto logic ---
+        hexEditor.setOnJumpToGlobalAddress(globalAddr -> {
+            LargeFileManager fm = hiddenTextEditor.getFileManager();
+            try {
+                for (int i = 0; i < fm.getTotalChunks(); i++) {
+                    long[] bounds = fm.getChunkBoundaries(i);
+                    // bounds[0] is inclusive, bounds[1] is exclusive
+                    if (globalAddr >= bounds[0] && globalAddr < bounds[1]) {
+                        navigateToChunk(i, false, globalAddr);
+                        return;
+                    }
+                }
+                JOptionPane.showMessageDialog(this, "Address is outside the bounds of the file.");
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
+
         add(hexEditor, BorderLayout.CENTER);
         
-        // --- INITIALIZE UI ---
-        currentLoadedChunk = hiddenTextEditor.getLoadedChunkIndex();
+        // --- Global Syncing Initialization (Replaces loadCurrentChunkFromBearit) ---
+        long globalCaret = hiddenTextEditor.getGlobalCaretByteOffset();
         LargeFileManager fm = hiddenTextEditor.getFileManager();
-        hexEditor.updateChunkStatus(currentLoadedChunk + 1, Math.max(1, fm.getTotalChunks()));
+        fm.setBinaryMode(true); 
         
-        loadCurrentChunkFromBearit();
-        
-        // --- Sync the initial cursor position to the ASCII side ---
-        int rawCaret = hiddenTextEditor.getRawCaretPosition();
-        hexEditor.setSelectedByteOffset(rawCaret);
+        int targetChunk = 0;
+        try {
+            // Find exactly which strict 25MB Hex Chunk contains this byte
+            for (int i = 0; i < fm.getTotalChunks(); i++) {
+                long[] bounds = fm.getChunkBoundaries(i);
+                if (globalCaret >= bounds[0] && globalCaret < bounds[1]) {
+                    targetChunk = i;
+                    break;
+                }
+            }
+            currentLoadedChunk = targetChunk;
+            byte[] rawBytes = fm.getChunkBytes(currentLoadedChunk);
+            long offset = fm.getChunkBoundaries(currentLoadedChunk)[0];
+            
+            hexEditor.updateChunkStatus(currentLoadedChunk + 1, fm.getTotalChunks());
+            hexEditor.loadData(rawBytes, offset);
+            hexEditor.setSelectedByteOffset((int)(globalCaret - offset));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     /**
@@ -53,22 +84,6 @@ public class BearitTextHexWrapper extends JPanel {
         return hiddenTextEditor;
     }
 
-    private void loadCurrentChunkFromBearit() {
-        try {
-            LargeFileManager fm = hiddenTextEditor.getFileManager();
-            fm.setBinaryMode(true); // Bypass string encoding
-            
-            // Note: You must expose loadedChunkIndex via a getter in AdvancedTextEditorPanel!
-            currentLoadedChunk = hiddenTextEditor.getLoadedChunkIndex(); 
-            
-            byte[] rawBytes = fm.getChunkBytes(currentLoadedChunk);
-            long absoluteOffset = fm.getChunkBoundaries(currentLoadedChunk)[0];
-            
-            hexEditor.loadData(rawBytes, absoluteOffset);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
 
     public boolean isDirty() {
         return isDirty;
@@ -129,7 +144,8 @@ public class BearitTextHexWrapper extends JPanel {
     }
 
     // Add the boolean parameter to the method signature
-    private void navigateToChunk(int newIndex, boolean cursorAtBottom) {
+    // --- Added 'exactGlobalOffset' to the parameters ---
+    private void navigateToChunk(int newIndex, boolean cursorAtBottom, Long exactGlobalOffset) {
         LargeFileManager fm = hiddenTextEditor.getFileManager();
         if (newIndex < 0 || newIndex >= fm.getTotalChunks()) return;
 
@@ -160,8 +176,10 @@ public class BearitTextHexWrapper extends JPanel {
                     hexEditor.updateChunkStatus(currentLoadedChunk + 1, fm.getTotalChunks());
                     hexEditor.setStatus("Ready");
                     
-                    // --- NEW: Place the cursor precisely where it belongs ---
-                    if (cursorAtBottom && rawBytes.length > 0) {
+                    // --- NEW: Handle exact offset targeting ---
+                    if (exactGlobalOffset != null) {
+                        hexEditor.setSelectedByteOffset((int)(exactGlobalOffset - offset));
+                    } else if (cursorAtBottom && rawBytes.length > 0) {
                         hexEditor.setSelectedByteOffset(rawBytes.length - 1);
                     } else {
                         hexEditor.setSelectedByteOffset(0); 

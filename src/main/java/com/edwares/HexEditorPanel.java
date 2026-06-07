@@ -39,6 +39,7 @@ public class HexEditorPanel extends JPanel {
     private Consumer<Boolean> onPrevChunk;
     private Consumer<Boolean> onNextChunk;  
     private Consumer<Integer> onJumpToChunk;
+    private Consumer<Long> onJumpToGlobalAddress;    
 
     private Runnable onDataChanged;
 
@@ -342,9 +343,19 @@ public class HexEditorPanel extends JPanel {
         gbc.gridx = 0; gbc.gridy++;
         panel.add(new JLabel("Go to (Hex):"), gbc);
         gbc.gridx = 1;
-        txtGoto = new JTextField(10);
-        txtGoto.addActionListener(e -> jumpToAddress());
-        panel.add(txtGoto, gbc);
+        JPanel gotoPanel = new JPanel(new BorderLayout(2, 0));
+        gotoPanel.setOpaque(false);
+        txtGoto = new JTextField(8);
+        JButton btnGo = new JButton("Go");
+        btnGo.setMargin(new Insets(1, 4, 1, 4));
+        btnGo.setFocusable(false); // Prevents it from stealing keyboard focus unnecessarily
+        // Wire both the Enter key in the text box AND the button to the same action
+        java.awt.event.ActionListener goAction = e -> jumpToAddress();
+        txtGoto.addActionListener(goAction);
+        btnGo.addActionListener(goAction);
+        gotoPanel.add(txtGoto, BorderLayout.CENTER);
+        gotoPanel.add(btnGo, BorderLayout.EAST);
+        panel.add(gotoPanel, gbc);
 
         gbc.gridx = 0; gbc.gridy++; gbc.gridwidth = 2;
         panel.add(new JSeparator(), gbc);
@@ -397,12 +408,17 @@ public class HexEditorPanel extends JPanel {
         try {
             long targetGlobalOffset = Long.parseLong(txtGoto.getText().trim(), 16);
             long localOffset = targetGlobalOffset - baseAddressOffset;
+            
             if (localOffset >= 0 && localOffset < dataBytes.length) {
+                // Address is currently in memory! Jump instantly.
                 int row = (int) (localOffset / tableModel.getBytesPerRow());
                 int col = (int) (localOffset % tableModel.getBytesPerRow()) + 1;
                 hexTable.changeSelection(row, col, false, false);
             } else {
-                JOptionPane.showMessageDialog(this, "Address outside of currently loaded chunk.");
+                // Address is in a different chunk. Ask the wrapper to fetch it!
+                if (onJumpToGlobalAddress != null) {
+                    onJumpToGlobalAddress.accept(targetGlobalOffset);
+                }
             }
         } catch (NumberFormatException ex) {
             JOptionPane.showMessageDialog(this, "Invalid Hex Address");
@@ -630,4 +646,8 @@ public class HexEditorPanel extends JPanel {
     public long getBaseAddressOffset() {
         return baseAddressOffset;
     }
+
+    public void setOnJumpToGlobalAddress(Consumer<Long> listener) { 
+        this.onJumpToGlobalAddress = listener; 
+    }    
 }
