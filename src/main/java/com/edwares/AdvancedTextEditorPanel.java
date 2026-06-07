@@ -2756,7 +2756,32 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
         }
     }
-        
+     
+    public long getGlobalCaretByteOffset() {
+        try {
+            int rawCaret = getRawCaretPosition();
+            long chunkStartOffset = fileManager.getChunkBoundaries(loadedChunkIndex)[0];
+            String rawChunkText = fileManager.getChunkContent(loadedChunkIndex);
+            
+            // JTextArea strips '\r', so the visual text length is shorter than the raw string length.
+            // We must map the visual caret back to the original raw string index.
+            int jTextAreaIdx = 0;
+            int originalStringIdx = 0;
+            while (jTextAreaIdx < rawCaret && originalStringIdx < rawChunkText.length()) {
+                if (rawChunkText.charAt(originalStringIdx) != '\r') {
+                    jTextAreaIdx++;
+                }
+                originalStringIdx++;
+            }
+            
+            // Convert exact raw substring to bytes to get the true UTF-8 byte offset
+            byte[] bytesUpToCaret = rawChunkText.substring(0, originalStringIdx).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            return chunkStartOffset + bytesUpToCaret.length;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+    
     public void focusEditor() {
         if (textArea != null) {
             // requestFocusInWindow is the safest way to grab focus in Swing 

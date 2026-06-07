@@ -26,7 +26,8 @@ public class BearitTextHexWrapper extends JPanel {
         // --- Wire up the chunk navigation ---
         hexEditor.setOnPrevChunk((cursorAtBottom) -> navigateToChunk(currentLoadedChunk - 1, cursorAtBottom));
         hexEditor.setOnNextChunk((cursorAtBottom) -> navigateToChunk(currentLoadedChunk + 1, cursorAtBottom));
-
+        // --- Wire up the drag-jump logic ---
+        hexEditor.setOnJumpToChunk(chunkIdx -> navigateToChunk(chunkIdx, false));
         add(hexEditor, BorderLayout.CENTER);
         
         // --- INITIALIZE UI ---
@@ -174,5 +175,9 @@ public class BearitTextHexWrapper extends JPanel {
             }
         };
         worker.execute();
+    }
+
+    public HexEditorPanel getHexEditor() {
+        return hexEditor;
     }
 }

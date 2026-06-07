@@ -19,8 +19,15 @@ public class HexEditorPanel extends JPanel {
     private byte[] dataBytes;
     private long baseAddressOffset;
     
+    // --- Global Scrolling UI ---
+    private JScrollPane scrollPane;
+    private JScrollBar globalVBar;
+    private int totalChunks = 1;
+    private int currentChunkIdx = 0;
+    private boolean isUpdatingScroll = false;
+    
     // Inspector UI
-    private JTextField lblAddress, lbl8Bit, lbl16Bit, lbl32Bit, lbl64Bit;
+    private JTextField lblAddress, lblChunkAddress, lbl8Bit, lbl16Bit, lbl32Bit, lbl64Bit;
     private JTextField lblFloat, lblDouble, lblBinary, lblUnix32, lblUnix64;
     private JTextField lblDosTime, lblWin32Time;
     private JTextField txtGoto;
@@ -31,6 +38,7 @@ public class HexEditorPanel extends JPanel {
     private JLabel lblChunkPosition;
     private Consumer<Boolean> onPrevChunk;
     private Consumer<Boolean> onNextChunk;  
+    private Consumer<Integer> onJumpToChunk;
 
     private Runnable onDataChanged;
 
@@ -98,7 +106,7 @@ public class HexEditorPanel extends JPanel {
                             SwingUtilities.invokeLater(() -> {
                                 if (table.isEditing()) {
                                     table.getCellEditor().stopCellEditing(); 
-                                    advanceSelection(table);                 
+                                    advanceSelection(table);                
                                 }
                             });
                         }
@@ -135,49 +143,73 @@ public class HexEditorPanel extends JPanel {
             }
         };
         hexTable.setDefaultEditor(String.class, overwriteEditor);
-        // --- CRITICAL ADDITION ---
-        // This ensures that when the selection shifts, your continuous typing is 
-        // instantly passed to the new cell without requiring you to double-click again!
         hexTable.setSurrendersFocusOnKeystroke(true);
-        // -----------------------------------------------------
 
-        // Sync selection to inspector
         hexTable.getSelectionModel().addListSelectionListener(e -> updateInspector());
         hexTable.getColumnModel().getSelectionModel().addListSelectionListener(e -> updateInspector());
 
-        JScrollPane scrollPane = new JScrollPane(hexTable);
-        add(scrollPane, BorderLayout.CENTER);
+        // --- GLOBAL SCROLLBAR ARCHITECTURE ---
+        scrollPane = new JScrollPane(hexTable);
+        // Shrink the native scrollbar to 0x0. It remains active for mouse-wheels, but is invisible!
+        scrollPane.getVerticalScrollBar().setPreferredSize(new Dimension(0, 0));
 
-        JScrollBar vBar = scrollPane.getVerticalScrollBar();
+        globalVBar = new JScrollBar(JScrollBar.VERTICAL);
+        globalVBar.setMinimum(0);
 
-        // --- Seamless Mouse Wheel Scrolling ---
-        scrollPane.addMouseWheelListener(e -> {
-            if (!hexTable.isEnabled()) return; // Prevent spamming while chunk is loading
-            
-            int max = vBar.getMaximum() - vBar.getVisibleAmount();
-            
-            // Use a small 2-pixel margin of error to account for fractional layout rounding
-            if (e.getWheelRotation() > 0 && vBar.getValue() >= max - 2) {
-                if (onNextChunk != null) onNextChunk.accept(false); // false = cursor spawns at top
-            } 
-            else if (e.getWheelRotation() < 0 && vBar.getValue() <= 2) {
-                if (onPrevChunk != null) onPrevChunk.accept(true); // true = cursor spawns at bottom
+        JPanel centerContainer = new JPanel(new BorderLayout());
+        centerContainer.add(scrollPane, BorderLayout.CENTER);
+        centerContainer.add(globalVBar, BorderLayout.EAST);
+        add(centerContainer, BorderLayout.CENTER);
+
+        // Dragging the Global Scrollbar
+        globalVBar.addAdjustmentListener(e -> {
+            if (isUpdatingScroll || !hexTable.isEnabled()) return;
+
+            int val = e.getValue();
+            int targetChunk = val / 100000;
+            targetChunk = Math.min(Math.max(targetChunk, 0), totalChunks - 1); 
+
+            if (targetChunk != currentChunkIdx) {
+                // ONLY load the new chunk when the user lets go of the mouse to prevent lag spam
+                if (!e.getValueIsAdjusting() && onJumpToChunk != null) {
+                    onJumpToChunk.accept(targetChunk);
+                }
+            } else {
+                // Live scroll within the current chunk
+                double localPercent = (val % 100000) / 100000.0;
+                JViewport vp = scrollPane.getViewport();
+                int maxScroll = hexTable.getPreferredSize().height - vp.getHeight();
+                if (maxScroll > 0) {
+                    vp.setViewPosition(new Point(0, (int)(localPercent * maxScroll)));
+                }
             }
         });
 
-        // --- Seamless Scrollbar Thumb Dragging ---
-        vBar.addAdjustmentListener(e -> {
-            if (!hexTable.isEnabled()) return;
+        // Syncing the Global Scrollbar to the local viewport (Arrow keys / Mouse wheel)
+        scrollPane.getViewport().addChangeListener(e -> {
+            if (isUpdatingScroll || !hexTable.isEnabled()) return;
+            JViewport vp = scrollPane.getViewport();
+            int maxScroll = hexTable.getPreferredSize().height - vp.getHeight();
+            double localPercent = maxScroll > 0 ? (double) vp.getViewPosition().y / maxScroll : 0;
+            int newVal = (currentChunkIdx * 100000) + (int)(localPercent * 100000);
+
+            isUpdatingScroll = true;
+            globalVBar.setValue(newVal);
+            isUpdatingScroll = false;
+        });
+
+        // Crossing chunk boundaries with the mouse wheel
+        scrollPane.addMouseWheelListener(e -> {
+            if (!hexTable.isEnabled()) return; 
             
-            // Only act if the user is actively clicking and dragging the scroll thumb
-            if (e.getValueIsAdjusting()) {
-                int max = vBar.getMaximum() - vBar.getVisibleAmount();
-                
-                if (e.getValue() >= max - 2) {
-                    if (onNextChunk != null) onNextChunk.accept(false);
-                } else if (e.getValue() <= 2) {
-                    if (onPrevChunk != null) onPrevChunk.accept(true);
-                }
+            JViewport vp = scrollPane.getViewport();
+            int maxScroll = hexTable.getPreferredSize().height - vp.getHeight();
+            int currentY = vp.getViewPosition().y;
+
+            if (e.getWheelRotation() > 0 && currentY >= maxScroll - 2) {
+                if (onNextChunk != null) onNextChunk.accept(false); 
+            } else if (e.getWheelRotation() < 0 && currentY <= 2) {
+                if (onPrevChunk != null) onPrevChunk.accept(true); 
             }
         });
 
@@ -240,9 +272,26 @@ public class HexEditorPanel extends JPanel {
 
     public void setOnPrevChunk(java.util.function.Consumer<Boolean> listener) { this.onPrevChunk = listener; }
     public void setOnNextChunk(java.util.function.Consumer<Boolean> listener) { this.onNextChunk = listener; }
+    public void setOnJumpToChunk(java.util.function.Consumer<Integer> listener) { this.onJumpToChunk = listener; }
 
     public void updateChunkStatus(int currentIdx, int totalChunks) {
         lblChunkPosition.setText(String.format(" Chunk %d of %d ", currentIdx, totalChunks));
+        this.totalChunks = totalChunks;
+        this.currentChunkIdx = currentIdx - 1;
+
+        // Configure the global scrollbar mathematically
+        isUpdatingScroll = true;
+        globalVBar.setMaximum(totalChunks * 100000 + 10000);
+        globalVBar.setVisibleAmount(10000);
+        globalVBar.setBlockIncrement(100000);
+        globalVBar.setUnitIncrement(2000);
+
+        // Sync the thumb perfectly to where the local viewport is sitting
+        JViewport vp = scrollPane.getViewport();
+        int maxScroll = hexTable.getPreferredSize().height - vp.getHeight();
+        double localPercent = maxScroll > 0 ? (double) vp.getViewPosition().y / maxScroll : 0;
+        globalVBar.setValue((currentChunkIdx * 100000) + (int)(localPercent * 100000));
+        isUpdatingScroll = false;
     }
 
     public void setUIEnabled(boolean enabled) {
@@ -281,7 +330,7 @@ public class HexEditorPanel extends JPanel {
         panel.add(new JLabel("Bytes Per Row:"), gbc);
         gbc.gridx = 1;
         comboBytesPerRow = new JComboBox<>(new Integer[]{16, 32, 48});
-        comboBytesPerRow.setPreferredSize(new Dimension(75, 26)); // <-- ADD THIS LINE
+        comboBytesPerRow.setPreferredSize(new Dimension(75, 26)); 
         comboBytesPerRow.addActionListener(e -> {
             tableModel.setBytesPerRow((Integer) comboBytesPerRow.getSelectedItem());
             tableModel.fireTableStructureChanged();
@@ -302,7 +351,8 @@ public class HexEditorPanel extends JPanel {
         gbc.gridwidth = 1;
 
         // Translations
-        lblAddress = addInspectorRow("Address:", panel, ++gbc.gridy);
+        lblAddress = addInspectorRow("Global Address:", panel, ++gbc.gridy);
+        lblChunkAddress = addInspectorRow("Chunk Address:", panel, ++gbc.gridy);
         lbl8Bit = addInspectorRow("Int8:", panel, ++gbc.gridy);
         lbl16Bit = addInspectorRow("Int16 (LE):", panel, ++gbc.gridy);
         lbl32Bit = addInspectorRow("Int32 (LE):", panel, ++gbc.gridy);
@@ -373,6 +423,7 @@ public class HexEditorPanel extends JPanel {
         if (index >= dataBytes.length) return;
 
         lblAddress.setText(String.format("0x%08X", baseAddressOffset + index));
+        lblChunkAddress.setText(String.format("0x%08X", index));
 
         byte[] buf = new byte[8];
         int len = Math.min(8, dataBytes.length - index);
@@ -569,5 +620,14 @@ public class HexEditorPanel extends JPanel {
         int col = bpr + 1 + (offset % bpr); 
         
         hexTable.changeSelection(row, col, false, false);
+    }
+
+    public long getGlobalSelectedByteOffset() {
+        int local = getSelectedByteOffset();
+        return local == -1 ? baseAddressOffset : baseAddressOffset + local;
+    }
+
+    public long getBaseAddressOffset() {
+        return baseAddressOffset;
     }
 }
