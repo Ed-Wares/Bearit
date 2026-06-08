@@ -183,6 +183,7 @@ public class BearitFrame extends JFrame {
             Component c = tabbedPane.getComponentAt(idx);
             boolean isHex = (c instanceof BearitTextHexWrapper);
             syncHexToggles(isHex);
+            updateFrameTitle();
         });
 
         add(createToolBar(), BorderLayout.NORTH);
@@ -495,21 +496,32 @@ public class BearitFrame extends JFrame {
         return null;
     }
 
-    private void updateFrameTitle() {
-        // Use our safe getter instead of (AdvancedTextEditorPanel) tabbedPane.getSelectedComponent()
+private void updateFrameTitle() {
         AdvancedTextEditorPanel activeEditor = getActiveEditor(); 
         
         if (activeEditor != null) {
-             String title = activeEditor.getCurrentTitle();
-            if (activeEditor.hasUnsavedChanges()) {
-                title += "*";
+            String displayPath;
+            File activeFile = activeEditor.getActiveFile();
+            
+            // If the file exists on the hard drive, grab its full absolute path
+            if (activeFile != null) {
+                displayPath = activeFile.getAbsolutePath();
+            } else {
+                // Otherwise, fallback to the default short name (e.g., "Untitled")
+                displayPath = activeEditor.getCurrentTitle(); 
             }
-            setTitle("Bearit Text Editor - " + title);
+            
+            // It is best practice to keep the unsaved asterisk indicator on the main window too!
+            if (activeEditor.hasUnsavedChanges()) {
+                displayPath = "*" + displayPath;
+            }
+            
+            setTitle(displayPath + " - Bearit Text Editor");
         } else {
-            setTitle("Bearit");
+            // Fallback for when all tabs are completely closed
+            setTitle("Bearit Text Editor");
         }
     }
-
     // --- File Operations ---
 
     public void loadInitialFile(File file) {
