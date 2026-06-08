@@ -1001,14 +1001,9 @@ public class BearitFrame extends JFrame {
         btnWordWrap.setSelected(currentWrapState);
 
         // Hex Mode Toggle (for current tab only)
-        JToggleButton btnToggleHex = createIconToggleButton("h_mobiledata_badge.png", "Hex", "Toggle Hex Editor for current tab", null);
-        btnToggleHex.addActionListener(e -> toggleHexModeForCurrentTab(btnToggleHex.isSelected()));
+        btnToggleHex = createIconToggleButton("h_mobiledata_badge.png", "Hex", "Toggle Hex Editor for current tab", null);
+        btnToggleHex.addActionListener(e -> toggleHexModeForCurrentTab(btnToggleHex.isSelected()));        
         
-        // Add a tab listener so the toggle button stays accurate when switching between files
-        // tabbedPane.addChangeListener(e -> {
-        //     Component c = tabbedPane.getSelectedComponent();
-        //     btnToggleHex.setSelected(c instanceof BearitTextHexWrapper);
-        // });
 
         // Synchronize Toolbar and Menu Checkbox visually
         ActionListener wrapToggleAction = e -> {

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# This script downloads the latest Material Symbols (Outlined) from Google's official Symbol CDN
+# This script downloads the latest Material Symbols (Outlined) from Google's official Symbol CDN https://fonts.google.com/icons
 
 # Prerequisites
 # Before running the script, you just need to ensure the SVG-to-PNG converter (rsvg-convert) is installed on your system. Run this in your terminal:
@@ -19,19 +19,20 @@ fi
 
 # The complete list of new Material Symbols
 ICONS=(
-    "insert_drive_file" # New File
-    "folder_open"       # Open File
-    "save"              # Save
-    "save_as"           # Save As (Now natively supported!)
-    "undo"              # Undo
-    "redo"              # Redo
-    "content_cut"       # Cut
-    "content_copy"      # Copy
-    "content_paste"     # Paste
-    "search"            # Find/Replace
-    "location_on"       # Go To Line
-    "wrap_text"         # Word Wrap Toggle
-    "build"             # Default Custom Tool Icon
+    "insert_drive_file"  # New File
+    "folder_open"        # Open File
+    "save"               # Save
+    "save_as"            # Save As (Now natively supported!)
+    "undo"               # Undo
+    "redo"               # Redo
+    "content_cut"        # Cut
+    "content_copy"       # Copy
+    "content_paste"      # Paste
+    "search"             # Find/Replace
+    "location_on"        # Go To Line
+    "wrap_text"          # Word Wrap Toggle
+    "h_mobiledata_badge" # Hex Editor Toggle
+    "build"              # Default Custom Tool Icon
 )
 
 echo "Downloading new Material Symbols (Outlined) for Bearit..."

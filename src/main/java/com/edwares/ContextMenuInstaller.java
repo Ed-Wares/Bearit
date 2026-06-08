@@ -70,8 +70,8 @@ public class ContextMenuInstaller {
 
         File jarFile = new File(jarPath);
         File parentDir = jarFile.getParentFile();
-        File shortcutFile = new File(parentDir, ShortcutUtil.SHORTCUT_NAME);
-        File iconFile = new File(parentDir, ShortcutUtil.ICON_NAME);
+        File shortcutFile = new File(parentDir, ShortcutUtil.WIN_SHORTCUT_NAME);
+        File iconFile = new File(parentDir, ShortcutUtil.WIN_ICON_NAME);
 
         // To safely execute a .lnk file from the Windows registry, we use 'cmd.exe /c start'
         // The empty quotes "" act as the window title parameter to 'start'
