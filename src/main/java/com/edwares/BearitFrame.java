@@ -10,6 +10,7 @@ import java.awt.datatransfer.StringSelection;
 import java.awt.event.*;
 import java.awt.font.TextAttribute;
 import java.io.File;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -879,17 +880,7 @@ public class BearitFrame extends JFrame {
         }
 
         // --- Resolve the %rp (Running Path) variable ---
-        if (command.contains("%rp")) {
-            String rp;
-            try {
-                rp = new File(BearitFrame.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getParent();
-                if (rp == null) rp = System.getProperty("user.dir");
-            } catch (Exception ex) {
-                rp = System.getProperty("user.dir");
-            }
-            command = command.replace("%rp", rp);
-        }
-
+        command = resolveRunningPath(command);
         final String finalCommand = command;
 
         new SwingWorker<Void, String>() {
@@ -937,6 +928,20 @@ public class BearitFrame extends JFrame {
                 }
             }
         }.execute();
+    }
+
+    private String resolveRunningPath(String input) {
+        if (input == null || !input.contains("%rp")) return input;
+        
+        String rp;
+        try {
+            rp = new File(BearitFrame.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getParent();
+            if (rp == null) rp = System.getProperty("user.dir");
+        } catch (Exception ex) {
+            rp = System.getProperty("user.dir");
+        }
+        
+        return input.replace("%rp", rp);
     }
     
     private void appendToolOutput(String text) {
@@ -1054,7 +1059,9 @@ public class BearitFrame extends JFrame {
                 
                 // Fallback to "build.png" if the properties file is missing a defined icon
                 String finalIconName = (iconProp != null && !iconProp.trim().isEmpty()) ? iconProp.trim() : "build.png";
-                if (!finalIconName.endsWith(".png")) {
+                // --- Resolve the %rp variable for the icon path ---
+                finalIconName = resolveRunningPath(finalIconName);                
+                if (!finalIconName.contains(".")) {
                     finalIconName += ".png";
                 }
                 
@@ -1112,11 +1119,18 @@ public class BearitFrame extends JFrame {
             button.addActionListener(action);
         }
         
-        java.net.URL iconUrl = getClass().getResource("/icons/" + iconName);
+        URL iconUrl = getClass().getResource("/icons/" + iconName);
         if (iconUrl != null) {
             button.setIcon(new ImageIcon(iconUrl));
         } else {
-            button.setText(fallbackText);
+            // Not in JAR. Check the local file system
+            File iconFile = new File(iconName);
+            if (iconFile.exists() && !iconFile.isDirectory()) {
+                button.setIcon(new ImageIcon(iconFile.getAbsolutePath()));
+            } else {
+                // Not on hard drive either. Fallback strictly to text
+                button.setText(fallbackText);
+            }            
         }
         
         // Strip away ALL default OS borders and painting
