@@ -101,22 +101,67 @@ public class ContextMenuInstaller {
         }
     }
 
-    // --- Ubuntu Implementation ---
+    // --- Ubuntu/Linux Implementation ---
 
     private static void installForUbuntu(Component parent, String javaPath, String jarPath) throws Exception {
         String userHome = System.getProperty("user.home");
-        Path scriptsDir = Paths.get(userHome, ".local", "share", "nautilus", "scripts");
+        Path nautilusScriptsDir = Paths.get(userHome, ".local", "share", "nautilus", "scripts");
+        Path cajaScriptsDir = Paths.get(userHome, ".local", "share", "caja", "scripts");
         
-        if (!Files.exists(scriptsDir)) {
-            Files.createDirectories(scriptsDir);
-        }
-
-        Path scriptPath = scriptsDir.resolve("Edit with Bearit");
         String scriptContent = "#!/bin/bash\n" +
                                "\"" + javaPath + "\" -jar \"" + jarPath + "\" \"$1\"\n";
         
-        Files.write(scriptPath, scriptContent.getBytes());
+        boolean installed = false;
 
+        // Install for Nautilus
+        if (!Files.exists(nautilusScriptsDir)) {
+            Files.createDirectories(nautilusScriptsDir);
+        }
+        Path nautilusScriptPath = nautilusScriptsDir.resolve("Edit with Bearit");
+        Files.write(nautilusScriptPath, scriptContent.getBytes());
+        setExecutablePermissions(nautilusScriptPath);
+        installed = true;
+
+        // Install for Caja
+        if (!Files.exists(cajaScriptsDir)) {
+            Files.createDirectories(cajaScriptsDir);
+        }
+        Path cajaScriptPath = cajaScriptsDir.resolve("Edit with Bearit");
+        Files.write(cajaScriptPath, scriptContent.getBytes());
+        setExecutablePermissions(cajaScriptPath);
+        installed = true;
+
+        if (installed) {
+            JOptionPane.showMessageDialog(parent, "Context menu script installed successfully!\nRight-click any file in Nautilus or Caja -> Scripts -> Edit with Bearit.", "Success", JOptionPane.INFORMATION_MESSAGE);
+        }
+    }
+
+    private static void uninstallForUbuntu(Component parent) throws Exception {
+        String userHome = System.getProperty("user.home");
+        Path nautilusScriptPath = Paths.get(userHome, ".local", "share", "nautilus", "scripts", "Edit with Bearit");
+        Path cajaScriptPath = Paths.get(userHome, ".local", "share", "caja", "scripts", "Edit with Bearit");
+        
+        boolean removedNautilus = false;
+        boolean removedCaja = false;
+
+        if (Files.exists(nautilusScriptPath)) {
+            Files.delete(nautilusScriptPath);
+            removedNautilus = true;
+        }
+
+        if (Files.exists(cajaScriptPath)) {
+            Files.delete(cajaScriptPath);
+            removedCaja = true;
+        }
+
+        if (removedNautilus || removedCaja) {
+            JOptionPane.showMessageDialog(parent, "Context menu script removed successfully from Linux file managers.", "Success", JOptionPane.INFORMATION_MESSAGE);
+        } else {
+            JOptionPane.showMessageDialog(parent, "Context menu scripts were not found. They may have already been removed.", "Notice", JOptionPane.INFORMATION_MESSAGE);
+        }
+    }
+
+    private static void setExecutablePermissions(Path scriptPath) throws Exception {
         Set<PosixFilePermission> perms = new HashSet<>();
         perms.add(PosixFilePermission.OWNER_READ);
         perms.add(PosixFilePermission.OWNER_WRITE);
@@ -126,20 +171,6 @@ public class ContextMenuInstaller {
         perms.add(PosixFilePermission.OTHERS_READ);
         perms.add(PosixFilePermission.OTHERS_EXECUTE);
         Files.setPosixFilePermissions(scriptPath, perms);
-
-        JOptionPane.showMessageDialog(parent, "Context menu script installed successfully!\nRight-click any file in Nautilus -> Scripts -> Edit with Bearit.", "Success", JOptionPane.INFORMATION_MESSAGE);
-    }
-
-    private static void uninstallForUbuntu(Component parent) throws Exception {
-        String userHome = System.getProperty("user.home");
-        Path scriptPath = Paths.get(userHome, ".local", "share", "nautilus", "scripts", "Edit with Bearit");
-        
-        if (Files.exists(scriptPath)) {
-            Files.delete(scriptPath);
-            JOptionPane.showMessageDialog(parent, "Context menu script removed successfully from Nautilus.", "Success", JOptionPane.INFORMATION_MESSAGE);
-        } else {
-            JOptionPane.showMessageDialog(parent, "Context menu script was not found. It may have already been removed.", "Notice", JOptionPane.INFORMATION_MESSAGE);
-        }
     }
 
     // --- macOS Notice ---

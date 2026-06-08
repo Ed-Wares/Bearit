@@ -60,7 +60,7 @@ public class BearitFrame extends JFrame {
         }
         // Load and set the application icon ---
         try {
-            java.net.URL iconURL = getClass().getResource("/BearFace.png");
+            java.net.URL iconURL = getClass().getResource("/Bearit.png");
             if (iconURL != null) {
                 ImageIcon icon = new ImageIcon(iconURL);
                 setIconImage(icon.getImage());
@@ -138,6 +138,9 @@ public class BearitFrame extends JFrame {
         } catch (Exception e) {}
 
         fileChooser = new JFileChooser();
+        // --- Force a spacious default size for Linux file dialogs ---
+        fileChooser.setPreferredSize(new Dimension(800, 550));
+
         tabbedPane = new JTabbedPane();
         tabbedPane.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT); // --- Forces Mac to align tabs to the left
         tabbedPane.setUI(new javax.swing.plaf.basic.BasicTabbedPaneUI()); // --- Fixes the weird Mac "centered" tab behavior

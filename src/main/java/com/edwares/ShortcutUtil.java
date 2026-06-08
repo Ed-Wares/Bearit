@@ -14,7 +14,7 @@ public class ShortcutUtil {
 
     // Linux Constants
     public static final String LINUX_SHORTCUT_NAME = "Bearit.desktop";
-    public static final String LINUX_ICON_NAME = "bear.png"; // Reusing the PNG from your BearitFrame
+    public static final String LINUX_ICON_NAME = "Bearit.png"; // Reusing the PNG from your BearitFrame
 
     public static void ensureShortcutExists() {
         try {

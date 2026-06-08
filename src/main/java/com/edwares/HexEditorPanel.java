@@ -343,6 +343,9 @@ public class HexEditorPanel extends JPanel {
         gbc.gridx = 0; gbc.gridy++;
         panel.add(new JLabel("Go to (Hex):"), gbc);
         gbc.gridx = 1;
+        // --- Force Linux to stretch the text box horizontally ---
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1.0;
         JPanel gotoPanel = new JPanel(new BorderLayout(2, 0));
         gotoPanel.setOpaque(false);
         txtGoto = new JTextField(8);
@@ -355,7 +358,11 @@ public class HexEditorPanel extends JPanel {
         btnGo.addActionListener(goAction);
         gotoPanel.add(txtGoto, BorderLayout.CENTER);
         gotoPanel.add(btnGo, BorderLayout.EAST);
+        panel.add(new JLabel("  "), gbc);
         panel.add(gotoPanel, gbc);
+        // --- Reset the constraints so the rest of the UI doesn't warp ---
+        gbc.fill = GridBagConstraints.NONE;
+        gbc.weightx = 0.0;
 
         gbc.gridx = 0; gbc.gridy++; gbc.gridwidth = 2;
         panel.add(new JSeparator(), gbc);
