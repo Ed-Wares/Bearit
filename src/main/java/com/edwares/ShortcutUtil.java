@@ -8,49 +8,86 @@ import java.util.Optional;
 
 public class ShortcutUtil {
 
-    public static final String SHORTCUT_NAME = "Bearit.lnk";
-    public static final String ICON_NAME = "Bearit.ico";
+    // Windows Constants
+    public static final String WIN_SHORTCUT_NAME = "Bearit.lnk";
+    public static final String WIN_ICON_NAME = "Bearit.ico";
+
+    // Linux Constants
+    public static final String LINUX_SHORTCUT_NAME = "Bearit.desktop";
+    public static final String LINUX_ICON_NAME = "bear.png"; // Reusing the PNG from your BearitFrame
 
     public static void ensureShortcutExists() {
         try {
             File jarFile = new File(ShortcutUtil.class.getProtectionDomain().getCodeSource().getLocation().toURI());
             File parentDir = jarFile.getParentFile();
-            File shortcutFile = new File(parentDir, SHORTCUT_NAME);
-            File iconFile = new File(parentDir, ICON_NAME);
+            
+            String osName = System.getProperty("os.name").toLowerCase();
 
-            // Ensure the icon exists on disk
-            if (!iconFile.exists() && parentDir.canWrite()) {
-                extractIconIfMissing(iconFile);
-            }
+            if (osName.contains("win")) {
+                File shortcutFile = new File(parentDir, WIN_SHORTCUT_NAME);
+                File iconFile = new File(parentDir, WIN_ICON_NAME);
 
-            // Create shortcut if it doesn't exist
-            if (!shortcutFile.exists() && parentDir.canWrite()) {
-                createWindowsShortcut(shortcutFile, jarFile, iconFile);
+                if (!iconFile.exists() && parentDir.canWrite()) {
+                    extractIconIfMissing(iconFile, WIN_ICON_NAME);
+                }
+                if (!shortcutFile.exists() && parentDir.canWrite()) {
+                    createWindowsShortcut(shortcutFile, jarFile, iconFile);
+                }
+            } else if (osName.contains("nix") || osName.contains("nux") || osName.contains("aix")) {
+                File shortcutFile = new File(parentDir, LINUX_SHORTCUT_NAME);
+                File iconFile = new File(parentDir, LINUX_ICON_NAME);
+
+                if (!iconFile.exists() && parentDir.canWrite()) {
+                    extractIconIfMissing(iconFile, LINUX_ICON_NAME);
+                }
+                if (!shortcutFile.exists() && parentDir.canWrite()) {
+                    createLinuxShortcut(shortcutFile, jarFile, iconFile);
+                }
             }
         } catch (URISyntaxException e) {
             System.err.println("Could not resolve application path.");
         }
     }
 
-    private static void extractIconIfMissing(File iconFile) {
-        try (InputStream is = ShortcutUtil.class.getResourceAsStream("/" + ICON_NAME)) {
+    private static void extractIconIfMissing(File iconFile, String resourceName) {
+        try (InputStream is = ShortcutUtil.class.getResourceAsStream("/" + resourceName)) {
             if (is != null) {
                 Files.copy(is, iconFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
             } else {
-                System.err.println(ICON_NAME + " not found in JAR resources.");
+                System.err.println(resourceName + " not found in JAR resources.");
             }
         } catch (IOException e) {
             System.err.println("Failed to extract icon: " + e.getMessage());
         }
     }
 
-    private static void createWindowsShortcut(File lnkFile, File jarFile, File iconFile) {
-
-        String osName = System.getProperty("os.name").toLowerCase();
-        // Check if the OS name contains "win" if not, we are not on Windows and should skip shortcut creation
-        if (!osName.contains("win")) {
-            return;
+    private static void createLinuxShortcut(File desktopFile, File jarFile, File iconFile) {
+        String jarPath = jarFile.getAbsolutePath();
+        String iconPath = iconFile.getAbsolutePath();
+        
+        // Generate the standard Linux .desktop INI format
+        String desktopContents = "[Desktop Entry]\n" +
+                "Version=1.0\n" +
+                "Type=Application\n" +
+                "Name=Bearit\n" +
+                "Comment=Bearit Text Editor\n" +
+                "Exec=java -jar \"" + jarPath + "\" %F\n" +
+                "Icon=" + iconPath + "\n" +
+                "Terminal=false\n" +
+                "Categories=Utility;TextEditor;\n";
+        
+        try {
+            Files.writeString(desktopFile.toPath(), desktopContents);
+            
+            // Critical for Linux: The shortcut must be marked as an executable file 
+            // before the OS launcher will trust it and display the icon!
+            desktopFile.setExecutable(true, false); 
+        } catch (IOException e) {
+            System.err.println("Failed to create Linux shortcut: " + e.getMessage());
         }
+    }
+
+    private static void createWindowsShortcut(File lnkFile, File jarFile, File iconFile) {
         // Use ProcessHandle to find the exact executable that launched this process
         Optional<String> command = ProcessHandle.current().info().command();
 
@@ -68,7 +105,7 @@ public class ShortcutUtil {
             "$s.Arguments = '-jar \"%s\"'; " +
             "$s.Description = 'Bearit Text Editor'; " +
             "$s.WorkingDirectory = '%s'; " +
-            "$s.IconLocation = '%s'; " + // Set the icon location
+            "$s.IconLocation = '%s'; " + 
             "$s.Save()",
             lnkPath.replace("'", "''"), 
             javaPath.replace("'", "''"), 
