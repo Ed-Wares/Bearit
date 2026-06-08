@@ -905,7 +905,7 @@ public class AdvancedTextEditorPanel extends JPanel {
      * Helper to safely append the hidden boundary newline before committing
      * edits to the File Manager, ensuring chunks don't accidentally merge.
      */    
-    private String getCommitText() {
+    public String getCommitText() {
         String text = textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
         if (loadedChunkIndex < fileManager.getTotalChunks() - 1) {
             return text + "\n";
@@ -2781,7 +2781,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             return 0;
         }
     }
-    
+
     public void focusEditor() {
         if (textArea != null) {
             // requestFocusInWindow is the safest way to grab focus in Swing 
