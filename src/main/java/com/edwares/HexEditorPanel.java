@@ -18,6 +18,7 @@ public class HexEditorPanel extends JPanel {
     private HexTableModel tableModel;
     private byte[] dataBytes;
     private long baseAddressOffset;
+    private boolean isDarkTheme = false;
     
     // --- Global Scrolling UI ---
     private JScrollPane scrollPane;
@@ -607,15 +608,31 @@ public class HexEditorPanel extends JPanel {
                 setBorder(focusBorder);
             }
 
-            // --- Colors and Alignment ---
+            // --- Colors and Alignment (Theme Aware) ---
+            if (!isSel) {
+                int sCol = table.getSelectedColumn();
+                int sRow = table.getSelectedRow();
+                // Cross-highlighting logic
+                if (sRow == row && ((col > 0 && col <= bpr && sCol == col + bpr) || (col > bpr && sCol == col - bpr))) {
+                    c.setBackground(isDarkTheme ? new Color(70, 90, 120) : new Color(220, 235, 255)); 
+                } else {
+                    c.setBackground(table.getBackground());
+                }
+            } else {
+                // Ensure the selected cell text remains readable
+                c.setBackground(isDarkTheme ? new Color(40, 60, 90) : table.getSelectionBackground());
+                c.setForeground(isDarkTheme ? Color.WHITE : table.getSelectionForeground());
+            }
+
             if (col == 0) {
-                c.setBackground(new Color(240, 240, 240)); 
-                c.setForeground(Color.GRAY);
+                c.setBackground(isDarkTheme ? new Color(50, 50, 50) : new Color(240, 240, 240)); 
+                c.setForeground(isDarkTheme ? new Color(150, 150, 150) : Color.GRAY);
                 setHorizontalAlignment(RIGHT);
             } else {
-                if (!isSel) c.setForeground(Color.BLACK);
+                if (!isSel) c.setForeground(isDarkTheme ? new Color(200, 200, 200) : Color.BLACK);
                 setHorizontalAlignment(CENTER);
             }
+            
             return c;
         }
     }
@@ -656,5 +673,66 @@ public class HexEditorPanel extends JPanel {
 
     public void setOnJumpToGlobalAddress(Consumer<Long> listener) { 
         this.onJumpToGlobalAddress = listener; 
-    }    
+    }
+
+    public void applyTheme(String theme) {
+        this.isDarkTheme = "Dark".equals(theme);
+        Color bg = isDarkTheme ? new Color(43, 43, 43) : Color.WHITE;
+        Color fg = isDarkTheme ? new Color(200, 200, 200) : Color.BLACK;
+        Color panelBg = isDarkTheme ? new Color(50, 50, 50) : new Color(240, 240, 240);
+        Color headerBg = isDarkTheme ? new Color(35, 35, 35) : new Color(225, 225, 225); 
+
+        hexTable.setBackground(bg);
+        hexTable.setForeground(fg);
+        scrollPane.getViewport().setBackground(bg);
+        
+        // --- Inject a custom renderer to bypass the native OS header painter ---
+        javax.swing.table.JTableHeader header = hexTable.getTableHeader();
+        header.setOpaque(true);
+        header.setBackground(headerBg);
+        header.setForeground(fg);
+        
+        header.setDefaultRenderer(new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+                JLabel label = (JLabel) super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                label.setBackground(headerBg);
+                label.setForeground(fg);
+                label.setHorizontalAlignment(SwingConstants.CENTER);
+                
+                // Add a subtle border to separate the columns cleanly
+                Color borderColor = isDarkTheme ? new Color(60, 60, 60) : new Color(200, 200, 200);
+                label.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 1, borderColor));
+                return label;
+            }
+        });
+
+        applyThemeToContainer(this, panelBg, fg);
+        hexTable.repaint();
+    }
+
+    private void applyThemeToContainer(Container container, Color bg, Color fg) {
+        for (Component c : container.getComponents()) {
+            if (c instanceof JPanel || c instanceof JLabel) {
+                c.setBackground(bg);
+                c.setForeground(fg);
+            } else if (c instanceof JTextField && !((JTextField)c).isEditable()) {
+                c.setForeground(fg); 
+            }
+            
+            // --- Update the TitledBorder text color (e.g., "Data Inspector") ---
+            if (c instanceof JComponent) {
+                javax.swing.border.Border border = ((JComponent) c).getBorder();
+                if (border instanceof javax.swing.border.TitledBorder) {
+                    ((javax.swing.border.TitledBorder) border).setTitleColor(fg);
+                    c.repaint(); // Force the border to redraw immediately
+                }
+            }
+            
+            // Recurse deeper
+            if (c instanceof Container && c != hexTable) {
+                applyThemeToContainer((Container) c, bg, fg);
+            }
+        }
+    }
 }
