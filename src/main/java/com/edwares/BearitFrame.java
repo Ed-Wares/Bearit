@@ -691,8 +691,8 @@ private void updateFrameTitle() {
             UIManager.put("TabbedPane.contentAreaColor", bg);
             UIManager.put("TabbedPane.shadow", new Color(30, 30, 30));         // Main border line
             UIManager.put("TabbedPane.darkShadow", new Color(20, 20, 20));     // Outer drop shadow
-            UIManager.put("TabbedPane.light", new Color(60, 60, 60));          // Top/Left highlight
-            UIManager.put("TabbedPane.highlight", new Color(70, 70, 70));      // Inner highlight
+            UIManager.put("TabbedPane.light", new Color(42, 42, 42));          // Top/Left highlight
+            UIManager.put("TabbedPane.highlight", new Color(49, 49, 49));      // Inner highlight
             UIManager.put("TabbedPane.selected", bg); 
             
             // Heavily enforce Menu backgrounds globally just in case the OS tries to override them
@@ -751,7 +751,21 @@ private void updateFrameTitle() {
         }
         //getContentPane().setBackground(bg);
         getContentPane().setBackground(toolbarBg);
-        
+
+        // Strip the native GTK renderer so we can control the tabbedPane borders! ---
+        tabbedPane.setUI(new javax.swing.plaf.basic.BasicTabbedPaneUI() {
+            @Override
+            protected void installDefaults() {
+                super.installDefaults();
+                if (isDark) {
+                    lightHighlight = new Color(42, 42, 42); // Top/Left outer bevel
+                    highlight = new Color(49, 49, 49);     // Top/Left inner bevel
+                    shadow = new Color(30, 30, 30);         // Bottom/Right inner bevel
+                    darkShadow = new Color(20, 20, 20);     // Bottom/Right outer bevel
+                }
+            }
+        });
+
         // Make the TabbedPane transparent so the frame color shows through the empty space! ---
         tabbedPane.setOpaque(false);
         
