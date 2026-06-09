@@ -705,6 +705,9 @@ private void updateFrameTitle() {
             UIManager.put("Menu.acceleratorForeground", fg);
             UIManager.put("CheckBoxMenuItem.acceleratorForeground", fg);
             UIManager.put("RadioButtonMenuItem.acceleratorForeground", fg);
+            // --- Inject custom drawn icons to fix macOS double-checks ---
+            UIManager.put("CheckBoxMenuItem.checkIcon", new ThemeCheckBoxIcon(fg));
+            UIManager.put("RadioButtonMenuItem.checkIcon", new ThemeRadioIcon(fg));
 
         } else {
             // Restore default colors for Light Theme
@@ -719,7 +722,10 @@ private void updateFrameTitle() {
             UIManager.put("MenuItem.acceleratorForeground", Color.BLACK);
             UIManager.put("Menu.acceleratorForeground", Color.BLACK);
             UIManager.put("CheckBoxMenuItem.acceleratorForeground", Color.BLACK);
-            UIManager.put("RadioButtonMenuItem.acceleratorForeground", Color.BLACK);            
+            UIManager.put("RadioButtonMenuItem.acceleratorForeground", Color.BLACK);
+            // --- Inject black icons for Light Theme ---
+            UIManager.put("CheckBoxMenuItem.checkIcon", new ThemeCheckBoxIcon(Color.BLACK));
+            UIManager.put("RadioButtonMenuItem.checkIcon", new ThemeRadioIcon(Color.BLACK));            
         }
 
         // --- Explicitly target the JMenuBar to fill the trailing empty space ---
@@ -817,7 +823,18 @@ private void updateFrameTitle() {
                 c.setBackground(bg); 
                 c.setForeground(fg);
                 ((JComponent) c).setOpaque(true);
-
+            // --- Strip the native Mac inner border from the ScrollPane ---
+            } else if (c instanceof JScrollPane) {
+                c.setBackground(bg);
+                c.setForeground(fg);
+                ((JComponent) c).setOpaque(true);
+                
+                // Remove the bright Mac etched border completely
+                ((JScrollPane) c).setBorder(BorderFactory.createEmptyBorder());
+                
+                // Force the viewport (the area behind the text) to match the dark theme
+                ((JScrollPane) c).getViewport().setBackground(bg);
+                ((JScrollPane) c).getViewport().setForeground(fg);
             } else if (c instanceof JPanel || c instanceof JToolBar || c instanceof JTabbedPane) {
                 c.setBackground(bg);
                 c.setForeground(fg);
@@ -1811,5 +1828,52 @@ private void updateFrameTitle() {
         aboutDialog.pack();
         aboutDialog.setLocationRelativeTo(this); // Center on the main editor window
         aboutDialog.setVisible(true);
+    }
+
+    // --- CUSTOM THEME ICONS TO BYPASS MACOS RENDERING BUGS ---
+    private static class ThemeCheckBoxIcon implements javax.swing.Icon {
+        private final Color color;
+        public ThemeCheckBoxIcon(Color color) { this.color = color; }
+        
+        @Override public int getIconWidth() { return 16; }
+        @Override public int getIconHeight() { return 16; }
+        
+        @Override public void paintIcon(Component c, Graphics g, int x, int y) {
+            AbstractButton b = (AbstractButton) c;
+            // Only draw the checkmark if the menu item is actually selected
+            if (b.isSelected()) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(color);
+                g2.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                
+                // Draw a perfect geometric checkmark
+                g2.drawLine(x + 3, y + 8, x + 6, y + 12);
+                g2.drawLine(x + 6, y + 12, x + 13, y + 4);
+                g2.dispose();
+            }
+        }
+    }
+
+    private static class ThemeRadioIcon implements javax.swing.Icon {
+        private final Color color;
+        public ThemeRadioIcon(Color color) { this.color = color; }
+        
+        @Override public int getIconWidth() { return 16; }
+        @Override public int getIconHeight() { return 16; }
+        
+        @Override public void paintIcon(Component c, Graphics g, int x, int y) {
+            AbstractButton b = (AbstractButton) c;
+            // Only draw the dot if the menu item is actually selected
+            if (b.isSelected()) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(color);
+                
+                // Draw a centered radio dot
+                g2.fillOval(x + 4, y + 4, 8, 8);
+                g2.dispose();
+            }
+        }
     }
 }
