@@ -5,7 +5,9 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.nio.file.attribute.PosixFilePermission;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.*;
 import java.util.function.BiConsumer;
 import java.util.regex.Matcher;
@@ -552,6 +554,17 @@ public class LargeFileManager {
         Path tempPath = destPath.resolveSibling(destPath.getFileName() + ".tmp");
         int virtualTotalChunks = getTotalChunks();
 
+        // CAPTURE EXISTING PERMISSIONS (Before Saving)
+        Set<PosixFilePermission> originalPerms = null;
+        boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
+        if (!isWindows && destFile.exists()) {
+            try {
+                originalPerms = Files.getPosixFilePermissions(destPath);
+            } catch (Exception e) {
+                // Silently ignore if the file system doesn't support POSIX (e.g., a FAT32 USB drive)
+            }
+        }
+
         try (FileChannel destChannel = FileChannel.open(tempPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
              FileChannel srcChannel = (currentFile != null && Files.exists(currentFile.toPath())) ? FileChannel.open(currentFile.toPath(), StandardOpenOption.READ) : null) {
             
@@ -579,6 +592,15 @@ public class LargeFileManager {
             Files.move(tempPath, destPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException ioEx) {
             Files.move(tempPath, destPath, StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        // RESTORE EXISTING PERMISSIONS (After Saving)
+        if (originalPerms != null && destFile.exists()) {
+            try {
+                Files.setPosixFilePermissions(destPath, originalPerms);
+            } catch (Exception e) {
+                System.err.println("Could not restore file permissions: " + e.getMessage());
+            }
         }
 
         this.currentFile = destFile;
