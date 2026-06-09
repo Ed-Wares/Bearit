@@ -9,6 +9,7 @@ public class BearitApp {
     public static void main(String[] args) {
 
         ShortcutUtil.ensureShortcutExists();
+        AppContentExtractor.extractIfPresent();
         CommandLineParser cli = new CommandLineParser(args);
 
         // --- Handle Console-Only Actions ---
