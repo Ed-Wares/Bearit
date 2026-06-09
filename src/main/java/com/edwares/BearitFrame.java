@@ -103,6 +103,11 @@ public class BearitFrame extends JFrame {
         TransferHandler fileDropHandler = new TransferHandler() {
             @Override
             public boolean canImport(TransferSupport support) {
+                // --- Ignore clipboard pastes at the frame level so text can be pasted normally ---
+                if (!support.isDrop()) {
+                    return false;
+                }
+
                 if (support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
                     support.setDropAction(TransferHandler.COPY); 
                     return true;
@@ -679,7 +684,7 @@ private void updateFrameTitle() {
         UIManager.put("OptionPane.background", bg);
         UIManager.put("Panel.background", bg);
         UIManager.put("OptionPane.messageForeground", fg);
-
+        UIManager.put("TabbedPane.contentBorderInsets", new Insets(0, 0, 0, 0));
         // --- Force the JTabbedPane borders to use dark gray shadows ---
         if (isDark) {
             UIManager.put("TabbedPane.background", toolbarBg);
@@ -689,7 +694,6 @@ private void updateFrameTitle() {
             UIManager.put("TabbedPane.light", new Color(60, 60, 60));          // Top/Left highlight
             UIManager.put("TabbedPane.highlight", new Color(70, 70, 70));      // Inner highlight
             UIManager.put("TabbedPane.selected", bg); 
-            UIManager.put("TabbedPane.contentBorderInsets", new Insets(0, 0, 0, 0));
             
             // Heavily enforce Menu backgrounds globally just in case the OS tries to override them
             UIManager.put("MenuBar.background", menuBg);

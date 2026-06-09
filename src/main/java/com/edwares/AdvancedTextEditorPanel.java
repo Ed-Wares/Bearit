@@ -342,17 +342,36 @@ public class AdvancedTextEditorPanel extends JPanel {
 
             @Override
             public boolean importData(TransferSupport support) {
-                if (support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
-                    try {
-                        @SuppressWarnings("unchecked")
+                try {
+                    // Check if a file is in the clipboard/drop
+                    if (support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
                         java.util.List<File> files = (java.util.List<File>) support.getTransferable().getTransferData(DataFlavor.javaFileListFlavor);
-                        firePropertyChange("filesDropped", null, files);
-                        return true;
-                    } catch (Exception e) {
-                        return false;
+                        
+                        if (support.isDrop()) {
+                            // It was Dragged & Dropped! Tell BearitFrame to open the tabs.
+                            firePropertyChange("filesDropped", null, files);
+                            return true;
+                        } else {
+                            // It was Pasted! Insert the clean absolute paths as text.
+                            StringBuilder sb = new StringBuilder();
+                            for (File f : files) {
+                                sb.append(f.getAbsolutePath()).append("\n");
+                            }
+                            textArea.replaceSelection(sb.toString());
+                            return true;
+                        }
                     }
+                    
+                    // Fallback for standard text copying/pasting
+                    if (support.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+                        String text = (String) support.getTransferable().getTransferData(DataFlavor.stringFlavor);
+                        textArea.replaceSelection(text);
+                        return true;
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
-                return originalHandler != null && originalHandler.importData(support);
+                return false;
             }
 
             @Override
