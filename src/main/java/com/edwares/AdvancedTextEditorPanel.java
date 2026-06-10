@@ -933,7 +933,13 @@ public class AdvancedTextEditorPanel extends JPanel {
             c.setForeground(fg);
             ((JComponent) c).setOpaque(true);
 
-            if (c instanceof JMenuItem) {
+            // --- Catch JMenu BEFORE JMenuItem ---
+            if (c instanceof JMenu) {
+                // Apply the correct UI that knows how to handle submenus
+                ((JMenu) c).setUI(new javax.swing.plaf.basic.BasicMenuUI());
+                // Recursively theme the hidden drop-down box attached to this submenu
+                themeRightClickMenu(((JMenu) c).getPopupMenu(), theme);
+            } else if (c instanceof JMenuItem) {
                 // Strip the native OS renderer off the items
                 ((JMenuItem) c).setUI(new javax.swing.plaf.basic.BasicMenuItemUI());
             } else if (c instanceof JSeparator) {
