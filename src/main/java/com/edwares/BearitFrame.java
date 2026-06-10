@@ -829,7 +829,7 @@ private void updateFrameTitle() {
                 c.setForeground(fg);
                 ((JComponent) c).setOpaque(true);
                 // --- Strip the GTK renderer on Linux so the color actually applies! ---
-                ((JToolBar) c).setUI(new javax.swing.plaf.basic.BasicToolBarUI());
+                //((JToolBar) c).setUI(new javax.swing.plaf.basic.BasicToolBarUI());
                 // Remove the native borders but add a tiny bit of padding to keep things clean
                 ((JToolBar) c).setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 4));
             // --- Set empty space to toolbarBg, but force tabs back to bg ---
