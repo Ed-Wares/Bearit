@@ -806,7 +806,7 @@ private void updateFrameTitle() {
                         popup.setBackground(menuBg);
                         popup.setForeground(fg);
                         popup.setOpaque(true); 
-                        popup.setBorder(BorderFactory.createLineBorder(bg, 1));
+                        popup.setBorder(BorderFactory.createLineBorder(fg, 1));
                         
                         applyThemeToContainer(popup, bg, fg, menuBg, toolbarBg);
                     }
