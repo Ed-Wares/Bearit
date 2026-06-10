@@ -329,6 +329,8 @@ public class BearitFrame extends JFrame {
         } finally {
             isUpdatingTabs = false; // Disengage lock
             updateFrameTitle();
+            // --- Immediately sweep the new tab with our custom theme interceptors! ---
+            setGlobalTheme(BearitProperties.getInstance().getTheme());
         }
     }
 
@@ -807,7 +809,14 @@ private void updateFrameTitle() {
                         applyThemeToContainer(popup, bg, fg, menuBg, toolbarBg);
                     }
                 }
-            // --- Intercept and theme the JSeparators ---
+            // --- Intercept Toolbar Separators BEFORE standard Separators ---
+            } else if (c instanceof JToolBar.Separator) {
+                // Force the background to match the toolbar, not the menu!
+                c.setBackground(toolbarBg);
+                c.setForeground(bg); 
+                ((JComponent) c).setOpaque(true);
+
+            // --- Standard Menu Separators ---
             } else if (c instanceof JSeparator) {
                 c.setBackground(menuBg);
                 c.setForeground(bg); // In Swing, the separator's foreground is the actual drawn line
@@ -817,7 +826,10 @@ private void updateFrameTitle() {
                 c.setBackground(toolbarBg);
                 c.setForeground(fg);
                 ((JComponent) c).setOpaque(true);
-                
+                // --- Strip the GTK renderer on Linux so the color actually applies! ---
+                ((JToolBar) c).setUI(new javax.swing.plaf.basic.BasicToolBarUI());
+                // Remove the native borders but add a tiny bit of padding to keep things clean
+                ((JToolBar) c).setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 4));
             // --- Set empty space to toolbarBg, but force tabs back to bg ---
             } else if (c instanceof JTabbedPane) {
                 c.setBackground(bg); 
