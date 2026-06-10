@@ -29,6 +29,8 @@ public class ContextMenuInstaller {
             } else {
                 JOptionPane.showMessageDialog(parent, "Unsupported operating system.", "Install Failed", JOptionPane.ERROR_MESSAGE);
             }
+            // Prompt the user for default app takeover
+            DefaultEditorManager.promptAndSetDefault(null);
         } catch (Exception e) {
             JOptionPane.showMessageDialog(parent, "Failed to install context menu: \n" + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
             e.printStackTrace();
@@ -48,6 +50,8 @@ public class ContextMenuInstaller {
             } else {
                 JOptionPane.showMessageDialog(parent, "Unsupported operating system.", "Uninstall Failed", JOptionPane.ERROR_MESSAGE);
             }
+            // Clean up the default associations
+            DefaultEditorManager.restorePreviousDefault();
         } catch (Exception e) {
             JOptionPane.showMessageDialog(parent, "Failed to uninstall context menu: \n" + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
             e.printStackTrace();
@@ -106,7 +110,7 @@ public class ContextMenuInstaller {
     private static void installForUbuntu(Component parent, String javaPath, String jarPath) throws Exception {
         String userHome = System.getProperty("user.home");
         Path nautilusScriptsDir = Paths.get(userHome, ".local", "share", "nautilus", "scripts");
-        Path cajaScriptsDir = Paths.get(userHome, ".local", "share", "caja", "scripts");
+        Path cajaScriptsDir = Paths.get(userHome, ".config", "caja", "scripts");
         
         String scriptContent = "#!/bin/bash\n" +
                                "\"" + javaPath + "\" -jar \"" + jarPath + "\" \"$1\"\n";

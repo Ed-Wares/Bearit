@@ -304,4 +304,14 @@ public class BearitProperties {
         props.setProperty("autoFocusToolOutput", String.valueOf(focus));
         save(); // Call your existing method to write to disk
     }
+
+    // Generic getter and setter for any additional properties you want to manage
+    public void setProperty(String key, String value) {
+        props.setProperty(key, value);
+        save();
+    }
+
+    public String getProperty(String key, String defaultValue) {
+        return props.getProperty(key, defaultValue);
+    }
 }
