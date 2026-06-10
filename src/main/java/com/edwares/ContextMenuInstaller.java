@@ -143,7 +143,7 @@ public class ContextMenuInstaller {
     private static void uninstallForUbuntu(Component parent) throws Exception {
         String userHome = System.getProperty("user.home");
         Path nautilusScriptPath = Paths.get(userHome, ".local", "share", "nautilus", "scripts", "Edit with Bearit");
-        Path cajaScriptPath = Paths.get(userHome, ".local", "share", "caja", "scripts", "Edit with Bearit");
+        Path cajaScriptPath = Paths.get(userHome, ".config", "caja", "scripts", "Edit with Bearit");
         
         boolean removedNautilus = false;
         boolean removedCaja = false;
