@@ -49,6 +49,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     private final JLabel lblIndexingStatus; // Background tracking label
     private final JProgressBar chunkLoadProgressBar; 
     private final JScrollBar globalScrollBar;
+    private JPopupMenu editorContextMenu;
     
     private final LargeFileManager fileManager;
     private File activeFile = null;
@@ -415,7 +416,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         });
 
         // --- Generate the popup menu once for reuse ---
-        JPopupMenu editorContextMenu = createContextMenu();
+        editorContextMenu = createContextMenu();
 
         // Mouse Listeners (Updated for Popup Menu & Block Selection) ---
         textArea.addMouseListener(new MouseAdapter() {
@@ -905,7 +906,154 @@ public class AdvancedTextEditorPanel extends JPanel {
             lineNumberPanel.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, Color.LIGHT_GRAY));
         }
         lineNumberPanel.repaint();
+        themeRightClickMenu(editorContextMenu, theme);
         textArea.repaint();
+    }
+
+    private void themeRightClickMenu(JPopupMenu popupMenu, String theme) {
+        if (popupMenu == null) return;
+        
+        boolean isDark = "Dark".equals(theme);
+        
+        // Define the exact same colors used in your BearitFrame top menus
+        Color bg = isDark ? new Color(50, 50, 50) : new Color(240, 240, 240);
+        Color fg = isDark ? new Color(200, 200, 200) : Color.BLACK;
+        Color menuBg = isDark ? new Color(75, 75, 75) : new Color(245, 245, 245);
+        Color borderColor = isDark ? new Color(100, 100, 100) : new Color(200, 200, 200);
+
+        // Frame the main popup box with the exact same border as the top menus
+        popupMenu.setBackground(menuBg);
+        popupMenu.setForeground(fg);
+        popupMenu.setOpaque(true);
+        popupMenu.setBorder(BorderFactory.createLineBorder(borderColor, 1));
+
+        // Loop through all the menu items (Copy, Paste, etc.)
+        for (Component c : popupMenu.getComponents()) {
+            c.setBackground(menuBg);
+            c.setForeground(fg);
+            ((JComponent) c).setOpaque(true);
+
+            if (c instanceof JMenuItem) {
+                // Strip the native OS renderer off the items
+                ((JMenuItem) c).setUI(new javax.swing.plaf.basic.BasicMenuItemUI());
+            } else if (c instanceof JSeparator) {
+                // Style the separators to match
+                c.setForeground(bg); // The drawn line
+                c.setBackground(menuBg); // The padding around the line
+            }
+        }
+    }
+
+    private void themeDialog(JDialog dialog, String theme) {
+        if (dialog == null) return;
+        
+        boolean isDark = "Dark".equals(theme);
+        
+        // Define the exact same colors used in your BearitFrame top menus
+        Color bg = isDark ? new Color(50, 50, 50) : new Color(240, 240, 240);
+        Color fg = isDark ? new Color(200, 200, 200) : Color.BLACK;
+        Color borderColor = isDark ? new Color(100, 100, 100) : new Color(200, 200, 200);
+        Color inputBg = isDark ? new Color(40, 40, 40) : Color.WHITE; 
+        Color buttonBg = isDark ? new Color(85, 85, 85) : new Color(225, 225, 225); 
+
+        // Set the base background
+        dialog.getContentPane().setBackground(bg);
+
+        // Kick off the recursive sweep
+        sweepDialogComponents(dialog.getContentPane(), bg, fg, borderColor, inputBg, buttonBg);
+    }
+
+    private void sweepDialogComponents(Container container, Color bg, Color fg, Color borderColor, Color inputBg, Color buttonBg) {
+        for (Component c : container.getComponents()) {
+            
+            // --- If it's a panel, theme it AND dive inside it ---
+            if (c instanceof JPanel) {
+                c.setBackground(bg);
+                c.setForeground(fg);
+                ((JPanel) c).setOpaque(true);
+                sweepDialogComponents((Container) c, bg, fg, borderColor, inputBg, buttonBg);
+            }
+            // --- Text Fields ---
+            else if (c instanceof JTextField) {
+                c.setBackground(inputBg);
+                c.setForeground(fg);
+                ((JTextField) c).setCaretColor(fg);
+                ((JTextField) c).setBorder(BorderFactory.createCompoundBorder(
+                        BorderFactory.createLineBorder(borderColor, 1),
+                        BorderFactory.createEmptyBorder(2, 5, 2, 5) 
+                ));
+            }
+            // --- Buttons ---
+            else if (c instanceof JButton) {
+                c.setBackground(buttonBg);
+                c.setForeground(fg);
+                ((JComponent) c).setOpaque(true);
+                ((JButton) c).setUI(new javax.swing.plaf.basic.BasicButtonUI());
+                ((JButton) c).setBorder(BorderFactory.createCompoundBorder(
+                        BorderFactory.createLineBorder(borderColor, 1),
+                        BorderFactory.createEmptyBorder(4, 10, 4, 10)
+                ));
+            }
+            // --- Combo Boxes (Drop-downs) ---
+            else if (c instanceof JComboBox) {
+                JComboBox<?> combo = (JComboBox<?>) c;
+                combo.setBackground(inputBg);
+                combo.setForeground(fg);
+                combo.setUI(new javax.swing.plaf.basic.BasicComboBoxUI());
+                combo.setBorder(BorderFactory.createLineBorder(borderColor, 1));
+
+                // --- Theme the hidden text field if it is editable ---
+                if (combo.isEditable()) {
+                    Component editor = combo.getEditor().getEditorComponent();
+                    editor.setBackground(inputBg);
+                    editor.setForeground(fg);
+                    // Ensure the typing cursor is visible in dark mode
+                    if (editor instanceof JTextField) {
+                        ((JTextField) editor).setCaretColor(fg);
+                        ((JTextField) editor).setBorder(BorderFactory.createEmptyBorder(2, 5, 2, 5));
+                    }
+                }
+                // --- Theme the drop-down list items ---
+                combo.setRenderer(new DefaultListCellRenderer() {
+                    @Override
+                    public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
+                        Component renderer = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+                        
+                        // Theme the highlighted item vs the standard items
+                        if (isSelected) {
+                            renderer.setBackground(buttonBg); // Use button color for the hover highlight
+                            renderer.setForeground(fg);
+                        } else {
+                            renderer.setBackground(inputBg);
+                            renderer.setForeground(fg);
+                        }
+                        return renderer;
+                    }
+                });
+            }
+            // --- Labels and Checkboxes ---
+            else if (c instanceof JLabel || c instanceof JCheckBox) {
+                c.setForeground(fg);
+                ((JComponent) c).setOpaque(false); 
+                
+                if (c instanceof JCheckBox) {
+                    ((JCheckBox) c).setContentAreaFilled(false);
+                }
+            }
+            // --- Catch ALL other containers (JOptionPane, Box, JPanel) ---
+            else if (c instanceof Container) {
+                c.setBackground(bg);
+                c.setForeground(fg);
+                
+                // JComponent provides the setOpaque method
+                if (c instanceof JComponent) {
+                    ((JComponent) c).setOpaque(true);
+                }
+                
+                // Recursively dig down into this container to find more inputs/buttons
+                sweepDialogComponents((Container) c, bg, fg, borderColor, inputBg, buttonBg);
+            }            
+        }
     }
 
     public boolean hasUnsavedChanges() {
@@ -956,7 +1104,25 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     public void showGotoLineDialog() {
-        String input = JOptionPane.showInputDialog(this, "Enter Destination Line Number:", "Go To Line", JOptionPane.QUESTION_MESSAGE);
+        //String input = JOptionPane.showInputDialog(this, "Enter Destination Line Number:", "Go To Line", JOptionPane.QUESTION_MESSAGE);
+
+        // Manually construct the OptionPane to ask for input
+        JOptionPane pane = new JOptionPane("Enter Destination Line Number:", JOptionPane.QUESTION_MESSAGE);
+        pane.setWantsInput(true); // This tells it to render a JTextField
+        // Generate the hidden dialog window from the pane
+        JDialog dialog = pane.createDialog(this, "Go To Line");
+        // --- Sweep the generated dialog with your custom theme! ---
+        themeDialog(dialog, currentTheme);
+        // Show the dialog (this will block the thread just like the old method)
+        dialog.setVisible(true);
+        // Retrieve the value after the user clicks OK or closes the window
+        Object value = pane.getInputValue();
+        String input = null;
+        
+        // Ensure the user actually typed something and didn't just hit Cancel
+        if (value != null && value != JOptionPane.UNINITIALIZED_VALUE) {
+            input = value.toString();
+        }      
         if (input != null && !input.trim().isEmpty()) {
             try {
                 long targetLine = Long.parseLong(input.trim());
@@ -2054,6 +2220,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
 
         searchDialog.setTitle("Search & Replace - " + currentTitle);
+        themeDialog(searchDialog, currentTheme);
+        searchDialog.pack();
         searchDialog.setVisible(true);
         comboSearch.requestFocus();
         Component editorComp = comboSearch.getEditor().getEditorComponent();
