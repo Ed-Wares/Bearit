@@ -950,7 +950,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
     }
 
-    private void themeDialog(JDialog dialog, String theme) {
+    public static void themeDialog(JDialog dialog, String theme) {
         if (dialog == null) return;
         
         boolean isDark = "Dark".equals(theme);
@@ -969,7 +969,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         sweepDialogComponents(dialog.getContentPane(), bg, fg, borderColor, inputBg, buttonBg);
     }
 
-    private void sweepDialogComponents(Container container, Color bg, Color fg, Color borderColor, Color inputBg, Color buttonBg) {
+    public static  void sweepDialogComponents(Container container, Color bg, Color fg, Color borderColor, Color inputBg, Color buttonBg) {
         for (Component c : container.getComponents()) {
             
             // --- If it's a panel, theme it AND dive inside it ---

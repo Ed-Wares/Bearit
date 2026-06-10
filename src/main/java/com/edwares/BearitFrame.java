@@ -257,8 +257,9 @@ public class BearitFrame extends JFrame {
             btnClose.setContentAreaFilled(false);
             
             btnClose.addMouseListener(new MouseAdapter() {
-                public void mouseEntered(MouseEvent evt) { btnClose.setForeground(Color.RED); }
-                public void mouseExited(MouseEvent evt) { btnClose.setForeground(UIManager.getColor("Button.foreground")); }
+                private Color originalColor = btnClose.getForeground();
+                public void mouseEntered(MouseEvent evt) { originalColor = btnClose.getForeground(); btnClose.setForeground(Color.RED); }
+                public void mouseExited(MouseEvent evt) { btnClose.setForeground(originalColor); }
             });
             
             btnClose.addActionListener(e -> closeTab(editor));
@@ -852,9 +853,12 @@ private void updateFrameTitle() {
             } else if (c instanceof JPanel || c instanceof JToolBar || c instanceof JTabbedPane) {
                 c.setBackground(bg);
                 c.setForeground(fg);
-            } else if (c instanceof JLabel) {
-                if (!c.getCursor().equals(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR))) {
-                    c.setForeground(fg);
+            } else if (c instanceof JLabel || c instanceof JButton) {
+                c.setForeground(fg);
+                // If you are using a JButton for the 'x', ensure its background doesn't draw
+                if (c instanceof JButton) {
+                    ((JButton) c).setContentAreaFilled(false);
+                    ((JButton) c).setOpaque(false);
                 }
             }
             
@@ -1200,7 +1204,19 @@ private void updateFrameTitle() {
     // --- UI Setup ---
     // Creates the main toolbar with icons, tooltips, and action listeners
     private JToolBar createToolBar() {
-        JToolBar toolBar = new JToolBar();
+       // Create the toolbar and force it to ignore the native OS gradient
+        JToolBar toolBar = new JToolBar() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                // Paint a flat, solid block of color using the current background theme
+                g.setColor(getBackground());
+                g.fillRect(0, 0, getWidth(), getHeight());
+                
+                // Note: We intentionally DO NOT call super.paintComponent(g) 
+                // because that is what triggers Ubuntu to draw its native gradient over our theme!
+            }
+        };
+        // Highly recommended for modern flat themes: lock the toolbar in place
         toolBar.setFloatable(false);
         toolBar.setMargin(new Insets(2, 5, 2, 5));
 
@@ -1839,6 +1855,7 @@ private void updateFrameTitle() {
         aboutDialog.add(infoPanel, BorderLayout.CENTER);
         aboutDialog.add(buttonPanel, BorderLayout.SOUTH);
         
+        AdvancedTextEditorPanel.themeDialog(aboutDialog, BearitProperties.getInstance().getTheme()); // Apply current theme to the dialog and all its children
         aboutDialog.pack();
         aboutDialog.setLocationRelativeTo(this); // Center on the main editor window
         aboutDialog.setVisible(true);
