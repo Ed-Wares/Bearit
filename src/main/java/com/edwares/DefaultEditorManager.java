@@ -16,7 +16,14 @@ public class DefaultEditorManager {
 
         // macOS explicitly blocks programmatic default app changes.
         if (os.contains("mac")) {
-            JOptionPane.showMessageDialog(parentFrame,
+            // JOptionPane.showMessageDialog(parentFrame,
+            //     "macOS security prevents automatic default app changes.\n\n" +
+            //     "To set Bearit as default:\n" +
+            //     "1. Right-click any .txt file and select 'Get Info'\n" +
+            //     "2. Change 'Open with' to Bearit\n" +
+            //     "3. Click 'Change All...'",
+            //     "macOS Security Restriction", JOptionPane.INFORMATION_MESSAGE);
+            DialogUtil.showMessageDialog(parentFrame,
                 "macOS security prevents automatic default app changes.\n\n" +
                 "To set Bearit as default:\n" +
                 "1. Right-click any .txt file and select 'Get Info'\n" +
@@ -26,11 +33,8 @@ public class DefaultEditorManager {
             return;
         }
 
-        int choice = JOptionPane.showConfirmDialog(parentFrame,
-                "Would you like to set Bearit as your default text editor?",
-                "Set Default Editor",
-                JOptionPane.YES_NO_OPTION);
-
+        //int choice = JOptionPane.showConfirmDialog(parentFrame, "Would you like to set Bearit as your default text editor?", "Set Default Editor", JOptionPane.YES_NO_OPTION);
+        int choice = DialogUtil.showConfirmDialog(parentFrame, "Would you like to set Bearit as your default text editor?", "Set Default Editor", JOptionPane.YES_NO_OPTION);
         if (choice == JOptionPane.YES_OPTION) {
             if (os.contains("linux") || os.contains("nix")) {
                 setLinuxDefault();
@@ -92,7 +96,7 @@ public class DefaultEditorManager {
             // Construct the command string: "C:\Actual\Path\Bearit.exe" "%1"
             // or construct the command string: "javaw.exe" -jar "C:\Actual\Path\Bearit.jar" "%1"
             String commandString = "\"" + currentExePath + "\" \"-jar " + jarPath + "\" \"%1\"";
-            JOptionPane.showMessageDialog(null, "commandString: " + commandString);
+            //JOptionPane.showMessageDialog(null, "commandString: " + commandString);
             // Set Bearit as the default text handler
             // Note: Windows 11 may still intercept this and show a "How do you want to open this file?" prompt
             executeCommand("reg", "add", "HKCU\\Software\\Classes\\.txt", "/ve", "/d", "Bearit.txt", "/f");

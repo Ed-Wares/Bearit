@@ -3,7 +3,6 @@ package com.edwares;
 import javax.swing.*;
 import javax.swing.event.MenuEvent;
 import javax.swing.event.MenuListener;
-import javax.swing.plaf.ColorUIResource;
 
 import java.awt.*;
 import java.awt.datatransfer.Clipboard;
@@ -130,7 +129,8 @@ public class BearitFrame extends JFrame {
                     }
                     return true;
                 } catch (Exception e) {
-                    JOptionPane.showMessageDialog(BearitFrame.this, "Failed to open dropped files: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                    //JOptionPane.showMessageDialog(BearitFrame.this, "Failed to open dropped files: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                    DialogUtil.showMessageDialog(BearitFrame.this, "Failed to open dropped files: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
                     return false;
                 }
             }
@@ -397,10 +397,12 @@ public class BearitFrame extends JFrame {
                             Desktop.getDesktop().open(targetFile.getParentFile());
                         }
                     } else {
-                        JOptionPane.showMessageDialog(BearitFrame.this, "Desktop integration is not supported on this platform.", "Error", JOptionPane.ERROR_MESSAGE);
+                        //JOptionPane.showMessageDialog(BearitFrame.this, "Desktop integration is not supported on this platform.", "Error", JOptionPane.ERROR_MESSAGE);
+                        DialogUtil.showMessageDialog(BearitFrame.this, "Desktop integration is not supported on this platform.", "Error", JOptionPane.ERROR_MESSAGE);
                     }
                 } catch (Exception ex) {
-                    JOptionPane.showMessageDialog(BearitFrame.this, "Could not open file explorer: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                    //JOptionPane.showMessageDialog(BearitFrame.this, "Could not open file explorer: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                    DialogUtil.showMessageDialog(BearitFrame.this, "Could not open file explorer: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
                 }
             });
         }
@@ -434,10 +436,8 @@ public class BearitFrame extends JFrame {
             // CRITICAL FIX: Select by index so the TabbedPane doesn't crash if it's a Hex Wrapper
             tabbedPane.setSelectedIndex(targetIdx); 
             
-            int opt = JOptionPane.showConfirmDialog(this, 
-                "Save changes to " + editor.getCurrentTitle() + "?", 
-                "Unsaved Changes", 
-                JOptionPane.YES_NO_CANCEL_OPTION);
+            //int opt = JOptionPane.showConfirmDialog(this, "Save changes to " + editor.getCurrentTitle() + "?", "Unsaved Changes", JOptionPane.YES_NO_CANCEL_OPTION);
+            int opt = DialogUtil.showConfirmDialog(this, "Save changes to " + editor.getCurrentTitle() + "?", "Unsaved Changes", JOptionPane.YES_NO_CANCEL_OPTION);
             
             if (opt == JOptionPane.CANCEL_OPTION || opt == JOptionPane.CLOSED_OPTION) {
                 return; // Abort closing
@@ -445,7 +445,8 @@ public class BearitFrame extends JFrame {
             if (opt == JOptionPane.YES_OPTION) {
                 if (!performSaveFor(editor, true)) {
                     // If it failed to save, abort the exit
-                    JOptionPane.showMessageDialog(this, "Could not save " + editor.getCurrentTitle() + ". Aborting.");
+                    //JOptionPane.showMessageDialog(this, "Could not save " + editor.getCurrentTitle() + ". Aborting.");
+                    DialogUtil.showMessageDialog(this, "Could not save " + editor.getCurrentTitle() + ". Aborting.", "Save Failed", JOptionPane.ERROR_MESSAGE);
                     return ; 
                 }
             }
@@ -478,10 +479,8 @@ public class BearitFrame extends JFrame {
                 // If it's dirty, we MUST resolve it
                 if (editor.hasUnsavedChanges()) {
                     tabbedPane.setSelectedComponent(editor);
-                    int opt = JOptionPane.showConfirmDialog(this, 
-                        "Save changes to " + editor.getCurrentTitle() + "?", 
-                        "Unsaved Changes", 
-                        JOptionPane.YES_NO_CANCEL_OPTION);
+                    //int opt = JOptionPane.showConfirmDialog(this, "Save changes to " + editor.getCurrentTitle() + "?", "Unsaved Changes", JOptionPane.YES_NO_CANCEL_OPTION);
+                    int opt = DialogUtil.showConfirmDialog(this, "Save changes to " + editor.getCurrentTitle() + "?", "Unsaved Changes", JOptionPane.YES_NO_CANCEL_OPTION);
                     
                     if (opt == JOptionPane.CANCEL_OPTION || opt == JOptionPane.CLOSED_OPTION) {
                         return false; 
@@ -490,7 +489,8 @@ public class BearitFrame extends JFrame {
                         // Use synchronous save for shutdown ---
                         if (!performSaveFor(editor, true)) {
                             // If it failed to save, abort the exit
-                            JOptionPane.showMessageDialog(this, "Could not save " + editor.getCurrentTitle() + ". Aborting exit.");
+                            //JOptionPane.showMessageDialog(this, "Could not save " + editor.getCurrentTitle() + ". Aborting exit.");
+                            DialogUtil.showMessageDialog(this, "Could not save " + editor.getCurrentTitle() + ". Aborting exit.", "Save Failed", JOptionPane.ERROR_MESSAGE);
                             return false; 
                         }
                     }
@@ -576,12 +576,9 @@ private void updateFrameTitle() {
             
             // Safety check to prevent accidental data loss
             if (editor.hasUnsavedChanges()) {
-                int result = JOptionPane.showConfirmDialog(this,
-                    "You have unsaved changes. Reloading will discard them.\nAre you sure you want to reload?",
-                    "Confirm Reload",
-                    JOptionPane.YES_NO_OPTION,
-                    JOptionPane.WARNING_MESSAGE);
-                
+                //int result = JOptionPane.showConfirmDialog(this, "You have unsaved changes. Reloading will discard them.\nAre you sure you want to reload?", "Confirm Reload", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+                int result = DialogUtil.showConfirmDialog(this, "You have unsaved changes. Reloading will discard them.\nAre you sure you want to reload?", "Confirm Reload", JOptionPane.YES_NO_OPTION);
+
                 if (result != JOptionPane.YES_OPTION) {
                     return; // User canceled the reload
                 }
@@ -674,6 +671,7 @@ private void updateFrameTitle() {
     
     private void setGlobalTheme(String theme) {
         BearitProperties.getInstance().setTheme(theme);
+        DialogUtil.updateTheme(theme); // Update the static theme reference for dialogs
         boolean isDark = "Dark".equals(theme);
 
         Color bg = isDark ? new Color(50, 50, 50) : new Color(240, 240, 240);
@@ -889,10 +887,8 @@ private void updateFrameTitle() {
     }
 
     private void performGenerateTestFile() {
-        String input = JOptionPane.showInputDialog(this, 
-                "Enter target test file size in Gigabytes (e.g., 1.5):", 
-                "Generate Test File", 
-                JOptionPane.QUESTION_MESSAGE);
+        //String input = JOptionPane.showInputDialog(this, "Enter target test file size in Gigabytes (e.g., 1.5):", "Generate Test File", JOptionPane.QUESTION_MESSAGE);
+        String input = DialogUtil.showInputDialog(this, "Enter target test file size in Gigabytes (e.g., 1.5):", "Generate Test File");
                 
         if (input != null && !input.trim().isEmpty()) {
             try {
@@ -960,16 +956,14 @@ private void updateFrameTitle() {
                                     return;
                                 }
                                 if (result.exists()) {
-                                    JOptionPane.showMessageDialog(BearitFrame.this, 
-                                        "Successfully generated test file:\n" + result.getAbsolutePath(), 
-                                        "Generation Complete", JOptionPane.INFORMATION_MESSAGE);
+                                    //JOptionPane.showMessageDialog(BearitFrame.this, "Successfully generated test file:\n" + result.getAbsolutePath(), "Generation Complete", JOptionPane.INFORMATION_MESSAGE);
+                                    DialogUtil.showMessageDialog(BearitFrame.this, "Successfully generated test file:\n" + result.getAbsolutePath(), "Generation Complete", JOptionPane.INFORMATION_MESSAGE);
                                     openFileInTab(result);
                                 }
                             } catch (Exception ex) {
                                 destFile.delete(); 
-                                JOptionPane.showMessageDialog(BearitFrame.this, 
-                                    "Failed to generate test file.\nError Details: " + ex.getMessage(), 
-                                    "Generation Error", JOptionPane.ERROR_MESSAGE);
+                                //JOptionPane.showMessageDialog(BearitFrame.this, "Failed to generate test file.\nError Details: " + ex.getMessage(), "Generation Error", JOptionPane.ERROR_MESSAGE);
+                                DialogUtil.showMessageDialog(BearitFrame.this, "Failed to generate test file.\nError Details: " + ex.getMessage(), "Generation Error", JOptionPane.ERROR_MESSAGE);
                             }
                         }
                     };
@@ -983,7 +977,8 @@ private void updateFrameTitle() {
                     progressDialog.setVisible(true); 
                 }
             } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(this, "Please enter a valid positive number for the GB size.", "Invalid Input", JOptionPane.ERROR_MESSAGE);
+                //JOptionPane.showMessageDialog(this, "Please enter a valid positive number for the GB size.", "Invalid Input", JOptionPane.ERROR_MESSAGE);
+                DialogUtil.showMessageDialog(this, "Please enter a valid positive number for the GB size.", "Invalid Input", JOptionPane.ERROR_MESSAGE);
             }
         }
     }
@@ -1021,10 +1016,9 @@ private void updateFrameTitle() {
             
             // Keep the Hex-to-Text prompt as a safety net, or remove it similarly if you prefer!
             if (hexWrapper.isDirty()) {
-                int result = JOptionPane.showConfirmDialog(this, 
-                    "Apply your hex edits to the document before switching back to text mode?\n\n(Select 'No' to discard your hex edits)", 
-                    "Apply Hex Edits", JOptionPane.YES_NO_CANCEL_OPTION);
-                    
+                //int result = JOptionPane.showConfirmDialog(this, "Apply your hex edits to the document before switching back to text mode?\n\n(Select 'No' to discard your hex edits)", "Apply Hex Edits", JOptionPane.YES_NO_CANCEL_OPTION);
+                int result = DialogUtil.showConfirmDialog(this, "Apply your hex edits to the document before switching back to text mode?\n\n(Select 'No' to discard your hex edits)", "Apply Hex Edits", JOptionPane.YES_NO_CANCEL_OPTION);
+
                 if (result == JOptionPane.CANCEL_OPTION || result == JOptionPane.CLOSED_OPTION) {
                     syncHexToggles(true); // Revert UI
                     return; 
@@ -1093,7 +1087,8 @@ private void updateFrameTitle() {
         File activeFile = activeEditor != null ? activeEditor.getActiveFile() : null;
 
         if (rawCommand.contains("%f") && activeFile == null) {
-            JOptionPane.showMessageDialog(this, "This tool requires a saved file to use '%f'. Please save the current tab to disk first.", "Tool Error", JOptionPane.ERROR_MESSAGE);
+            //JOptionPane.showMessageDialog(this, "This tool requires a saved file to use '%f'. Please save the current tab to disk first.", "Tool Error", JOptionPane.ERROR_MESSAGE);
+            DialogUtil.showMessageDialog(this, "This tool requires a saved file to use '%f'. Please save the current tab to disk first.", "Tool Error", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
@@ -1478,8 +1473,8 @@ private void updateFrameTitle() {
                             if (f.exists()) {
                                 openFileInTab(f);
                             } else {
-                                JOptionPane.showMessageDialog(BearitFrame.this, 
-                                    "File not found: " + path, "Error", JOptionPane.ERROR_MESSAGE);
+                                //JOptionPane.showMessageDialog(BearitFrame.this, "File not found: " + path, "Error", JOptionPane.ERROR_MESSAGE);
+                                DialogUtil.showMessageDialog(BearitFrame.this, "File not found: " + path, "Error", JOptionPane.ERROR_MESSAGE);
                             }
                         });
                         recentMenu.add(pathItem);
@@ -1855,7 +1850,7 @@ private void updateFrameTitle() {
         aboutDialog.add(infoPanel, BorderLayout.CENTER);
         aboutDialog.add(buttonPanel, BorderLayout.SOUTH);
         
-        AdvancedTextEditorPanel.themeDialog(aboutDialog, BearitProperties.getInstance().getTheme()); // Apply current theme to the dialog and all its children
+        DialogUtil.themeDialog(aboutDialog); // Apply current theme to the dialog and all its children
         aboutDialog.pack();
         aboutDialog.setLocationRelativeTo(this); // Center on the main editor window
         aboutDialog.setVisible(true);

@@ -38,7 +38,8 @@ public class BearitTextHexWrapper extends JPanel {
                         return;
                     }
                 }
-                JOptionPane.showMessageDialog(this, "Address is outside the bounds of the file.");
+                //JOptionPane.showMessageDialog(this, "Address is outside the bounds of the file.");
+                DialogUtil.showMessageDialog(this, "Address is outside the bounds of the file.", "Invalid Address", JOptionPane.INFORMATION_MESSAGE);
             } catch (Exception e) {
                 e.printStackTrace();
             }

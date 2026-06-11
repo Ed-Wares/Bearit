@@ -429,7 +429,8 @@ public class HexEditorPanel extends JPanel {
                 }
             }
         } catch (NumberFormatException ex) {
-            JOptionPane.showMessageDialog(this, "Invalid Hex Address");
+            //JOptionPane.showMessageDialog(this, "Invalid Hex Address");
+            DialogUtil.showMessageDialog(this, "Invalid Hex Address", "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 

@@ -113,6 +113,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     private JDialog searchDialog;
     private JComboBox<String> comboSearch;
     private JComboBox<String> comboReplace;
+    private JComboBox<String> lastActiveCombo = null;    
     private JCheckBox chkCaseInsensitive;
     private JCheckBox chkRegex;
     private JButton btnFindPrev;
@@ -906,161 +907,10 @@ public class AdvancedTextEditorPanel extends JPanel {
             lineNumberPanel.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, Color.LIGHT_GRAY));
         }
         lineNumberPanel.repaint();
-        themeRightClickMenu(editorContextMenu, theme);
+        DialogUtil.themePopupMenu(editorContextMenu);
         textArea.repaint();
     }
 
-    private void themeRightClickMenu(JPopupMenu popupMenu, String theme) {
-        if (popupMenu == null) return;
-        
-        boolean isDark = "Dark".equals(theme);
-        
-        // Define the exact same colors used in your BearitFrame top menus
-        Color bg = isDark ? new Color(50, 50, 50) : new Color(240, 240, 240);
-        Color fg = isDark ? new Color(200, 200, 200) : Color.BLACK;
-        Color menuBg = isDark ? new Color(75, 75, 75) : new Color(245, 245, 245);
-        Color borderColor = isDark ? new Color(100, 100, 100) : new Color(200, 200, 200);
-
-        // Frame the main popup box with the exact same border as the top menus
-        popupMenu.setBackground(menuBg);
-        popupMenu.setForeground(fg);
-        popupMenu.setOpaque(true);
-        popupMenu.setBorder(BorderFactory.createLineBorder(borderColor, 1));
-
-        // Loop through all the menu items (Copy, Paste, etc.)
-        for (Component c : popupMenu.getComponents()) {
-            c.setBackground(menuBg);
-            c.setForeground(fg);
-            ((JComponent) c).setOpaque(true);
-
-            // --- Catch JMenu BEFORE JMenuItem ---
-            if (c instanceof JMenu) {
-                // Apply the correct UI that knows how to handle submenus
-                ((JMenu) c).setUI(new javax.swing.plaf.basic.BasicMenuUI());
-                // Recursively theme the hidden drop-down box attached to this submenu
-                themeRightClickMenu(((JMenu) c).getPopupMenu(), theme);
-            } else if (c instanceof JMenuItem) {
-                // Strip the native OS renderer off the items
-                ((JMenuItem) c).setUI(new javax.swing.plaf.basic.BasicMenuItemUI());
-            } else if (c instanceof JSeparator) {
-                // Style the separators to match
-                c.setForeground(bg); // The drawn line
-                c.setBackground(menuBg); // The padding around the line
-            }
-        }
-    }
-
-    public static void themeDialog(JDialog dialog, String theme) {
-        if (dialog == null) return;
-        
-        boolean isDark = "Dark".equals(theme);
-        
-        // Define the exact same colors used in your BearitFrame top menus
-        Color bg = isDark ? new Color(50, 50, 50) : new Color(240, 240, 240);
-        Color fg = isDark ? new Color(200, 200, 200) : Color.BLACK;
-        Color borderColor = isDark ? new Color(100, 100, 100) : new Color(200, 200, 200);
-        Color inputBg = isDark ? new Color(40, 40, 40) : Color.WHITE; 
-        Color buttonBg = isDark ? new Color(85, 85, 85) : new Color(225, 225, 225); 
-
-        // Set the base background
-        dialog.getContentPane().setBackground(bg);
-
-        // Kick off the recursive sweep
-        sweepDialogComponents(dialog.getContentPane(), bg, fg, borderColor, inputBg, buttonBg);
-    }
-
-    public static  void sweepDialogComponents(Container container, Color bg, Color fg, Color borderColor, Color inputBg, Color buttonBg) {
-        for (Component c : container.getComponents()) {
-            
-            // --- If it's a panel, theme it AND dive inside it ---
-            if (c instanceof JPanel) {
-                c.setBackground(bg);
-                c.setForeground(fg);
-                ((JPanel) c).setOpaque(true);
-                sweepDialogComponents((Container) c, bg, fg, borderColor, inputBg, buttonBg);
-            }
-            // --- Text Fields ---
-            else if (c instanceof JTextField) {
-                c.setBackground(inputBg);
-                c.setForeground(fg);
-                ((JTextField) c).setCaretColor(fg);
-                ((JTextField) c).setBorder(BorderFactory.createCompoundBorder(
-                        BorderFactory.createLineBorder(borderColor, 1),
-                        BorderFactory.createEmptyBorder(2, 5, 2, 5) 
-                ));
-            }
-            // --- Buttons ---
-            else if (c instanceof JButton) {
-                c.setBackground(buttonBg);
-                c.setForeground(fg);
-                ((JComponent) c).setOpaque(true);
-                ((JButton) c).setUI(new javax.swing.plaf.basic.BasicButtonUI());
-                ((JButton) c).setBorder(BorderFactory.createCompoundBorder(
-                        BorderFactory.createLineBorder(borderColor, 1),
-                        BorderFactory.createEmptyBorder(4, 10, 4, 10)
-                ));
-            }
-            // --- Combo Boxes (Drop-downs) ---
-            else if (c instanceof JComboBox) {
-                JComboBox<?> combo = (JComboBox<?>) c;
-                combo.setBackground(inputBg);
-                combo.setForeground(fg);
-                combo.setUI(new javax.swing.plaf.basic.BasicComboBoxUI());
-                combo.setBorder(BorderFactory.createLineBorder(borderColor, 1));
-
-                // --- Theme the hidden text field if it is editable ---
-                if (combo.isEditable()) {
-                    Component editor = combo.getEditor().getEditorComponent();
-                    editor.setBackground(inputBg);
-                    editor.setForeground(fg);
-                    // Ensure the typing cursor is visible in dark mode
-                    if (editor instanceof JTextField) {
-                        ((JTextField) editor).setCaretColor(fg);
-                        ((JTextField) editor).setBorder(BorderFactory.createEmptyBorder(2, 5, 2, 5));
-                    }
-                }
-                // --- Theme the drop-down list items ---
-                combo.setRenderer(new DefaultListCellRenderer() {
-                    @Override
-                    public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
-                        Component renderer = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
-                        
-                        // Theme the highlighted item vs the standard items
-                        if (isSelected) {
-                            renderer.setBackground(buttonBg); // Use button color for the hover highlight
-                            renderer.setForeground(fg);
-                        } else {
-                            renderer.setBackground(inputBg);
-                            renderer.setForeground(fg);
-                        }
-                        return renderer;
-                    }
-                });
-            }
-            // --- Labels and Checkboxes ---
-            else if (c instanceof JLabel || c instanceof JCheckBox) {
-                c.setForeground(fg);
-                ((JComponent) c).setOpaque(false); 
-                
-                if (c instanceof JCheckBox) {
-                    ((JCheckBox) c).setContentAreaFilled(false);
-                }
-            }
-            // --- Catch ALL other containers (JOptionPane, Box, JPanel) ---
-            else if (c instanceof Container) {
-                c.setBackground(bg);
-                c.setForeground(fg);
-                
-                // JComponent provides the setOpaque method
-                if (c instanceof JComponent) {
-                    ((JComponent) c).setOpaque(true);
-                }
-                
-                // Recursively dig down into this container to find more inputs/buttons
-                sweepDialogComponents((Container) c, bg, fg, borderColor, inputBg, buttonBg);
-            }            
-        }
-    }
 
     public boolean hasUnsavedChanges() {
         return hasUnsavedChanges;
@@ -1111,24 +961,7 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     public void showGotoLineDialog() {
         //String input = JOptionPane.showInputDialog(this, "Enter Destination Line Number:", "Go To Line", JOptionPane.QUESTION_MESSAGE);
-
-        // Manually construct the OptionPane to ask for input
-        JOptionPane pane = new JOptionPane("Enter Destination Line Number:", JOptionPane.QUESTION_MESSAGE);
-        pane.setWantsInput(true); // This tells it to render a JTextField
-        // Generate the hidden dialog window from the pane
-        JDialog dialog = pane.createDialog(this, "Go To Line");
-        // --- Sweep the generated dialog with your custom theme! ---
-        themeDialog(dialog, currentTheme);
-        // Show the dialog (this will block the thread just like the old method)
-        dialog.setVisible(true);
-        // Retrieve the value after the user clicks OK or closes the window
-        Object value = pane.getInputValue();
-        String input = null;
-        
-        // Ensure the user actually typed something and didn't just hit Cancel
-        if (value != null && value != JOptionPane.UNINITIALIZED_VALUE) {
-            input = value.toString();
-        }      
+        String input = DialogUtil.showInputDialog(getDialogParent(), "Enter Destination Line Number:", "Go To Line");
         if (input != null && !input.trim().isEmpty()) {
             try {
                 long targetLine = Long.parseLong(input.trim());
@@ -1162,7 +995,8 @@ public class AdvancedTextEditorPanel extends JPanel {
                     }
                 }.execute();
             } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(this, "Please enter a valid numeric line value.", "Invalid Input", JOptionPane.ERROR_MESSAGE);
+                //JOptionPane.showMessageDialog(this, "Please enter a valid numeric line value.", "Invalid Input", JOptionPane.ERROR_MESSAGE);
+                DialogUtil.showMessageDialog(this, "Please enter a valid numeric line value.", "Invalid Input", JOptionPane.ERROR_MESSAGE);
             }
         }
     }
@@ -1197,6 +1031,19 @@ public class AdvancedTextEditorPanel extends JPanel {
         if (btnReplace != null) btnReplace.setEnabled(enabled);
         if (btnReplaceAll != null) btnReplaceAll.setEnabled(enabled);
         if (btnSwap != null) btnSwap.setEnabled(enabled);
+        // --- Automatically pull focus back when re-enabling UI ---
+        if (enabled && lastActiveCombo != null) {
+            SwingUtilities.invokeLater(() -> {
+                Component editor = lastActiveCombo.getEditor().getEditorComponent();
+                if (editor != null) {
+                    editor.requestFocusInWindow();
+                    // Optionally select all text so they can immediately type a new search term!
+                    if (editor instanceof JTextField) {
+                        ((JTextField) editor).selectAll(); 
+                    }
+                }
+            });
+        }
     }
     
     public void performCountMatches(String target) {
@@ -1247,7 +1094,8 @@ public class AdvancedTextEditorPanel extends JPanel {
             protected void done() {
                 try {
                     if (isCancelled()) return; // Don't show dialog if aborted
-                    JOptionPane.showMessageDialog(getDialogParent(), "Total occurrences found: " + get(), "Match Count", JOptionPane.INFORMATION_MESSAGE);
+                    //JOptionPane.showMessageDialog(getDialogParent(), "Total occurrences found: " + get(), "Match Count", JOptionPane.INFORMATION_MESSAGE);
+                    DialogUtil.showMessageDialog(getDialogParent(), "Total occurrences found: " + get(), "Match Count", JOptionPane.INFORMATION_MESSAGE);
                 } catch (Exception e) {
                 } finally {
                     lblLoadingStatus.setText("");
@@ -1313,9 +1161,8 @@ public class AdvancedTextEditorPanel extends JPanel {
                     triggerAsyncLoad(loadedChunkIndex, 0, -1, false, () -> {
                         lblLoadingStatus.setText("");
                         restartBackgroundIndexer();
-                        JOptionPane.showMessageDialog(getDialogParent(), 
-                            "Global replacement complete.\nTotal replacements: " + count, 
-                            "Replace All", JOptionPane.INFORMATION_MESSAGE);
+                        //JOptionPane.showMessageDialog(getDialogParent(), "Global replacement complete.\nTotal replacements: " + count, "Replace All", JOptionPane.INFORMATION_MESSAGE);
+                        DialogUtil.showMessageDialog(getDialogParent(), "Global replacement complete.\nTotal replacements: " + count, "Replace All", JOptionPane.INFORMATION_MESSAGE);
                     });
                     
                 } catch (Exception e) {
@@ -1980,7 +1827,8 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     private void showError(String message) {
-        JOptionPane.showMessageDialog(this, message, "System IO Exception Error", JOptionPane.ERROR_MESSAGE);
+        //JOptionPane.showMessageDialog(this, message, "System IO Exception Error", JOptionPane.ERROR_MESSAGE);
+        DialogUtil.showMessageDialog(this, message, "System IO Exception Error", JOptionPane.ERROR_MESSAGE);
     }
 
     public void appendText(String text) {
@@ -2126,32 +1974,6 @@ public class AdvancedTextEditorPanel extends JPanel {
             btnReplace = new JButton("Replace");
             btnReplaceAll = new JButton("Replace All");
             
-            Component searchEditor = comboSearch.getEditor().getEditorComponent();
-            searchEditor.addKeyListener(new KeyAdapter() {
-                @Override
-                public void keyPressed(KeyEvent e) {
-                    if (e.getKeyCode() == KeyEvent.VK_ENTER) {
-                        String txt = getSearchText();
-                        updateSearchHistory(txt);
-                        performFindNext(txt);
-                    }
-                }
-            });
-            
-            Component replaceEditor = comboReplace.getEditor().getEditorComponent();
-            replaceEditor.addKeyListener(new KeyAdapter() {
-                @Override
-                public void keyPressed(KeyEvent e) {
-                    if (e.getKeyCode() == KeyEvent.VK_ENTER) {
-                        String stxt = getSearchText();
-                        String rtxt = getReplaceText();
-                        updateSearchHistory(stxt);
-                        updateReplaceHistory(rtxt);
-                        performReplace(stxt, rtxt);
-                    }
-                }
-            });
-            
             btnFindPrev.addActionListener(e -> {
                 String txt = getSearchText();
                 updateSearchHistory(txt);
@@ -2226,7 +2048,46 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
 
         searchDialog.setTitle("Search & Replace - " + currentTitle);
-        themeDialog(searchDialog, currentTheme);
+        DialogUtil.themeDialog(searchDialog);
+        // --- Wire the Search Combobox to the Find Button after setting themes to prevent the listener from breaking ---
+        Component searchEditor = comboSearch.getEditor().getEditorComponent();
+        if (searchEditor instanceof JTextField) {
+            // Use a KeyAdapter to catch the raw hardware Enter key press
+            searchEditor.addKeyListener(new java.awt.event.KeyAdapter() {
+                @Override
+                public void keyPressed(java.awt.event.KeyEvent e) {
+                    if (e.getKeyCode() == java.awt.event.KeyEvent.VK_ENTER) {
+                        btnFindNext.doClick();
+                        e.consume(); // Tell Java we handled it so the Combobox doesn't complain
+                    }
+                }
+            });
+        }
+
+        // --- Wire the Replace Combobox to the Replace Button ---
+        Component replaceEditor = comboReplace.getEditor().getEditorComponent();
+        if (replaceEditor instanceof JTextField) {
+            replaceEditor.addKeyListener(new java.awt.event.KeyAdapter() {
+                @Override
+                public void keyPressed(java.awt.event.KeyEvent e) {
+                    if (e.getKeyCode() == java.awt.event.KeyEvent.VK_ENTER) {
+                        btnReplace.doClick();
+                        e.consume();
+                    }
+                }
+            });
+        }
+        // --- Track which box the user is actually typing in ---
+        lastActiveCombo = comboSearch; // Default
+        searchEditor.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusGained(java.awt.event.FocusEvent e) { lastActiveCombo = comboSearch; }
+        });
+
+        replaceEditor.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusGained(java.awt.event.FocusEvent e) { lastActiveCombo = comboReplace; }
+        });
         searchDialog.pack();
         searchDialog.setVisible(true);
         comboSearch.requestFocus();
@@ -2553,11 +2414,8 @@ public class AdvancedTextEditorPanel extends JPanel {
                             textArea.moveCaretPosition(visualEnd);
                         });
                     } else {
-                        int response = JOptionPane.showConfirmDialog(getDialogParent(), 
-                            "Reached end of file. Start again from the top?", 
-                            "Search Wrap Around", 
-                            JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
-                            
+                        //int response = JOptionPane.showConfirmDialog(getDialogParent(), "Reached end of file. Start again from the top?", "Search Wrap Around", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+                        int response = DialogUtil.showConfirmDialog(getDialogParent(), "Reached end of file. Start again from the top?", "Search Wrap Around", JOptionPane.YES_NO_OPTION);
                         if (response == JOptionPane.YES_OPTION) {
                             triggerAsyncLoad(0, 1, -1, false, () -> {
                                 textArea.setCaretPosition(0);
@@ -2668,11 +2526,8 @@ public class AdvancedTextEditorPanel extends JPanel {
                             textArea.moveCaretPosition(visualEnd);
                         });
                     } else {
-                        int response = JOptionPane.showConfirmDialog(getDialogParent(), 
-                            "Reached beginning of file. Search again from the bottom?", 
-                            "Search Wrap Around", 
-                            JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
-                            
+                        //int response = JOptionPane.showConfirmDialog(getDialogParent(), "Reached beginning of file. Search again from the bottom?", "Search Wrap Around", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+                        int response = DialogUtil.showConfirmDialog(getDialogParent(), "Reached beginning of file. Search again from the bottom?", "Search Wrap Around", JOptionPane.YES_NO_OPTION);  
                         if (response == JOptionPane.YES_OPTION) {
                             int lastChunk = Math.max(0, fileManager.getTotalChunks() - 1);
                             triggerAsyncLoad(lastChunk, -1, -1, false, () -> {
@@ -2861,7 +2716,8 @@ public class AdvancedTextEditorPanel extends JPanel {
     // --- Print Functionality ---
     public void printFile() {
         if (textArea == null || textArea.getText().isEmpty()) {
-            JOptionPane.showMessageDialog(getDialogParent(), "The document is empty.", "Print", JOptionPane.INFORMATION_MESSAGE);
+            //JOptionPane.showMessageDialog(getDialogParent(), "The document is empty.", "Print", JOptionPane.INFORMATION_MESSAGE);
+            DialogUtil.showMessageDialog(getDialogParent(), "The document is empty.", "Print", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
 

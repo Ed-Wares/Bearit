@@ -27,12 +27,14 @@ public class ContextMenuInstaller {
             } else if (os.contains("mac")) {
                 showMacNotice(parent);
             } else {
-                JOptionPane.showMessageDialog(parent, "Unsupported operating system.", "Install Failed", JOptionPane.ERROR_MESSAGE);
+                //JOptionPane.showMessageDialog(parent, "Unsupported operating system.", "Install Failed", JOptionPane.ERROR_MESSAGE);
+                DialogUtil.showMessageDialog(parent, "Unsupported operating system.", "Install Failed", JOptionPane.ERROR_MESSAGE);
             }
             // Prompt the user for default app takeover
             DefaultEditorManager.promptAndSetDefault(null);
         } catch (Exception e) {
-            JOptionPane.showMessageDialog(parent, "Failed to install context menu: \n" + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            //JOptionPane.showMessageDialog(parent, "Failed to install context menu: \n" + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            DialogUtil.showMessageDialog(parent, "Failed to install context menu: \n" + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
             e.printStackTrace();
         }
     }
@@ -48,12 +50,14 @@ public class ContextMenuInstaller {
             } else if (os.contains("mac")) {
                 showMacNotice(parent);
             } else {
-                JOptionPane.showMessageDialog(parent, "Unsupported operating system.", "Uninstall Failed", JOptionPane.ERROR_MESSAGE);
+                //JOptionPane.showMessageDialog(parent, "Unsupported operating system.", "Uninstall Failed", JOptionPane.ERROR_MESSAGE);
+                DialogUtil.showMessageDialog(parent, "Unsupported operating system.", "Uninstall Failed", JOptionPane.ERROR_MESSAGE);
             }
             // Clean up the default associations
             DefaultEditorManager.restorePreviousDefault();
         } catch (Exception e) {
-            JOptionPane.showMessageDialog(parent, "Failed to uninstall context menu: \n" + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            //JOptionPane.showMessageDialog(parent, "Failed to uninstall context menu: \n" + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            DialogUtil.showMessageDialog(parent, "Failed to uninstall context menu: \n" + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
             e.printStackTrace();
         }
     }
@@ -89,7 +93,8 @@ public class ContextMenuInstaller {
         Runtime.getRuntime().exec(new String[]{"cmd.exe", "/c", regAddIcon}).waitFor();
         Runtime.getRuntime().exec(new String[]{"cmd.exe", "/c", regAddCmd}).waitFor();
 
-        JOptionPane.showMessageDialog(parent, "Context menu installed successfully!\nRight-click any file in Windows Explorer to see 'Edit with Bearit'.", "Success", JOptionPane.INFORMATION_MESSAGE);
+        //JOptionPane.showMessageDialog(parent, "Context menu installed successfully!\nRight-click any file in Windows Explorer to see 'Edit with Bearit'.", "Success", JOptionPane.INFORMATION_MESSAGE);
+        DialogUtil.showMessageDialog(parent, "Context menu installed successfully!\nRight-click any file in Windows Explorer to see 'Edit with Bearit'.", "Success", JOptionPane.INFORMATION_MESSAGE);
     }
 
     private static void uninstallForWindows(Component parent) throws Exception {
@@ -99,7 +104,8 @@ public class ContextMenuInstaller {
         
         // Exit code 0 is success, 1 usually means the key didn't exist in the first place
         if (p.exitValue() == 0 || p.exitValue() == 1) {
-            JOptionPane.showMessageDialog(parent, "Context menu removed successfully from Windows.", "Success", JOptionPane.INFORMATION_MESSAGE);
+            //JOptionPane.showMessageDialog(parent, "Context menu removed successfully from Windows.", "Success", JOptionPane.INFORMATION_MESSAGE);
+            DialogUtil.showMessageDialog(parent, "Context menu removed successfully from Windows.", "Success", JOptionPane.INFORMATION_MESSAGE);
         } else {
             throw new Exception("Registry deletion failed with exit code: " + p.exitValue());
         }
@@ -136,7 +142,8 @@ public class ContextMenuInstaller {
         installed = true;
 
         if (installed) {
-            JOptionPane.showMessageDialog(parent, "Context menu script installed successfully!\nRight-click any file in Nautilus or Caja -> Scripts -> Edit with Bearit.", "Success", JOptionPane.INFORMATION_MESSAGE);
+            //JOptionPane.showMessageDialog(parent, "Context menu script installed successfully!\nRight-click any file in Nautilus or Caja -> Scripts -> Edit with Bearit.", "Success", JOptionPane.INFORMATION_MESSAGE);
+            DialogUtil.showMessageDialog(parent, "Context menu script installed successfully!\nRight-click any file in Nautilus or Caja -> Scripts -> Edit with Bearit.", "Success", JOptionPane.INFORMATION_MESSAGE);
         }
     }
 
@@ -159,9 +166,11 @@ public class ContextMenuInstaller {
         }
 
         if (removedNautilus || removedCaja) {
-            JOptionPane.showMessageDialog(parent, "Context menu script removed successfully from Linux file managers.", "Success", JOptionPane.INFORMATION_MESSAGE);
+            //JOptionPane.showMessageDialog(parent, "Context menu script removed successfully from Linux file managers.", "Success", JOptionPane.INFORMATION_MESSAGE);
+            DialogUtil.showMessageDialog(parent, "Context menu script removed successfully from Linux file managers.", "Success", JOptionPane.INFORMATION_MESSAGE);
         } else {
-            JOptionPane.showMessageDialog(parent, "Context menu scripts were not found. They may have already been removed.", "Notice", JOptionPane.INFORMATION_MESSAGE);
+            //JOptionPane.showMessageDialog(parent, "Context menu scripts were not found. They may have already been removed.", "Notice", JOptionPane.INFORMATION_MESSAGE);
+            DialogUtil.showMessageDialog(parent, "Context menu scripts were not found. They may have already been removed.", "Notice", JOptionPane.INFORMATION_MESSAGE);
         }
     }
 
@@ -185,6 +194,7 @@ public class ContextMenuInstaller {
                          "1. Package Bearit as a native macOS .app bundle using a tool like 'jpackage'.\n" +
                          "2. Create an Automator 'Quick Action' that passes the file input to your java -jar command.";
         
-        JOptionPane.showMessageDialog(parent, message, "macOS Notice", JOptionPane.INFORMATION_MESSAGE);
+        //JOptionPane.showMessageDialog(parent, message, "macOS Notice", JOptionPane.INFORMATION_MESSAGE);
+        DialogUtil.showMessageDialog(parent, message, "macOS Notice", JOptionPane.INFORMATION_MESSAGE);
     }
 }
