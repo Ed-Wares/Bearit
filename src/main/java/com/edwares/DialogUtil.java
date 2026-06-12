@@ -6,7 +6,46 @@ import java.io.File;
 
 public class DialogUtil {
 
-    private static volatile String theme = "Light";// Default theme, will be updated dynamically by BearitFrame
+    // ==========================================
+    //  State Management & Centralized Palette
+    // ==========================================
+
+    private static volatile String theme = "Light";
+
+    /**
+     * Shared theme color palette
+     */
+    private static class ThemePalette {
+        static boolean isDark;
+        static Color bg, fg, borderColor, inputBg, buttonBg, menuBg, toolbarBg;
+
+        static { update("Light"); } // Initialize default colors on load
+
+        static void update(String currentTheme) {
+            isDark = "Dark".equals(currentTheme);
+            bg = isDark ? new Color(50, 50, 50) : new Color(240, 240, 240);
+            fg = isDark ? new Color(200, 200, 200) : Color.BLACK;
+            borderColor = isDark ? new Color(100, 100, 100) : new Color(200, 200, 200);
+            inputBg = isDark ? new Color(40, 40, 40) : Color.WHITE;
+            buttonBg = isDark ? new Color(85, 85, 85) : new Color(225, 225, 225);
+            menuBg = isDark ? new Color(75, 75, 75) : new Color(245, 245, 245);
+            toolbarBg = isDark ? new Color(75, 75, 75) : new Color(240, 240, 240);
+        }
+    }
+
+    public static void updateTheme(String newTheme) {
+        theme = newTheme;
+        ThemePalette.update(theme);
+        
+    }
+
+    public static String getTheme() {
+        return theme;
+    }
+
+    // ==========================================
+    //  Public Dialog API
+    // ==========================================
 
     /**
      * Displays a fully themed confirmation dialog (Yes/No/Cancel).
@@ -92,46 +131,33 @@ public class DialogUtil {
     }
 
     // ==========================================
-    // Internal Theming Engine
+    //  Public Theme API
     // ==========================================
 
     public static void themeDialog(JDialog dialog) {
-        // Automatically grab current app settings dynamically
-        boolean isDark = "Dark".equals(theme);
-
-        // Color Palette definitions matching the main frame
-        Color bg = isDark ? new Color(50, 50, 50) : new Color(240, 240, 240);
-        Color fg = isDark ? new Color(200, 200, 200) : Color.BLACK;
-        Color borderColor = isDark ? new Color(100, 100, 100) : new Color(200, 200, 200);
-        Color inputBg = isDark ? new Color(40, 40, 40) : Color.WHITE;
-        Color buttonBg = isDark ? new Color(85, 85, 85) : new Color(225, 225, 225);
-        Color menuBg = isDark ? new Color(75, 75, 75) : new Color(245, 245, 245);
-        Color toolbarBg = isDark ? new Color(75, 75, 75) : new Color(240, 240, 240);
-
-        dialog.setBackground(bg);
-        sweepComponents(dialog, bg, fg, borderColor, inputBg, buttonBg, menuBg, toolbarBg);
+        dialog.setBackground(ThemePalette.bg);
+        sweepComponents(dialog);
     }
 
-    public static void applyGlobalTheme(Container container, String theme){
-        boolean isDark = "Dark".equals(theme);
+    public static void applyGlobalTheme(Container container, String newTheme){
+        updateTheme(newTheme); // Ensure palette is synced before applying
 
-        Color bg = isDark ? new Color(50, 50, 50) : new Color(240, 240, 240);
-        Color fg = isDark ? new Color(200, 200, 200) : Color.BLACK;
-        Color borderColor = isDark ? new Color(100, 100, 100) : new Color(200, 200, 200);
-        Color inputBg = isDark ? new Color(40, 40, 40) : Color.WHITE;
-        Color buttonBg = isDark ? new Color(85, 85, 85) : new Color(225, 225, 225);        
-        // --- Dropped the menu background to a significantly darker gray ---
-        Color menuBg = isDark ? new Color(75, 75, 75) : new Color(245, 245, 245);
-
-        // ---  A distinctly lighter background specifically for the toolbar ---
-        Color toolbarBg = isDark ? new Color(75, 75, 75) : new Color(240, 240, 240);
+        // Local aliases for UIManager readability
+        boolean isDark = ThemePalette.isDark;
+        Color bg = ThemePalette.bg;
+        Color fg = ThemePalette.fg;
+        Color inputBg = ThemePalette.inputBg;
+        Color buttonBg = ThemePalette.buttonBg;
+        Color menuBg = ThemePalette.menuBg;
+        Color toolbarBg = ThemePalette.toolbarBg;
 
         // Update UIManager for standard dialogs
         UIManager.put("OptionPane.background", bg);
         UIManager.put("Panel.background", bg);
         UIManager.put("OptionPane.messageForeground", fg);
         UIManager.put("TabbedPane.contentBorderInsets", new Insets(0, 0, 0, 0));
-        // --- Global Fallbacks for Dynamically Spawned Inputs (Like Hex Editor Grids) ---
+        
+        // Global Fallbacks for Dynamically Spawned Inputs (Like Hex Editor Grids)
         UIManager.put("ComboBox.background", inputBg);
         UIManager.put("ComboBox.foreground", fg);
         UIManager.put("ComboBox.selectionBackground", buttonBg);
@@ -141,37 +167,34 @@ public class DialogUtil {
         UIManager.put("TextField.foreground", fg);
         UIManager.put("TextField.caretForeground", fg);
         UIManager.put("TextField.inactiveBackground", inputBg);
-        // --- UBUNTU GTK FIX: Permanently strip native renderers from dynamically spawned inputs ---
-        //UIManager.put("ComboBoxUI", "javax.swing.plaf.basic.BasicComboBoxUI");
+        
+        // UBUNTU GTK FIX: Permanently strip native renderers from dynamically spawned inputs
         UIManager.put("TextFieldUI", "javax.swing.plaf.basic.BasicTextFieldUI");
         UIManager.put("SpinnerUI", "javax.swing.plaf.basic.BasicSpinnerUI");        
 
-        // --- Force the JTabbedPane borders to use dark gray shadows ---
+        // Theme-specific UI settings
         if (isDark) {
             UIManager.put("TabbedPane.background", toolbarBg);
             UIManager.put("TabbedPane.contentAreaColor", bg);
-            UIManager.put("TabbedPane.shadow", new Color(30, 30, 30));         // Main border line
-            UIManager.put("TabbedPane.darkShadow", new Color(20, 20, 20));     // Outer drop shadow
-            UIManager.put("TabbedPane.light", new Color(42, 42, 42));          // Top/Left highlight
-            UIManager.put("TabbedPane.highlight", new Color(49, 49, 49));      // Inner highlight
+            UIManager.put("TabbedPane.shadow", new Color(30, 30, 30));         
+            UIManager.put("TabbedPane.darkShadow", new Color(20, 20, 20));     
+            UIManager.put("TabbedPane.light", new Color(42, 42, 42));          
+            UIManager.put("TabbedPane.highlight", new Color(49, 49, 49));      
             UIManager.put("TabbedPane.selected", bg); 
             
-            // Heavily enforce Menu backgrounds globally just in case the OS tries to override them
             UIManager.put("MenuBar.background", menuBg);
             UIManager.put("Menu.background", menuBg);
             UIManager.put("MenuItem.background", menuBg);
             UIManager.put("PopupMenu.background", menuBg);
-            // --- Force the keyboard shortcuts (Accelerators) to match the light text ---
+            
             UIManager.put("MenuItem.acceleratorForeground", fg);
             UIManager.put("Menu.acceleratorForeground", fg);
             UIManager.put("CheckBoxMenuItem.acceleratorForeground", fg);
             UIManager.put("RadioButtonMenuItem.acceleratorForeground", fg);
-            // --- Inject custom drawn icons to fix macOS double-checks ---
+            
             UIManager.put("CheckBoxMenuItem.checkIcon", new ThemeCheckBoxIcon(fg));
             UIManager.put("RadioButtonMenuItem.checkIcon", new ThemeRadioIcon(fg));
-
         } else {
-            // Restore default colors for Light Theme
             UIManager.put("TabbedPane.background", UIManager.getColor("control"));
             UIManager.put("TabbedPane.contentAreaColor", UIManager.getColor("control"));
             UIManager.put("TabbedPane.shadow", UIManager.getColor("controlShadow"));
@@ -179,47 +202,88 @@ public class DialogUtil {
             UIManager.put("TabbedPane.light", UIManager.getColor("controlHighlight"));
             UIManager.put("TabbedPane.highlight", UIManager.getColor("controlLtHighlight"));
             UIManager.put("TabbedPane.selected", UIManager.getColor("control"));
-            // Revert shortcuts to black for light theme
+            
             UIManager.put("MenuItem.acceleratorForeground", Color.BLACK);
             UIManager.put("Menu.acceleratorForeground", Color.BLACK);
             UIManager.put("CheckBoxMenuItem.acceleratorForeground", Color.BLACK);
             UIManager.put("RadioButtonMenuItem.acceleratorForeground", Color.BLACK);
-            // --- Inject black icons for Light Theme ---
+            
             UIManager.put("CheckBoxMenuItem.checkIcon", new ThemeCheckBoxIcon(Color.BLACK));
             UIManager.put("RadioButtonMenuItem.checkIcon", new ThemeRadioIcon(Color.BLACK));            
         }
 
-        // --- Explicitly target the JMenuBar to fill the trailing empty space ---
+        // Explicitly target the JMenuBar to fill the trailing empty space
         if (container instanceof JFrame) {
             JFrame frame = (JFrame)container;
             if (frame.getJMenuBar() != null) {
                 frame.getJMenuBar().setOpaque(true);
                 frame.getJMenuBar().setBackground(menuBg);
-                frame.getJMenuBar().setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, bg)); // Clean bottom border
+                frame.getJMenuBar().setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, bg));
             }
-
             frame.getContentPane().setBackground(toolbarBg);
         }
 
-        // Recursively theme the main window (menus, toolbars, backgrounds)
-        //applyThemeToContainer(this, bg, fg, menuBg, toolbarBg);
-        DialogUtil.sweepComponents(container, bg, fg, borderColor, inputBg, buttonBg, menuBg, toolbarBg);
+        // Recursively theme the main window
+        sweepComponents(container);
     }
 
-    public static void sweepComponents(Container container, Color bg, Color fg, Color borderColor, Color inputBg, Color buttonBg, Color menuBg, Color toolbarBg) {
+    public static void themePopupMenu(JPopupMenu popupMenu) {
+        if (popupMenu == null) return;
+        
+        popupMenu.setBackground(ThemePalette.menuBg);
+        popupMenu.setForeground(ThemePalette.fg);
+        popupMenu.setOpaque(true);
+        popupMenu.setBorder(BorderFactory.createLineBorder(ThemePalette.borderColor, 1));
+
+        for (Component c : popupMenu.getComponents()) {
+            c.setBackground(ThemePalette.menuBg);
+            c.setForeground(ThemePalette.fg);
+            ((JComponent) c).setOpaque(true);
+
+            if (c instanceof JMenu) {
+                ((JMenu) c).setUI(new javax.swing.plaf.basic.BasicMenuUI() {
+                    @Override
+                    protected void paintMenuItem(Graphics g, JComponent c, Icon checkIcon, Icon arrowIcon, Color background, Color foreground, int defaultTextIconGap) {
+                        Icon customArrow = new ThemeMenuArrowIcon(ThemePalette.fg);
+                        super.paintMenuItem(g, c, checkIcon, customArrow, background, foreground, defaultTextIconGap);
+                    }
+                });
+                themePopupMenu(((JMenu) c).getPopupMenu());
+            } else if (c instanceof JMenuItem) {
+                ((JMenuItem) c).setUI(new javax.swing.plaf.basic.BasicMenuItemUI());
+            } else if (c instanceof JSeparator) {
+                c.setForeground(ThemePalette.bg); 
+                c.setBackground(ThemePalette.menuBg); 
+            }
+        }
+    }    
+
+    // ==========================================
+    //  Internal Theming Engine (The Sweeper)
+    // ==========================================
+
+    public static void sweepComponents(Container container) {
+        // Alias palette colors locally to keep component assignments extremely clean
+        Color bg = ThemePalette.bg;
+        Color fg = ThemePalette.fg;
+        Color borderColor = ThemePalette.borderColor;
+        Color inputBg = ThemePalette.inputBg;
+        Color buttonBg = ThemePalette.buttonBg;
+        Color menuBg = ThemePalette.menuBg;
+        Color toolbarBg = ThemePalette.toolbarBg;
+        boolean isDark = ThemePalette.isDark;
+
         for (Component c : container.getComponents()) {
 
-            // --- Menus and Submenus (JMenuBar, JMenu, JMenuItem) ---
+            // --- Menus and Submenus ---
             if (c instanceof JMenu || c instanceof JMenuItem || c instanceof JMenuBar) {
                 c.setBackground(menuBg);
                 c.setForeground(fg);
                 ((JComponent) c).setOpaque(true); 
                 
-                // --- Strip the native OS renderer so shortcuts obey our colors ---
                 if (c instanceof JMenuBar) {
                     ((JMenuBar) c).setUI(new javax.swing.plaf.basic.BasicMenuBarUI());
-                    // CRITICAL FIX: Dig into the menu bar to find the File, Edit, View menus!
-                    sweepComponents((Container) c, bg, fg, borderColor, inputBg, buttonBg, menuBg, toolbarBg);                
+                    sweepComponents((Container) c);                
                 } else if (c instanceof JCheckBoxMenuItem) {
                     ((JCheckBoxMenuItem) c).setUI(new javax.swing.plaf.basic.BasicCheckBoxMenuItemUI());
                 } else if (c instanceof JRadioButtonMenuItem) {
@@ -228,7 +292,6 @@ public class DialogUtil {
                     ((JMenu) c).setUI(new javax.swing.plaf.basic.BasicMenuUI() {
                         @Override
                         protected void paintMenuItem(Graphics g, JComponent c, Icon checkIcon, Icon arrowIcon, Color background, Color foreground, int defaultTextIconGap) {
-                            // GTK FIX: Forcefully inject our custom arrow if this menu is inside a popup!
                             Icon customArrow = (((JMenu) c).getParent() instanceof JPopupMenu) ? new ThemeMenuArrowIcon(fg) : null;
                             super.paintMenuItem(g, c, checkIcon, customArrow, background, foreground, defaultTextIconGap);
                         }
@@ -244,148 +307,127 @@ public class DialogUtil {
                         popup.setForeground(fg);
                         popup.setOpaque(true); 
                         popup.setBorder(BorderFactory.createLineBorder(fg, 1));
-                        
-                        sweepComponents(popup, bg, fg, borderColor, inputBg, buttonBg, menuBg, toolbarBg);
+                        sweepComponents(popup);
                     }
                 }
-            // --- Intercept Toolbar Separators BEFORE standard Separators ---
-            } else if (c instanceof JToolBar.Separator) {
-                // Force the background to match the toolbar, not the menu!
+            } 
+            // --- Toolbar Separators ---
+            else if (c instanceof JToolBar.Separator) {
                 c.setBackground(toolbarBg);
                 c.setForeground(fg); 
                 ((JComponent) c).setOpaque(true);
-                // Set the baseline preferred size (Width: 16, starting height doesn't matter much now)
                 ((JToolBar.Separator) c).setSeparatorSize(new Dimension(16, 24));
-                
-                // --- CRITICAL FIX: Unlock the vertical height! ---
-                // Short.MAX_VALUE gives the layout manager permission to stretch this 
-                // component vertically so it perfectly matches the height of the toolbar buttons.
                 ((JToolBar.Separator) c).setMaximumSize(new Dimension(16, Short.MAX_VALUE));                
                 ((JToolBar.Separator) c).setUI(new javax.swing.plaf.basic.BasicToolBarSeparatorUI() {
                     @Override
                     public void paint(Graphics g, JComponent comp) {
-                        // Paint the background to perfectly match the toolbar
                         g.setColor(toolbarBg);
                         g.fillRect(0, 0, comp.getWidth(), comp.getHeight());
-                        
-                        // Draw a single, flat 1-pixel line exactly down the middle
                         g.setColor(fg); 
                         int middleX = comp.getWidth() / 2;
-                        int padY = 3; // The '3' adds a 3-pixel padding to the top and bottom of the line
+                        int padY = 3; 
                         g.drawLine(middleX, padY, middleX, comp.getHeight() - padY); 
                     }
                 });
-
+            } 
             // --- Standard Menu Separators ---
-            } else if (c instanceof JSeparator) {
+            else if (c instanceof JSeparator) {
                 c.setBackground(menuBg);
-                c.setForeground(bg); // In Swing, the separator's foreground is the actual drawn line
+                c.setForeground(bg); 
                 ((JComponent) c).setOpaque(true);
-            // --- Give the Toolbar its own custom background color ---
-            } else if (c instanceof JToolBar) {
+            } 
+            // --- Toolbars ---
+            else if (c instanceof JToolBar) {
                 c.setBackground(toolbarBg);
                 c.setForeground(fg);
                 ((JComponent) c).setOpaque(true);
-                // --- Strip the GTK renderer on Linux so the color actually applies! ---
-                //((JToolBar) c).setUI(new javax.swing.plaf.basic.BasicToolBarUI());
-                // Remove the native borders but add a tiny bit of padding to keep things clean
                 ((JToolBar) c).setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 4));
-                sweepComponents((Container) c, bg, fg, borderColor, inputBg, buttonBg, menuBg, toolbarBg);
-            // --- Set empty space to toolbarBg, but force tabs back to bg ---
-            } else if (c instanceof JTabbedPane) {
+                sweepComponents((Container) c);
+            } 
+            // --- TabbedPanes ---
+            else if (c instanceof JTabbedPane) {
                 c.setBackground(bg); 
                 c.setForeground(fg);
                 ((JComponent) c).setOpaque(true);
-                sweepComponents((Container) c, bg, fg, borderColor, inputBg, buttonBg, menuBg, toolbarBg);
+                sweepComponents((Container) c);
+                
                 JTabbedPane tp = (JTabbedPane)c;
                 tp.setUI(new javax.swing.plaf.basic.BasicTabbedPaneUI() {
                     @Override
                     protected void installDefaults() {
                         super.installDefaults();
-                        boolean isDark = "Dark".equals(theme);
                         if (isDark) {
-                            lightHighlight = new Color(42, 42, 42); // Top/Left outer bevel
-                            highlight = new Color(49, 49, 49);     // Top/Left inner bevel
-                            shadow = new Color(30, 30, 30);         // Bottom/Right inner bevel
-                            darkShadow = new Color(20, 20, 20);     // Bottom/Right outer bevel
+                            lightHighlight = new Color(42, 42, 42); 
+                            highlight = new Color(49, 49, 49);     
+                            shadow = new Color(30, 30, 30);         
+                            darkShadow = new Color(20, 20, 20);     
                         }
                     }
                 });
-                // Make the TabbedPane transparent so the frame color shows through the empty space! ---
                 tp.setOpaque(false);
-            // --- Strip the native Mac inner border from the ScrollPane ---
-            } else if (c instanceof JScrollPane) {
+            } 
+            // --- ScrollPanes ---
+            else if (c instanceof JScrollPane) {
                 c.setBackground(bg);
                 c.setForeground(fg);
                 ((JComponent) c).setOpaque(true);
-                
-                // Remove the bright Mac etched border completely
                 ((JScrollPane) c).setBorder(BorderFactory.createEmptyBorder());
-                
-                // Force the viewport (the area behind the text) to match the dark theme
                 ((JScrollPane) c).getViewport().setBackground(bg);
                 ((JScrollPane) c).getViewport().setForeground(fg);
-                sweepComponents(((JScrollPane) c).getViewport(), bg, fg, borderColor, inputBg, buttonBg, menuBg, toolbarBg);
-            }
-            // --- If it's a panel, theme it AND dive inside it ---
+                sweepComponents(((JScrollPane) c).getViewport());
+            } 
+            // --- Panels ---
             else if (c instanceof JPanel) {
                 c.setBackground(bg);
                 c.setForeground(fg);
                 ((JPanel) c).setOpaque(true);
-                // --- Update the TitledBorder text color (e.g., "Data Inspector") ---
+                
                 javax.swing.border.Border border = ((JComponent) c).getBorder();
                 if (border instanceof javax.swing.border.TitledBorder) {
                     ((javax.swing.border.TitledBorder) border).setTitleColor(fg);
-                    c.repaint(); // Force the border to redraw immediately
+                    c.repaint(); 
                 }                
-                sweepComponents((Container) c, bg, fg, borderColor, inputBg, buttonBg, menuBg, toolbarBg);
-            }
+                sweepComponents((Container) c);
+            } 
             // --- Text Fields ---
             else if (c instanceof JTextField) {
                 c.setBackground(inputBg);
                 c.setForeground(fg);
-                // --- Strip the native Linux GTK renderer off the text field ---
                 ((JTextField) c).setUI(new javax.swing.plaf.basic.BasicTextFieldUI());
                 ((JTextField) c).setCaretColor(fg);
                 ((JTextField) c).setBorder(BorderFactory.createCompoundBorder(
                         BorderFactory.createLineBorder(borderColor, 1),
                         BorderFactory.createEmptyBorder(2, 5, 2, 5) 
                 ));
-            }
+            } 
             // --- Buttons ---
             else if (c instanceof JButton) {
                 JButton btn = (JButton) c;
                 btn.setForeground(fg);
                 
-                // --- CUSTOM CLOSE BUTTON FOR TABS ---
                 if (btn.getText().equals("x")) {
                     btn.setContentAreaFilled(false);
                     btn.setOpaque(false);                
-                // --- SPECIAL FIX: Toolbar Buttons (Should blend into the toolbar) ---
                 } else if (btn.getParent() instanceof JToolBar) {
                     btn.setOpaque(false);
                     btn.setContentAreaFilled(false);
-                    btn.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6)); // Light internal padding
+                    btn.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6)); 
                     
-                    // Force a flat custom UI that paints a subtle highlight on mouse hover
                     btn.setUI(new javax.swing.plaf.basic.BasicButtonUI() {
                         @Override
                         public void paint(Graphics g, JComponent comp) {
                             AbstractButton b = (AbstractButton) comp;
                             ButtonModel model = b.getModel();
-                            
-                            // If the user is hovering or pressing, draw a subtle tinted background box
                             if (model.isPressed() || model.isArmed()) {
-                                g.setColor(theme.equals("Dark") ? new Color(95, 95, 95) : new Color(210, 210, 210));
+                                g.setColor(isDark ? new Color(95, 95, 95) : new Color(210, 210, 210));
                                 g.fillRect(0, 0, b.getWidth(), b.getHeight());
                             } else if (model.isRollover()) {
-                                g.setColor(theme.equals("Dark") ? new Color(85, 85, 85) : new Color(225, 225, 225));
+                                g.setColor(isDark ? new Color(85, 85, 85) : new Color(225, 225, 225));
                                 g.fillRect(0, 0, b.getWidth(), b.getHeight());
                             }
                             super.paint(g, comp);
                         }
                     });
-                // --- Standard Dialog Buttons (Find, Cancel, OK) ---                    
                 } else {
                     c.setBackground(buttonBg);
                     ((JComponent) c).setOpaque(true);
@@ -395,7 +437,7 @@ public class DialogUtil {
                             BorderFactory.createEmptyBorder(4, 10, 4, 10)
                     ));
                 }
-            }
+            } 
             // --- Spinners ---
             else if (c instanceof JSpinner) {
                 c.setBackground(inputBg);
@@ -409,18 +451,12 @@ public class DialogUtil {
                     spinnerField.setBackground(inputBg);
                     spinnerField.setForeground(fg);
                     spinnerField.setCaretColor(fg);
-                    // Strip the Linux native white background
                     spinnerField.setUI(new javax.swing.plaf.basic.BasicTextFieldUI()); 
                 }
             }            
-            // --- Combo Boxes (Drop-downs) ---
+            // --- Combo Boxes (The Ubuntu Jujitsu) ---
             else if (c instanceof JComboBox) {
                 JComboBox<?> combo = (JComboBox<?>) c;
-                
-                // --- THE UBUNTU "JUJITSU" FIX ---
-                // GTK aggressively forces white backgrounds on uneditable comboboxes.
-                // Since we know editable comboboxes (like the Search dialog) work perfectly,
-                // we force ALL comboboxes to be editable to spawn the JTextField!
                 boolean wasOriginallyEditable = combo.isEditable();
                 combo.setEditable(true); 
 
@@ -431,7 +467,6 @@ public class DialogUtil {
                 combo.setUI(new javax.swing.plaf.basic.BasicComboBoxUI() {
                     @Override
                     protected JButton createArrowButton() {
-                        // Rip out the GTK arrow and replace it with a flat Swing arrow
                         javax.swing.plaf.basic.BasicArrowButton arrow = new javax.swing.plaf.basic.BasicArrowButton(
                             javax.swing.SwingConstants.SOUTH, buttonBg, buttonBg, fg, buttonBg);
                         arrow.setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, borderColor));
@@ -441,13 +476,11 @@ public class DialogUtil {
                 
                 combo.setBorder(BorderFactory.createLineBorder(borderColor, 1));
 
-                // Theme the internal text field (which now exists for ALL comboboxes!)
                 if (combo.getEditor() != null) {
                     Component editor = combo.getEditor().getEditorComponent();
                     if (editor != null && editor instanceof JTextField) {
                         JTextField tf = (JTextField) editor;
                         
-                        // Force the background paint override that successfully worked on your Search dialog
                         tf.setUI(new javax.swing.plaf.basic.BasicTextFieldUI() {
                             @Override
                             protected void paintBackground(Graphics g) {
@@ -461,15 +494,11 @@ public class DialogUtil {
                         tf.setCaretColor(fg);
                         tf.setBorder(BorderFactory.createEmptyBorder(2, 5, 2, 5));
                         
-                        // --- RESTORE UNEDITABLE BEHAVIOR ---
-                        // If it was supposed to be uneditable (like the Hex Editor), lock the text field!
                         if (!wasOriginallyEditable) {
                             tf.setEditable(false);
-                            tf.setDisabledTextColor(fg); // Prevent the OS from graying out the text
-                            tf.setCursor(Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR)); // Remove the text I-beam cursor
+                            tf.setDisabledTextColor(fg); 
+                            tf.setCursor(Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR)); 
                             
-                            // Restore native uneditable UX: clicking the text area opens the dropdown
-                            // The ClientProperty ensures we don't accidentally stack listeners during theme toggles
                             if (tf.getClientProperty("UbuntuComboFix") == null) {
                                 tf.putClientProperty("UbuntuComboFix", true);
                                 tf.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -485,7 +514,6 @@ public class DialogUtil {
                     }
                 }
 
-                // Theme the drop-down list items
                 combo.setRenderer(new DefaultListCellRenderer() {
                     @Override
                     public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
@@ -501,7 +529,7 @@ public class DialogUtil {
                         return renderer;
                     }
                 });
-            }
+            } 
             // --- Labels and Checkboxes ---
             else if (c instanceof JLabel || c instanceof JCheckBox) {
                 c.setForeground(fg);
@@ -510,27 +538,32 @@ public class DialogUtil {
                 if (c instanceof JCheckBox) {
                     ((JCheckBox) c).setContentAreaFilled(false);
                 }
-            }
+            } 
+            // --- Toggle Buttons ---
             else if (c instanceof JToggleButton) {
                 c.setForeground(fg);
-            }
+            } 
+            // --- Catch ALL other containers ---
             else if (c instanceof Container) {
                 c.setBackground(bg);
                 c.setForeground(fg);
                 
-                // JComponent provides the setOpaque method
                 if (c instanceof JComponent) {
                     ((JComponent) c).setOpaque(true);
                 }
                 
-                // Recursively dig down into this container to find more inputs/buttons
-                sweepComponents((Container) c, bg, fg, borderColor, inputBg, buttonBg, menuBg, toolbarBg);
+                sweepComponents((Container) c);
             }
-
         }
     }
 
-    // --- CUSTOM THEME ICONS TO BYPASS MACOS RENDERING BUGS ---
+    // ==========================================
+    //  Custom Theme Icons
+    // ==========================================
+
+    /**
+     * Custom Check Box Icon for JCheckBoxes
+    */
     private static class ThemeCheckBoxIcon implements javax.swing.Icon {
         private final Color color;
         public ThemeCheckBoxIcon(Color color) { this.color = color; }
@@ -540,14 +573,12 @@ public class DialogUtil {
         
         @Override public void paintIcon(Component c, Graphics g, int x, int y) {
             AbstractButton b = (AbstractButton) c;
-            // Only draw the checkmark if the menu item is actually selected
             if (b.isSelected()) {
                 Graphics2D g2 = (Graphics2D) g.create();
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 g2.setColor(color);
                 g2.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
                 
-                // Draw a perfect geometric checkmark
                 g2.drawLine(x + 3, y + 8, x + 6, y + 12);
                 g2.drawLine(x + 6, y + 12, x + 13, y + 4);
                 g2.dispose();
@@ -555,6 +586,9 @@ public class DialogUtil {
         }
     }
 
+    /**
+     * Custom Radio Button Icon for JRadioButtons
+     */
     private static class ThemeRadioIcon implements javax.swing.Icon {
         private final Color color;
         public ThemeRadioIcon(Color color) { this.color = color; }
@@ -564,19 +598,20 @@ public class DialogUtil {
         
         @Override public void paintIcon(Component c, Graphics g, int x, int y) {
             AbstractButton b = (AbstractButton) c;
-            // Only draw the dot if the menu item is actually selected
             if (b.isSelected()) {
                 Graphics2D g2 = (Graphics2D) g.create();
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 g2.setColor(color);
                 
-                // Draw a centered radio dot
                 g2.fillOval(x + 4, y + 4, 8, 8);
                 g2.dispose();
             }
         }
     }
 
+    /**
+     * Custom Menu Arrow Icon for Menus
+     */
     private static class ThemeMenuArrowIcon implements javax.swing.Icon {
         private final Color color;
         public ThemeMenuArrowIcon(Color color) { this.color = color; }
@@ -589,62 +624,11 @@ public class DialogUtil {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g2.setColor(color);
             
-            // Draw a small right-pointing triangle
             int[] xPts = {x, x + 4, x};
             int[] yPts = {y + 2, y + 6, y + 10};
             g2.fillPolygon(xPts, yPts, 3);
             
             g2.dispose();
         }
-    }
-
-    public static void themePopupMenu(JPopupMenu popupMenu) {
-        if (popupMenu == null) return;
-        
-        boolean isDark = "Dark".equals(theme);
-        
-        // Define the exact same colors used in your BearitFrame top menus
-        Color bg = isDark ? new Color(50, 50, 50) : new Color(240, 240, 240);
-        Color fg = isDark ? new Color(200, 200, 200) : Color.BLACK;
-        Color menuBg = isDark ? new Color(75, 75, 75) : new Color(245, 245, 245);
-        Color borderColor = isDark ? new Color(100, 100, 100) : new Color(200, 200, 200);
-
-        // Frame the main popup box with the exact same border as the top menus
-        popupMenu.setBackground(menuBg);
-        popupMenu.setForeground(fg);
-        popupMenu.setOpaque(true);
-        popupMenu.setBorder(BorderFactory.createLineBorder(borderColor, 1));
-
-        // Loop through all the menu items (Copy, Paste, etc.)
-        for (Component c : popupMenu.getComponents()) {
-            c.setBackground(menuBg);
-            c.setForeground(fg);
-            ((JComponent) c).setOpaque(true);
-
-            // --- Catch JMenu BEFORE JMenuItem ---
-            if (c instanceof JMenu) {
-                // Apply the correct UI that knows how to handle submenus, Inject the custom arrow override here too!
-                ((JMenu) c).setUI(new javax.swing.plaf.basic.BasicMenuUI() {
-                    @Override
-                    protected void paintMenuItem(Graphics g, JComponent c, Icon checkIcon, Icon arrowIcon, Color background, Color foreground, int defaultTextIconGap) {
-                        Icon customArrow = new ThemeMenuArrowIcon(fg);
-                        super.paintMenuItem(g, c, checkIcon, customArrow, background, foreground, defaultTextIconGap);
-                    }
-                });
-                // Recursively theme the hidden drop-down box attached to this submenu
-                themePopupMenu(((JMenu) c).getPopupMenu());
-            } else if (c instanceof JMenuItem) {
-                // Strip the native OS renderer off the items
-                ((JMenuItem) c).setUI(new javax.swing.plaf.basic.BasicMenuItemUI());
-            } else if (c instanceof JSeparator) {
-                // Style the separators to match
-                c.setForeground(bg); // The drawn line
-                c.setBackground(menuBg); // The padding around the line
-            }
-        }
-    }    
-
-    public static void updateTheme(String newTheme) {
-        theme = newTheme;
     }
 }

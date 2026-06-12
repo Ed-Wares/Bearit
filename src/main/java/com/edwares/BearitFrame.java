@@ -220,7 +220,7 @@ public class BearitFrame extends JFrame {
         }
 
         // Force the UI to adapt to the saved theme immediately on launch
-        setGlobalTheme(BearitProperties.getInstance().getTheme());
+        DialogUtil.applyGlobalTheme(this, BearitProperties.getInstance().getTheme());
     }
 
     // --- Tab Management ---
@@ -333,7 +333,7 @@ public class BearitFrame extends JFrame {
             isUpdatingTabs = false; // Disengage lock
             updateFrameTitle();
             // --- Immediately sweep the new tab with our custom theme interceptors! ---
-            setGlobalTheme(BearitProperties.getInstance().getTheme());
+            DialogUtil.applyGlobalTheme(this, BearitProperties.getInstance().getTheme());
         }
     }
 
@@ -665,203 +665,6 @@ private void updateFrameTitle() {
             Component c = tabbedPane.getComponentAt(i);
             if (c instanceof AdvancedTextEditorPanel) {
                 ((AdvancedTextEditorPanel) c).setWordWrap(enableWrap);
-            }
-        }
-    }
-    
-    private void setGlobalTheme(String theme) {
-        BearitProperties.getInstance().setTheme(theme);
-        DialogUtil.updateTheme(theme); // Update the static theme reference for dialogs
-        boolean isDark = "Dark".equals(theme);
-
-        Color bg = isDark ? new Color(50, 50, 50) : new Color(240, 240, 240);
-        Color fg = isDark ? new Color(200, 200, 200) : Color.BLACK;
-        
-        // --- Dropped the menu background to a significantly darker gray ---
-        Color menuBg = isDark ? new Color(75, 75, 75) : new Color(245, 245, 245);
-
-        // ---  A distinctly lighter background specifically for the toolbar ---
-        Color toolbarBg = isDark ? new Color(75, 75, 75) : new Color(240, 240, 240);
-
-        // Update UIManager for standard dialogs
-        UIManager.put("OptionPane.background", bg);
-        UIManager.put("Panel.background", bg);
-        UIManager.put("OptionPane.messageForeground", fg);
-        UIManager.put("TabbedPane.contentBorderInsets", new Insets(0, 0, 0, 0));
-        // --- Force the JTabbedPane borders to use dark gray shadows ---
-        if (isDark) {
-            UIManager.put("TabbedPane.background", toolbarBg);
-            UIManager.put("TabbedPane.contentAreaColor", bg);
-            UIManager.put("TabbedPane.shadow", new Color(30, 30, 30));         // Main border line
-            UIManager.put("TabbedPane.darkShadow", new Color(20, 20, 20));     // Outer drop shadow
-            UIManager.put("TabbedPane.light", new Color(42, 42, 42));          // Top/Left highlight
-            UIManager.put("TabbedPane.highlight", new Color(49, 49, 49));      // Inner highlight
-            UIManager.put("TabbedPane.selected", bg); 
-            
-            // Heavily enforce Menu backgrounds globally just in case the OS tries to override them
-            UIManager.put("MenuBar.background", menuBg);
-            UIManager.put("Menu.background", menuBg);
-            UIManager.put("MenuItem.background", menuBg);
-            UIManager.put("PopupMenu.background", menuBg);
-            // --- Force the keyboard shortcuts (Accelerators) to match the light text ---
-            UIManager.put("MenuItem.acceleratorForeground", fg);
-            UIManager.put("Menu.acceleratorForeground", fg);
-            UIManager.put("CheckBoxMenuItem.acceleratorForeground", fg);
-            UIManager.put("RadioButtonMenuItem.acceleratorForeground", fg);
-            // --- Inject custom drawn icons to fix macOS double-checks ---
-            UIManager.put("CheckBoxMenuItem.checkIcon", new ThemeCheckBoxIcon(fg));
-            UIManager.put("RadioButtonMenuItem.checkIcon", new ThemeRadioIcon(fg));
-
-        } else {
-            // Restore default colors for Light Theme
-            UIManager.put("TabbedPane.background", UIManager.getColor("control"));
-            UIManager.put("TabbedPane.contentAreaColor", UIManager.getColor("control"));
-            UIManager.put("TabbedPane.shadow", UIManager.getColor("controlShadow"));
-            UIManager.put("TabbedPane.darkShadow", UIManager.getColor("controlDkShadow"));
-            UIManager.put("TabbedPane.light", UIManager.getColor("controlHighlight"));
-            UIManager.put("TabbedPane.highlight", UIManager.getColor("controlLtHighlight"));
-            UIManager.put("TabbedPane.selected", UIManager.getColor("control"));
-            // Revert shortcuts to black for light theme
-            UIManager.put("MenuItem.acceleratorForeground", Color.BLACK);
-            UIManager.put("Menu.acceleratorForeground", Color.BLACK);
-            UIManager.put("CheckBoxMenuItem.acceleratorForeground", Color.BLACK);
-            UIManager.put("RadioButtonMenuItem.acceleratorForeground", Color.BLACK);
-            // --- Inject black icons for Light Theme ---
-            UIManager.put("CheckBoxMenuItem.checkIcon", new ThemeCheckBoxIcon(Color.BLACK));
-            UIManager.put("RadioButtonMenuItem.checkIcon", new ThemeRadioIcon(Color.BLACK));            
-        }
-
-        // --- Explicitly target the JMenuBar to fill the trailing empty space ---
-        if (getJMenuBar() != null) {
-            getJMenuBar().setOpaque(true);
-            getJMenuBar().setBackground(menuBg);
-            getJMenuBar().setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, bg)); // Clean bottom border
-        }
-
-        // Recursively theme the main window (menus, toolbars, backgrounds)
-        applyThemeToContainer(this, bg, fg, menuBg, toolbarBg);
-        
-        // Update all open tabs
-        for (int i = 0; i < tabbedPane.getTabCount(); i++) {
-            Component c = tabbedPane.getComponentAt(i);
-            if (c instanceof AdvancedTextEditorPanel) {
-                ((AdvancedTextEditorPanel) c).applyTheme(theme);
-            } else if (c instanceof BearitTextHexWrapper) {
-                BearitTextHexWrapper wrapper = (BearitTextHexWrapper) c;
-                wrapper.getHiddenTextEditor().applyTheme(theme);
-                wrapper.getHexEditor().applyTheme(theme);
-            }
-            
-            // Update custom tab headers ("Untitled x")
-            Component tabHeader = tabbedPane.getTabComponentAt(i);
-            if (tabHeader instanceof Container) {
-                applyThemeToContainer((Container) tabHeader, bg, fg, menuBg, toolbarBg);
-            }
-        }
-        //getContentPane().setBackground(bg);
-        getContentPane().setBackground(toolbarBg);
-
-        // Strip the native GTK renderer so we can control the tabbedPane borders! ---
-        tabbedPane.setUI(new javax.swing.plaf.basic.BasicTabbedPaneUI() {
-            @Override
-            protected void installDefaults() {
-                super.installDefaults();
-                if (isDark) {
-                    lightHighlight = new Color(42, 42, 42); // Top/Left outer bevel
-                    highlight = new Color(49, 49, 49);     // Top/Left inner bevel
-                    shadow = new Color(30, 30, 30);         // Bottom/Right inner bevel
-                    darkShadow = new Color(20, 20, 20);     // Bottom/Right outer bevel
-                }
-            }
-        });
-
-        // Make the TabbedPane transparent so the frame color shows through the empty space! ---
-        tabbedPane.setOpaque(false);
-        refreshTabFonts(); //Ensure the active tab remains enlarged after theme resets
-        repaint();
-    }
-    
-    private void applyThemeToContainer(Container container, Color bg, Color fg, Color menuBg, Color toolbarBg) {
-        for (Component c : container.getComponents()) {
-            if (c instanceof JMenu || c instanceof JMenuItem || c instanceof JMenuBar) {
-                c.setBackground(menuBg);
-                c.setForeground(fg);
-                ((JComponent) c).setOpaque(true); 
-                
-                // --- Strip the native OS renderer so shortcuts obey our colors ---
-                if (c instanceof JCheckBoxMenuItem) {
-                    ((JCheckBoxMenuItem) c).setUI(new javax.swing.plaf.basic.BasicCheckBoxMenuItemUI());
-                } else if (c instanceof JRadioButtonMenuItem) {
-                    ((JRadioButtonMenuItem) c).setUI(new javax.swing.plaf.basic.BasicRadioButtonMenuItemUI());
-                } else if (c instanceof JMenu) {
-                    ((JMenu) c).setUI(new javax.swing.plaf.basic.BasicMenuUI());
-                } else if (c instanceof JMenuItem) {
-                    ((JMenuItem) c).setUI(new javax.swing.plaf.basic.BasicMenuItemUI());
-                }
-                
-                if (c instanceof JMenu) {
-                    JPopupMenu popup = ((JMenu) c).getPopupMenu();
-                    if (popup != null) {
-                        popup.setBackground(menuBg);
-                        popup.setForeground(fg);
-                        popup.setOpaque(true); 
-                        popup.setBorder(BorderFactory.createLineBorder(fg, 1));
-                        
-                        applyThemeToContainer(popup, bg, fg, menuBg, toolbarBg);
-                    }
-                }
-            // --- Intercept Toolbar Separators BEFORE standard Separators ---
-            } else if (c instanceof JToolBar.Separator) {
-                // Force the background to match the toolbar, not the menu!
-                c.setBackground(toolbarBg);
-                c.setForeground(bg); 
-                ((JComponent) c).setOpaque(true);
-
-            // --- Standard Menu Separators ---
-            } else if (c instanceof JSeparator) {
-                c.setBackground(menuBg);
-                c.setForeground(bg); // In Swing, the separator's foreground is the actual drawn line
-                ((JComponent) c).setOpaque(true);
-            // --- Give the Toolbar its own custom background color ---
-            } else if (c instanceof JToolBar) {
-                c.setBackground(toolbarBg);
-                c.setForeground(fg);
-                ((JComponent) c).setOpaque(true);
-                // --- Strip the GTK renderer on Linux so the color actually applies! ---
-                //((JToolBar) c).setUI(new javax.swing.plaf.basic.BasicToolBarUI());
-                // Remove the native borders but add a tiny bit of padding to keep things clean
-                ((JToolBar) c).setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 4));
-            // --- Set empty space to toolbarBg, but force tabs back to bg ---
-            } else if (c instanceof JTabbedPane) {
-                c.setBackground(bg); 
-                c.setForeground(fg);
-                ((JComponent) c).setOpaque(true);
-            // --- Strip the native Mac inner border from the ScrollPane ---
-            } else if (c instanceof JScrollPane) {
-                c.setBackground(bg);
-                c.setForeground(fg);
-                ((JComponent) c).setOpaque(true);
-                
-                // Remove the bright Mac etched border completely
-                ((JScrollPane) c).setBorder(BorderFactory.createEmptyBorder());
-                
-                // Force the viewport (the area behind the text) to match the dark theme
-                ((JScrollPane) c).getViewport().setBackground(bg);
-                ((JScrollPane) c).getViewport().setForeground(fg);
-            } else if (c instanceof JPanel || c instanceof JToolBar || c instanceof JTabbedPane) {
-                c.setBackground(bg);
-                c.setForeground(fg);
-            } else if (c instanceof JLabel || c instanceof JButton) {
-                c.setForeground(fg);
-                // If you are using a JButton for the 'x', ensure its background doesn't draw
-                if (c instanceof JButton) {
-                    ((JButton) c).setContentAreaFilled(false);
-                    ((JButton) c).setOpaque(false);
-                }
-            }
-            
-            if (c instanceof Container) {
-                applyThemeToContainer((Container) c, bg, fg, menuBg, toolbarBg);
             }
         }
     }
@@ -1606,8 +1409,8 @@ private void updateFrameTitle() {
         if ("Dark".equals(props.getTheme())) { darkThemeItem.setSelected(true); } 
         else { lightThemeItem.setSelected(true); }
 
-        lightThemeItem.addActionListener(e -> setGlobalTheme("Light"));
-        darkThemeItem.addActionListener(e -> setGlobalTheme("Dark"));
+        lightThemeItem.addActionListener(e -> applyTheme("Light"));
+        darkThemeItem.addActionListener(e -> applyTheme("Dark"));
         
         themeMenu.add(lightThemeItem);
         themeMenu.add(darkThemeItem);
@@ -1723,6 +1526,23 @@ private void updateFrameTitle() {
         menuBar.add(helpMenu);
 
         return menuBar;
+    }
+
+    private void applyTheme(String themeName) {
+        BearitProperties props = BearitProperties.getInstance();
+        props.setTheme(themeName);
+        DialogUtil.applyGlobalTheme(this, themeName);
+        // Update all open tabs
+        for (int i = 0; i < tabbedPane.getTabCount(); i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            if (c instanceof AdvancedTextEditorPanel) {
+                ((AdvancedTextEditorPanel) c).applyTheme(themeName);
+            } else if (c instanceof BearitTextHexWrapper) {
+                BearitTextHexWrapper wrapper = (BearitTextHexWrapper) c;
+                wrapper.getHiddenTextEditor().applyTheme(themeName);
+                wrapper.getHexEditor().applyTheme(themeName);
+            }
+        }
     }
 
     // --- Helper to keep both UI toggles in perfect sync ---
