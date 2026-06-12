@@ -1283,6 +1283,8 @@ private void updateFrameTitle() {
                         recentMenu.add(pathItem);
                     }
                 }
+                // Theme these brand-new items before the OS paints them to the screen!
+                DialogUtil.sweepComponents(recentMenu.getPopupMenu());
             }
             @Override public void menuDeselected(MenuEvent e) {}
             @Override public void menuCanceled(MenuEvent e) {}
