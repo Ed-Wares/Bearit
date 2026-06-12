@@ -86,6 +86,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     private boolean showWhitespace = false;
     private boolean showEol = false;
     private String currentTheme = "Light";
+    private boolean autoFillSearch = true;
 
     private int loadedChunkIndex = 0;
     private int pendingTargetChunk = -1;
@@ -2042,11 +2043,6 @@ public class AdvancedTextEditorPanel extends JPanel {
             comboReplace.getEditor().setItem("");
         }
 
-        String selectedText = textArea.getSelectedText();
-        if (selectedText != null && !selectedText.isEmpty()) {
-            comboSearch.getEditor().setItem(selectedText.replace("\u200B\n", "").replace("\u200B", ""));
-        }
-
         searchDialog.setTitle("Search & Replace - " + currentTitle);
         DialogUtil.themeDialog(searchDialog);
         // --- Wire the Search Combobox to the Find Button after setting themes to prevent the listener from breaking ---
@@ -2077,6 +2073,15 @@ public class AdvancedTextEditorPanel extends JPanel {
                 }
             });
         }
+
+        // Themed, safe auto-population ---
+        if (this.autoFillSearch) {
+            String activeSelection = getSafeSelectedText();
+            if (activeSelection != null) {
+                comboSearch.getEditor().setItem(activeSelection);
+            }
+        }
+
         // --- Track which box the user is actually typing in ---
         lastActiveCombo = comboSearch; // Default
         searchEditor.addFocusListener(new java.awt.event.FocusAdapter() {
@@ -2837,5 +2842,35 @@ public class AdvancedTextEditorPanel extends JPanel {
             // without overriding OS-level window layering
             textArea.requestFocusInWindow();
         }
+    }
+
+    public void setAutoFillSearch(boolean autoFill) {
+        this.autoFillSearch = autoFill;
+    }
+
+    public boolean isAutoFillSearch() {
+        return autoFillSearch;
+    }
+
+    private String getSafeSelectedText() {
+        String selected = null;
+        
+        // Respect custom Alt+Drag block selections first
+        if (hasValidBlockSelection()) {
+            selected = getBlockSelectedText();
+        } else {
+            selected = textArea.getSelectedText();
+        }
+        
+        if (selected != null && !selected.isEmpty()) {
+            selected = selected.replace("\u200B\n", "").replace("\u200B", "");
+            
+            // UX Protection: Prevent accidental multi-line or massive dumps into the combobox
+            if (selected.contains("\n") || selected.length() > 200) {
+                return null;
+            }
+            return selected;
+        }
+        return null;
     }
 }
