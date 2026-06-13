@@ -220,7 +220,7 @@ public class BearitFrame extends JFrame {
         }
 
         // Force the UI to adapt to the saved theme immediately on launch
-        DialogUtil.applyGlobalTheme(this, BearitProperties.getInstance().getTheme());
+        applyTheme(BearitProperties.getInstance().getTheme());
     }
 
     // --- Tab Management ---
