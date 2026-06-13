@@ -90,6 +90,10 @@ public class BearitFrame extends JFrame {
                             File f = ((AdvancedTextEditorPanel) c).getActiveFile();
                             if (f != null) openFiles.add(f.getAbsolutePath());
                         }
+                        if (c instanceof BearitTextHexWrapper) {
+                            File f = ((BearitTextHexWrapper) c).getHiddenTextEditor().getActiveFile();
+                            if (f != null) openFiles.add(f.getAbsolutePath());
+                        }
                     }
                     // Pass the current tab index to the session saver
                     BearitProperties.getInstance().saveSession(openFiles, tabbedPane.getSelectedIndex());
@@ -147,7 +151,7 @@ public class BearitFrame extends JFrame {
 
         fileChooser = new JFileChooser();
         // --- Force a spacious default size for Linux file dialogs ---
-        fileChooser.setPreferredSize(new Dimension(800, 550));
+        //fileChooser.setPreferredSize(new Dimension(800, 550));
 
         tabbedPane = new JTabbedPane();
         tabbedPane.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT); // --- Forces Mac to align tabs to the left
@@ -433,7 +437,7 @@ public class BearitFrame extends JFrame {
         if (targetIdx == -1) return; // Safety fallback in case the tab is already gone
 
         if (editor.hasUnsavedChanges()) {
-            // CRITICAL FIX: Select by index so the TabbedPane doesn't crash if it's a Hex Wrapper
+            // Select by index so the TabbedPane doesn't crash if it's a Hex Wrapper
             tabbedPane.setSelectedIndex(targetIdx); 
             
             //int opt = JOptionPane.showConfirmDialog(this, "Save changes to " + editor.getCurrentTitle() + "?", "Unsaved Changes", JOptionPane.YES_NO_CANCEL_OPTION);
@@ -564,9 +568,10 @@ private void updateFrameTitle() {
     }
 
     private void performOpen() {
-        int option = fileChooser.showOpenDialog(this);
-        if (option == JFileChooser.APPROVE_OPTION) {
-            openFileInTab(fileChooser.getSelectedFile());
+        //if (fileChooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+        File selected = DialogUtil.showOpenFileDialog(this, "Open File");    
+        if (selected != null) {
+            openFileInTab(selected);//fileChooser.getSelectedFile());
         }
     }
 
@@ -599,9 +604,10 @@ private void updateFrameTitle() {
     private void performSaveAs() {
         AdvancedTextEditorPanel active = getActiveEditor();
         if (active != null) {
-            int option = fileChooser.showSaveDialog(this);
-            if (option == JFileChooser.APPROVE_OPTION) {
-                File selected = fileChooser.getSelectedFile();
+            //if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+            File selected = DialogUtil.showSaveFileDialog(this, "Save File As");
+            if (selected != null) {                
+                //File selected = fileChooser.getSelectedFile();
                 active.saveAsFile(selected);
                 BearitProperties.getInstance().addRecentFile(selected.getAbsolutePath());
             }
@@ -634,9 +640,10 @@ private void updateFrameTitle() {
 
         boolean saveResult = true;
         if (!editor.hasActiveFile()) {
-            int option = fileChooser.showSaveDialog(this);
-            if (option == JFileChooser.APPROVE_OPTION) {
-                File selected = fileChooser.getSelectedFile();
+            //if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+            File selected = DialogUtil.showSaveFileDialog(this, "Save File");
+            if (selected != null) {
+                //File selected = fileChooser.getSelectedFile();
                 if (saveAsynchronously) {
                     saveResult = editor.saveAsSynchronously(selected);
                 } else {
@@ -698,12 +705,12 @@ private void updateFrameTitle() {
                 double gbSize = Double.parseDouble(input.trim());
                 if (gbSize <= 0) throw new NumberFormatException("Size must be positive.");
 
-                fileChooser.setDialogTitle("Select Destination for Test File");
-                fileChooser.setSelectedFile(new File(String.format(java.util.Locale.US, "bearit_test_file_%.2fGB.txt", gbSize)));
-                
-                if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
-                    File destFile = fileChooser.getSelectedFile();
-                    
+                //fileChooser.setDialogTitle("Select Destination for Test File");
+                //fileChooser.setSelectedFile(new File(String.format(java.util.Locale.US, "bearit_test_file_%.2fGB.txt", gbSize)));
+                //if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+                File destFile = DialogUtil.showSaveFileDialog(this, "Select Destination for Test File", String.format(java.util.Locale.US, "bearit_test_file_%.2fGB.txt", gbSize));
+                if (destFile != null) {
+
                     JDialog progressDialog = new JDialog(this, "Generating File", true);
                     JPanel panel = new JPanel(new BorderLayout(10, 10));
                     panel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));

@@ -3,6 +3,7 @@ package com.edwares;
 import javax.swing.*;
 import java.awt.*;
 import java.io.File;
+import java.io.FilenameFilter;
 
 public class DialogUtil {
 
@@ -101,7 +102,16 @@ public class DialogUtil {
      * Returns null if the user cancels.
      */
     public static File showOpenFileDialog(Frame parentFrame, String title) {
+        return showOpenFileDialog(parentFrame, title, null);
+    }
+
+    public static File showOpenFileDialog(Frame parentFrame, String title, String defaultFile) {
         FileDialog fileDialog = new FileDialog(parentFrame, title, FileDialog.LOAD);
+        
+        if (defaultFile != null && !defaultFile.isEmpty()) {
+            fileDialog.setFile(defaultFile);
+        }
+        
         fileDialog.setVisible(true);
         
         String directory = fileDialog.getDirectory();
@@ -118,7 +128,15 @@ public class DialogUtil {
      * Returns null if the user cancels.
      */
     public static File showSaveFileDialog(Frame parentFrame, String title) {
+        return showSaveFileDialog(parentFrame, title, null);
+    }
+
+    public static File showSaveFileDialog(Frame parentFrame, String title, String defaultFile) {
         FileDialog fileDialog = new FileDialog(parentFrame, title, FileDialog.SAVE);
+
+        if (defaultFile != null && !defaultFile.isEmpty()) {
+            fileDialog.setFile(defaultFile);
+        }
         fileDialog.setVisible(true);
         
         String directory = fileDialog.getDirectory();
