@@ -36,7 +36,9 @@ public class HexEditorPanel extends JPanel {
 
     // --- Status Bar UI ---
     private JLabel lblStatus;
-    private JLabel lblChunkPosition;
+    private JLabel lblChunkFileStatus;
+    private String chunkStatus = "";
+    private String fileSizeDateStatus = "";
     private Consumer<Boolean> onPrevChunk;
     private Consumer<Boolean> onNextChunk;  
     private Consumer<Integer> onJumpToChunk;
@@ -253,13 +255,13 @@ public class HexEditorPanel extends JPanel {
         // Group the labels into a left-aligned container
         JPanel leftPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         
-        lblChunkPosition = new JLabel(" Chunk 1 of 1 ");
-        lblChunkPosition.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 15)); // Add spacing on the right
+        lblChunkFileStatus = new JLabel(" Chunk 1 of 1 ");
+        lblChunkFileStatus.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 15)); // Add spacing on the right
         
         lblStatus = new JLabel("Ready");
         
         // Add them to the flow layout in the desired order
-        leftPanel.add(lblChunkPosition);
+        leftPanel.add(lblChunkFileStatus);
         leftPanel.add(lblStatus);
         
         // Anchor the entire group to the left side of the bottom panel
@@ -277,7 +279,7 @@ public class HexEditorPanel extends JPanel {
     public void setOnJumpToChunk(java.util.function.Consumer<Integer> listener) { this.onJumpToChunk = listener; }
 
     public void updateChunkStatus(int currentIdx, int totalChunks) {
-        lblChunkPosition.setText(String.format(" Chunk %d of %d ", currentIdx, totalChunks));
+        updateChunkFileStatusLabel(String.format(" Chunk %d of %d ", currentIdx, totalChunks), fileSizeDateStatus);
         this.totalChunks = totalChunks;
         this.currentChunkIdx = currentIdx - 1;
 
@@ -295,6 +297,20 @@ public class HexEditorPanel extends JPanel {
         globalVBar.setValue((currentChunkIdx * 100000) + (int)(localPercent * 100000));
         isUpdatingScroll = false;
     }
+
+    public void setChunkStatus(String chunkStatus) {
+        this.chunkStatus = chunkStatus;
+    }
+    
+    public void setFileSizeDateStatus(String fileSizeDateStatus) {
+        this.fileSizeDateStatus = fileSizeDateStatus;
+    }
+
+    public void updateChunkFileStatusLabel(String chunkStatus, String fileStatus) {
+        lblChunkFileStatus.setText(chunkStatus + "  |  " + fileStatus); // chunk location and file size and modified date
+        this.chunkStatus = chunkStatus;
+        this.fileSizeDateStatus = fileStatus;
+    }    
 
     public void setUIEnabled(boolean enabled) {
         hexTable.setEnabled(enabled);
@@ -678,18 +694,10 @@ public class HexEditorPanel extends JPanel {
 
     public void applyTheme(String theme) {
         this.isDark = "Dark".equals(theme);
-        //Color bg = isDarkTheme ? new Color(43, 43, 43) : Color.WHITE;
-        //Color fg = isDarkTheme ? new Color(200, 200, 200) : Color.BLACK;
-        Color panelBg = isDark ? new Color(50, 50, 50) : new Color(240, 240, 240);
         Color headerBg = isDark ? new Color(35, 35, 35) : new Color(225, 225, 225); 
 
         Color bg = isDark ? new Color(50, 50, 50) : Color.WHITE;
         Color fg = isDark ? new Color(200, 200, 200) : Color.BLACK;
-        Color borderColor = isDark ? new Color(100, 100, 100) : new Color(200, 200, 200);
-        Color inputBg = isDark ? new Color(40, 40, 40) : Color.WHITE;
-        Color buttonBg = isDark ? new Color(85, 85, 85) : new Color(225, 225, 225);
-        Color menuBg = isDark ? new Color(75, 75, 75) : new Color(245, 245, 245);
-        Color toolbarBg = isDark ? new Color(75, 75, 75) : new Color(240, 240, 240);
 
         hexTable.setBackground(bg);
         hexTable.setForeground(fg);

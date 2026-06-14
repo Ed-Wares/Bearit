@@ -65,7 +65,7 @@ public class BearitTextHexWrapper extends JPanel {
             currentLoadedChunk = targetChunk;
             byte[] rawBytes = fm.getChunkBytes(currentLoadedChunk);
             long offset = fm.getChunkBoundaries(currentLoadedChunk)[0];
-            
+            hexEditor.setFileSizeDateStatus(AdvancedTextEditorPanel.getFileInfoString(hiddenTextEditor.getActiveFile()));
             hexEditor.updateChunkStatus(currentLoadedChunk + 1, fm.getTotalChunks());
             hexEditor.loadData(rawBytes, offset);
             hexEditor.setSelectedByteOffset((int)(globalCaret - offset));

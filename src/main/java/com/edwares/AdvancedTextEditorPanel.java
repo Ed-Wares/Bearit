@@ -26,6 +26,8 @@ import java.awt.print.PrinterException;
 import java.io.File;
 import java.io.IOException;
 import java.text.MessageFormat;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -53,6 +55,8 @@ public class AdvancedTextEditorPanel extends JPanel {
     
     private final LargeFileManager fileManager;
     private File activeFile = null;
+    private String chunkStatus = "";
+    private String fileSizeDateStatus = "";
 
     // Tracks the active load task so we can kill it if the user scrolls past it
     private SwingWorker<LargeFileManager.ChunkState, Void> activeChunkWorker = null;
@@ -1210,6 +1214,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     public void createNewDocument() {
         fileManager.setNewFile();
         activeFile = null;
+        fileSizeDateStatus = "";
         isDirty = false;
         setUnsavedChanges(false); 
         isNavigating = true;
@@ -1232,7 +1237,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         documentCache.put(0, newDoc);
 
         isNavigating = false;
-        lblStatus.setText("New file creation mode.");
+        updateStatusLabel("New file creation mode.", "");
         lineNumberPanel.setStartLine(1);
         updateTitle("Untitled");
         globalScrollBar.setValue(0);
@@ -1272,6 +1277,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         setUnsavedChanges(false);
         loadedChunkIndex = 0;
         pendingTargetChunk = -1;
+        fileSizeDateStatus = AdvancedTextEditorPanel.getFileInfoString(activeFile);
         
         documentCache.clear();
         globalUndoManager.discardAllEdits();
@@ -1296,6 +1302,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             executeSaveRoutine();
             
             this.activeFile = file;
+            this.fileSizeDateStatus = AdvancedTextEditorPanel.getFileInfoString(activeFile);
             setUnsavedChanges(false);
             isDirty = false;
             updateTitle(file.getName());
@@ -1308,6 +1315,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         try {
             // --- Pass null to progressCallback since this runs entirely on the main UI thread ---
             fileManager.saveAll(getCommitText(), null);
+            updateStatusLabel(chunkStatus, AdvancedTextEditorPanel.getFileInfoString(activeFile));
             isDirty = false;
             setUnsavedChanges(false);
             restartBackgroundIndexer();
@@ -1325,6 +1333,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             fileManager.setCurrentFile(file);
             // Perform the I/O on the current thread (blocking)
             fileManager.saveAll(getCommitText(), null);
+            updateStatusLabel(chunkStatus, AdvancedTextEditorPanel.getFileInfoString(activeFile));
             
             // Update state synchronously
             isDirty = false;
@@ -1371,6 +1380,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                     setUnsavedChanges(false);
                     pendingTargetChunk = -1;
                     applyStateUpdates(get(), 0, -1, null);
+                    updateStatusLabel(chunkStatus, AdvancedTextEditorPanel.getFileInfoString(activeFile));
                     restartBackgroundIndexer();
                 } catch (Exception ex) {
                     showError("Streaming save operation failure: " + ex.getMessage());
@@ -1595,7 +1605,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         } else {
             lblLoadingStatus.setText("Loading full chunk " + (targetChunk + 1) + "...");
         }
-        lblStatus.setText(String.format("Chunk %d of %d", targetChunk + 1, total));
+        updateStatusLabel(String.format("Chunk %d of %d", targetChunk + 1, total), fileSizeDateStatus);
 
         String currentText = getCommitText();
         boolean wasDirty = isDirty;
@@ -1692,7 +1702,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                 localPercent = 1.0;
             }
 
-            lblStatus.setText(String.format("Chunk %d of %d", targetChunk + 1, total));
+            updateStatusLabel(String.format("Chunk %d of %d", targetChunk + 1, total), fileSizeDateStatus);
 
             if (isLoadingChunk) {
                 pendingTargetChunk = targetChunk;
@@ -1765,7 +1775,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         globalScrollBar.setMaximum(maxScrollRange + globalScrollBar.getVisibleAmount());
         
         if (pendingTargetChunk == -1) {
-            lblStatus.setText(state.statusText());
+            updateStatusLabel(state.statusText(), fileSizeDateStatus);
         }
         
         SwingUtilities.invokeLater(() -> {
@@ -2873,4 +2883,47 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
         return null;
     }
+
+    public void updateStatusLabel(String chunkStatus, String fileStatus) {
+        lblStatus.setText(chunkStatus + "  |  " + fileStatus); // chunk location and file size and modified date
+        this.chunkStatus = chunkStatus;
+        this.fileSizeDateStatus = fileStatus;
+    }
+
+    /**
+     * Converts raw bytes into a clean, human-readable format (e.g., "45.2 KB", "1.2 MB").
+     */
+    public static String humanReadableByteCount(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        
+        // Calculate the exponent (1 = KB, 2 = MB, 3 = GB, etc.)
+        int exp = (int) (Math.log(bytes) / Math.log(1024));
+        
+        // Pick the correct prefix letter
+        char pre = "KMGTPE".charAt(exp - 1);
+        
+        // Format to 1 decimal place (e.g., 45.2)
+        return String.format("%.1f %sB", bytes / Math.pow(1024, exp), pre);
+    }
+
+    /**
+     * Formats a standard Unix timestamp into a readable Date/Time string.
+     */
+    public static String formatLastModified(long millis) {
+        // You can adjust this pattern to whatever fits your preference!
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        return sdf.format(new Date(millis));
+    }
+    
+    /**
+     * Generates the combined status string for the UI.
+     */
+    public static String getFileInfoString(File file) {
+        if (file != null && file.exists()) {
+            String sizeStr = humanReadableByteCount(file.length());
+            String dateStr = formatLastModified(file.lastModified());
+            return "Size: " + sizeStr + "  |  Modified: " + dateStr;
+        }
+        return "Unsaved/New File";
+    }    
 }
