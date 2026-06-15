@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-15-intel, macos-14] # Spin up virtual machines for all three platform targets simultaneously
+        os: [ubuntu-22.04, windows-latest, macos-15-intel, macos-14] # Spin up virtual machines for all three platform targets simultaneously
 
 
     steps:
@@ -78,7 +78,7 @@ jobs:
 
       # --- LINUX APPIMAGE GENERATION ---
       - name: Build Linux Native Executable (AppImage)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-22.04'
         run: |
           jpackage --type deb --input target/ --main-jar bearit-${{ inputs.app_version }}.jar --main-class com.edwares.BearitApp --name bearit --app-version ${{ inputs.app_version }} --dest distribution_payload/linux/ --icon src/main/resources/Bearit.png
         shell: bash
@@ -97,7 +97,7 @@ jobs:
             cp distribution_payload/macos/*.dmg final_artifacts/bearit-macOS-Intel.dmg
           elif [ "${{ matrix.os }}" = "macos-14" ]; then
             cp distribution_payload/macos/*.dmg final_artifacts/bearit-macOS-AppleSilicon.dmg          
-          elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+          elif [ "${{ matrix.os }}" = "ubuntu-22.04" ]; then
             cp distribution_payload/linux/*.deb final_artifacts/            
           fi
         shell: bash
