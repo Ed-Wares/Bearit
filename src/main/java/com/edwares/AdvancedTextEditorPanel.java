@@ -1237,7 +1237,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         documentCache.put(0, newDoc);
 
         isNavigating = false;
-        updateStatusLabel("New file creation mode.", "");
+        updateStatusLabel("New file", "");
         lineNumberPanel.setStartLine(1);
         updateTitle("Untitled");
         globalScrollBar.setValue(0);
@@ -2885,7 +2885,12 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     public void updateStatusLabel(String chunkStatus, String fileStatus) {
-        lblStatus.setText(chunkStatus + "  |  " + fileStatus); // chunk location and file size and modified date
+        if (!fileStatus.isEmpty())
+            lblStatus.setText(chunkStatus + "  |  " + fileStatus); // chunk location and file size and modified date
+        else {
+            lblStatus.setText(chunkStatus); // chunk location only    
+        }
+        // remember last status updates
         this.chunkStatus = chunkStatus;
         this.fileSizeDateStatus = fileStatus;
     }

@@ -301,13 +301,18 @@ public class HexEditorPanel extends JPanel {
     public void setChunkStatus(String chunkStatus) {
         this.chunkStatus = chunkStatus;
     }
-    
+
     public void setFileSizeDateStatus(String fileSizeDateStatus) {
         this.fileSizeDateStatus = fileSizeDateStatus;
     }
 
     public void updateChunkFileStatusLabel(String chunkStatus, String fileStatus) {
-        lblChunkFileStatus.setText(chunkStatus + "  |  " + fileStatus); // chunk location and file size and modified date
+        if (!fileStatus.isEmpty())
+            lblChunkFileStatus.setText(chunkStatus + "  |  " + fileStatus); // chunk location and file size and modified date
+        else {
+            lblChunkFileStatus.setText(chunkStatus); // chunk location only    
+        }
+        // remember last status updates
         this.chunkStatus = chunkStatus;
         this.fileSizeDateStatus = fileStatus;
     }    

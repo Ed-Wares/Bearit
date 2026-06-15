@@ -1486,9 +1486,9 @@ private void updateFrameTitle() {
         for (int i = 0; i < 8; i++) {
             String command = props.getCustomToolCommand(i);
             if (command != null && !command.trim().isEmpty()) {
-                String icon = props.getCustomToolIcon(i);
+                //String icon = props.getCustomToolIcon(i);
                 String name = props.getCustomToolName(i);
-                String buttonText = (icon != null && !icon.isEmpty() ? icon + " " : "") + name;
+                String buttonText = name;
                 
                 JMenuItem toolItem = new JMenuItem(buttonText);
                 final String toolCommand = command;

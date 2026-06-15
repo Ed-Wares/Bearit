@@ -427,7 +427,7 @@ public class LargeFileManager {
 
     private ChunkState generateChunkState(int index, boolean isPreview) throws IOException {
         if (currentFile == null && dirtyChunks.isEmpty() && pendingSaveAsFile == null) {
-            return new ChunkState("", 1, 0, index, 1, false, false, "New file creation mode.", "Untitled", false);
+            return new ChunkState("", 1, 0, index, 1, false, false, "New file.", "Untitled", false);
         }
 
         String content = "";
