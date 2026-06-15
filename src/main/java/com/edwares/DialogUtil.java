@@ -1,6 +1,10 @@
 package com.edwares;
 
 import javax.swing.*;
+import javax.swing.border.Border;
+import javax.swing.border.CompoundBorder;
+import javax.swing.border.TitledBorder;
+
 import java.awt.*;
 import java.io.File;
 import java.io.FilenameFilter;
@@ -188,7 +192,8 @@ public class DialogUtil {
         
         // UBUNTU GTK FIX: Permanently strip native renderers from dynamically spawned inputs
         UIManager.put("TextFieldUI", "javax.swing.plaf.basic.BasicTextFieldUI");
-        UIManager.put("SpinnerUI", "javax.swing.plaf.basic.BasicSpinnerUI");        
+        UIManager.put("SpinnerUI", "javax.swing.plaf.basic.BasicSpinnerUI");
+        UIManager.put("ScrollBarUI", ThemedScrollBarUI.class.getName());
 
         // Theme-specific UI settings
         if (isDark) {
@@ -399,12 +404,7 @@ public class DialogUtil {
                 c.setBackground(bg);
                 c.setForeground(fg);
                 ((JPanel) c).setOpaque(true);
-                
-                javax.swing.border.Border border = ((JComponent) c).getBorder();
-                if (border instanceof javax.swing.border.TitledBorder) {
-                    ((javax.swing.border.TitledBorder) border).setTitleColor(fg);
-                    c.repaint(); 
-                }                
+                themeBorder(((JPanel) c).getBorder(), fg);
                 sweepComponents((Container) c);
             } 
             // --- Text Fields ---
@@ -649,4 +649,19 @@ public class DialogUtil {
             g2.dispose();
         }
     }
+
+    /**
+     * Custom Themed Border for JPanel and other Swing Components
+     */
+    private static void themeBorder(Border border, Color fgColor) {
+        if (border == null) return;
+        
+        if (border instanceof TitledBorder) {
+            ((TitledBorder) border).setTitleColor(fgColor);
+        } else if (border instanceof CompoundBorder) {
+            CompoundBorder cb = (CompoundBorder) border;
+            themeBorder(cb.getOutsideBorder(), fgColor);
+            themeBorder(cb.getInsideBorder(), fgColor);
+        }
+    }    
 }

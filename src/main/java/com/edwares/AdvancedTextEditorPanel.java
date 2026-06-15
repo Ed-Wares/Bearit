@@ -913,6 +913,12 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
         lineNumberPanel.repaint();
         DialogUtil.themePopupMenu(editorContextMenu);
+        // --- Pass the theme value directly into the custom UI! ---
+        scrollPane.getVerticalScrollBar().setUI(new ThemedScrollBarUI(theme));
+        scrollPane.getHorizontalScrollBar().setUI(new ThemedScrollBarUI(theme));        
+        if (globalScrollBar != null) {
+            globalScrollBar.setUI(new ThemedScrollBarUI(theme));
+        }
         textArea.repaint();
     }
 

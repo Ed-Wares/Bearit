@@ -731,6 +731,9 @@ public class HexEditorPanel extends JPanel {
 
         //applyThemeToContainer(this, panelBg, fg);
         DialogUtil.sweepComponents(this);
+        if (globalVBar != null) {
+            globalVBar.setUI(new ThemedScrollBarUI(theme));
+        }        
         hexTable.repaint();
     }
 }
