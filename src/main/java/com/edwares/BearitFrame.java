@@ -1671,6 +1671,8 @@ private void updateFrameTitle() {
         infoPanel.add(lblWebsite);
         infoPanel.add(Box.createVerticalStrut(20)); // Larger gap before license
         infoPanel.add(licensePanel);
+        infoPanel.add(Box.createVerticalStrut(25));
+        infoPanel.add(createAboutDebugPanel());
         
         // Bottom panel for the close button
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 15));
@@ -1685,6 +1687,79 @@ private void updateFrameTitle() {
         aboutDialog.pack();
         aboutDialog.setLocationRelativeTo(this); // Center on the main editor window
         aboutDialog.setVisible(true);
+    }
+
+    private JPanel createAboutDebugPanel() {
+        // --- Debug Information Section for About ---
+
+        // get version from pom.xml use <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+        String appVersion = BearitApp.class.getPackage().getImplementationVersion(); 
+
+        // Fetch OS Info
+        String osInfo = System.getProperty("os.name") + " " + 
+                        System.getProperty("os.version") + " (" + 
+                        System.getProperty("os.arch") + ")";
+        
+        // Fetch Java Info
+        String javaInfo = System.getProperty("java.version") + " (" + 
+                          System.getProperty("java.vendor") + ")";
+        
+        // Fetch the active JAR/Executable Path dynamically
+        String jarPath;
+        try {
+            jarPath = new File(com.edwares.BearitApp.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getAbsolutePath();
+        } catch (Exception e) {
+            jarPath = "Unable to resolve installation path";
+        }
+
+        // Fetch the Properties File Path
+        String propsPath = BearitProperties.getInstance().getPropertiesFile().getAbsolutePath();
+
+        // Consolidate the data into a single formatted string
+        String fullDebugText =  "Bearit Version: " + appVersion + "\n" +
+                                "OS: " + osInfo + "\n" +
+                                "Java: " + javaInfo + "\n" +
+                                "Install Path: " + jarPath + "\n" +
+                                "Preferences: " + propsPath + "\n" ;
+
+        // ---  Debug Panel ---
+        JPanel debugPanel = new JPanel(new BorderLayout(0, 10)); // Swapped to BorderLayout
+        debugPanel.setBorder(BorderFactory.createTitledBorder("Debug Information"));
+        debugPanel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createTitledBorder("Debug Information"),
+                BorderFactory.createEmptyBorder(5, 5, 5, 5)
+        ));
+
+        // Build the Text Area
+        JTextArea debugTextArea = new JTextArea(fullDebugText);
+        debugTextArea.setEditable(false);
+        // Use the default label font so it matches the dialog natively
+        debugTextArea.setFont(UIManager.getFont("Label.font").deriveFont(Font.PLAIN, 14f)); 
+        
+        // Wrap it in a scroll pane just in case paths get extremely long
+        JScrollPane scrollPane = new JScrollPane(debugTextArea);
+        scrollPane.setPreferredSize(new Dimension(200, 90));
+        debugPanel.add(scrollPane, BorderLayout.CENTER);
+
+        // --- Build the Copy Button ---
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        JButton copyBtn = new JButton("Copy to Clipboard");
+        
+        copyBtn.addActionListener(e -> {
+            StringSelection stringSelection = new StringSelection(debugTextArea.getText());
+            Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+            clipboard.setContents(stringSelection, null);
+            
+            // Give brief user feedback that it worked
+            copyBtn.setText("Copied!");
+            Timer timer = new Timer(1500, evt -> copyBtn.setText("Copy to Clipboard"));
+            timer.setRepeats(false);
+            timer.start();
+        });
+        
+        buttonPanel.add(copyBtn);
+        debugPanel.add(buttonPanel, BorderLayout.SOUTH);
+        return debugPanel;
     }
 
     // --- CUSTOM THEME ICONS TO BYPASS MACOS RENDERING BUGS ---

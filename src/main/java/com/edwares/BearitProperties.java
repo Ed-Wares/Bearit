@@ -32,7 +32,7 @@ public class BearitProperties {
 
     private BearitProperties() {
         props = new Properties();
-        propertiesFile = determinePropertiesFile();
+        propertiesFile = getPropertiesFile();
         
         for (int i = 0; i < 8; i++) {
             customToolCommands[i] = "";
@@ -50,9 +50,8 @@ public class BearitProperties {
         return instance;
     }
 
-    private File determinePropertiesFile() {
+    public File getPropertiesFile() {
         try {
-            
             String userHome = System.getProperty("user.home"); // Gets "C:\Users\Username" on Windows or "/home/username" on Linux
             // Create a hidden directory for your app: ~/.bearit/
             File appDir = new File(userHome, ".bearit");
@@ -61,10 +60,6 @@ public class BearitProperties {
             }
             // Return the safe path: ~/.bearit/bearit.properties
             return new File(appDir, PROPERTIES_FILENAME);
-            // File jarPath = new File(BearitProperties.class.getProtectionDomain().getCodeSource().getLocation().toURI());
-            // if (jarPath.isFile()) {
-            //     return new File(jarPath.getParentFile(), PROPERTIES_FILENAME);
-            // }
         } catch (Exception e) {
             // Ignore and fallback to current working directory
         }
