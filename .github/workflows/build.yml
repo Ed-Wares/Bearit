@@ -63,6 +63,7 @@ jobs:
             --name bearit \
             --app-version ${{ inputs.app_version }} \
             --dest distribution_payload/windows/ \
+            --icon src/main/resources/Bearit.ico \
             --win-per-user-install \
             --win-dir-chooser \
             --win-menu \
@@ -73,13 +74,13 @@ jobs:
       - name: Build macOS Native Executable (DMG)
         if: startsWith(matrix.os, 'macos')
         run: |
-          jpackage --type dmg --input target/ --main-jar bearit-${{ inputs.app_version }}.jar --main-class com.edwares.BearitApp --name bearit --app-version ${{ inputs.app_version }} --dest distribution_payload/macos/
+          jpackage --type dmg --input target/ --main-jar bearit-${{ inputs.app_version }}.jar --main-class com.edwares.BearitApp --name bearit --app-version ${{ inputs.app_version }} --dest distribution_payload/macos/ --icon src/main/resources/Bearit.icns
 
       # --- LINUX APPIMAGE GENERATION ---
       - name: Build Linux Native Executable (AppImage)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          jpackage --type deb --input target/ --main-jar bearit-${{ inputs.app_version }}.jar --main-class com.edwares.BearitApp --name bearit --app-version ${{ inputs.app_version }} --dest distribution_payload/linux/
+          jpackage --type deb --input target/ --main-jar bearit-${{ inputs.app_version }}.jar --main-class com.edwares.BearitApp --name bearit --app-version ${{ inputs.app_version }} --dest distribution_payload/linux/ --icon src/main/resources/Bearit.png
         shell: bash
 
       # Normalize cross-platform payload artifacts for extraction
