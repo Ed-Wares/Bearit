@@ -93,7 +93,6 @@ jobs:
           elif [ "${{ matrix.os }}" = "macos-14" ]; then
             cp distribution_payload/macos/*.dmg final_artifacts/bearit-macOS-AppleSilicon.dmg          
           elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            cp distribution_payload/linux/*.AppImage final_artifacts/
             cp distribution_payload/linux/*.deb final_artifacts/            
           fi
         shell: bash
