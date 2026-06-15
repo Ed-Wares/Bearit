@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-13, macos-14] # Spin up virtual machines for all three platform targets simultaneously
+        os: [ubuntu-latest, windows-latest, macos-15-intel, macos-14] # Spin up virtual machines for all three platform targets simultaneously
 
 
     steps:
@@ -88,7 +88,7 @@ jobs:
           # Conditionally pull the platform specific installer into the clean root upload directory
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             cp distribution_payload/windows/*.exe final_artifacts/
-          elif [ "${{ matrix.os }}" = "macos-13" ]; then
+          elif [ "${{ matrix.os }}" = "macos-15-intel" ]; then
             cp distribution_payload/macos/*.dmg final_artifacts/bearit-macOS-Intel.dmg
           elif [ "${{ matrix.os }}" = "macos-14" ]; then
             cp distribution_payload/macos/*.dmg final_artifacts/bearit-macOS-AppleSilicon.dmg          

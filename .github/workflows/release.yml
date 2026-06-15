@@ -34,7 +34,7 @@ jobs:
       - name: Download macOS Intel Artifact
         uses: actions/download-artifact@v4
         with:
-          name: compiled-bearit-package-macos-13-${{ github.event.release.tag_name }}
+          name: compiled-bearit-package-macos-15-intel-${{ github.event.release.tag_name }}
           path: release_payload/
 
       # Fetch macOS Apple Silicon Artifacts
