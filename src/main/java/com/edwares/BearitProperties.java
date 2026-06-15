@@ -52,11 +52,20 @@ public class BearitProperties {
 
     private File determinePropertiesFile() {
         try {
-            File jarPath = new File(BearitProperties.class.getProtectionDomain().getCodeSource().getLocation().toURI());
-            if (jarPath.isFile()) {
-                return new File(jarPath.getParentFile(), PROPERTIES_FILENAME);
+            
+            String userHome = System.getProperty("user.home"); // Gets "C:\Users\Username" on Windows or "/home/username" on Linux
+            // Create a hidden directory for your app: ~/.bearit/
+            File appDir = new File(userHome, ".bearit");
+            if (!appDir.exists()) {
+                appDir.mkdirs(); // Safely creates the directory if it doesn't exist
             }
-        } catch (URISyntaxException | IllegalArgumentException e) {
+            // Return the safe path: ~/.bearit/bearit.properties
+            return new File(appDir, PROPERTIES_FILENAME);
+            // File jarPath = new File(BearitProperties.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            // if (jarPath.isFile()) {
+            //     return new File(jarPath.getParentFile(), PROPERTIES_FILENAME);
+            // }
+        } catch (Exception e) {
             // Ignore and fallback to current working directory
         }
         return new File(PROPERTIES_FILENAME);

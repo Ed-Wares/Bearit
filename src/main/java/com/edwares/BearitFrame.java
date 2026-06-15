@@ -337,7 +337,8 @@ public class BearitFrame extends JFrame {
             isUpdatingTabs = false; // Disengage lock
             updateFrameTitle();
             // --- Immediately sweep the new tab with our custom theme interceptors! ---
-            DialogUtil.applyGlobalTheme(this, BearitProperties.getInstance().getTheme());
+            //DialogUtil.applyGlobalTheme(this, BearitProperties.getInstance().getTheme());
+            applyTheme(BearitProperties.getInstance().getTheme());
         }
     }
 
