@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest] # Spin up virtual machines for all three platform targets simultaneously
+        os: [ubuntu-latest, windows-latest, macos-13, macos-14] # Spin up virtual machines for all three platform targets simultaneously
 
 
     steps:
@@ -52,12 +52,22 @@ jobs:
       - name: Build Windows Native Executable (EXE)
         if: matrix.os == 'windows-latest'
         run: |
-          jpackage --type exe --input target/ --main-jar bearit-${{ inputs.version_string }}.jar --main-class com.edwares.BearitApp --name bearit --app-version ${{ inputs.version_string }} --dest distribution_payload/windows/
+          jpackage --type exe \
+            --input target/ \
+            --main-jar bearit-${{ inputs.version_string }}.jar \
+            --main-class com.edwares.BearitApp \
+            --name bearit \
+            --app-version ${{ inputs.version_string }} \
+            --dest distribution_payload/windows/ \
+            --win-per-user-install \
+            --win-dir-chooser \
+            --win-menu \
+            --win-shortcut
         shell: bash
 
-      # --- MAC DMG GENERATION ---
+      # This Mac step will now run twice (once for Intel, once for Silicon)
       - name: Build macOS Native Executable (DMG)
-        if: matrix.os == 'macos-latest'
+        if: startsWith(matrix.os, 'macos')
         run: |
           jpackage --type dmg --input target/ --main-jar bearit-${{ inputs.version_string }}.jar --main-class com.edwares.BearitApp --name bearit --app-version ${{ inputs.version_string }} --dest distribution_payload/macos/
 
@@ -65,42 +75,7 @@ jobs:
       - name: Build Linux Native Executable (AppImage)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          # 1. Generate the raw compiled application directory using jpackage
-          jpackage --type app-image --input target/ --main-jar bearit-${{ inputs.version_string }}.jar --main-class com.edwares.BearitApp --name bearit --app-version ${{ inputs.version_string }} --dest raw_linux/
-          
-          # 2. Setup the AppDir structure required by AppImageTool
-          mkdir -p AppDir/usr
-          cp -r raw_linux/bearit/* AppDir/usr/
-          
-          # 3. Create the AppRun entry point script
-          cat << 'EOF' > AppDir/AppRun
-          #!/bin/sh
-          HERE="$(dirname "$(readlink -f "${0}")")"
-          exec "$HERE/usr/bin/bearit" "$@"
-          EOF
-          chmod +x AppDir/AppRun
-          
-          # 4. Create the .desktop metadata file required by Linux Desktop Environments
-          cat << 'EOF' > AppDir/bearit.desktop
-          [Desktop Entry]
-          Type=Application
-          Name=bearit
-          Exec=bearit
-          Icon=bearit
-          Categories=Utility;Development;
-          EOF
-          
-          # 5. Create a placeholder icon (AppImage requires an icon to compile successfully)
-          # Note: If you have a real icon, you can copy it here instead of generating this SVG
-          echo '<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="50" fill="#333"/></svg>' > AppDir/bearit.svg
-          
-          # 6. Download AppImageTool and compile the AppDir into a single AppImage binary
-          wget -O appimagetool "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
-          chmod +x appimagetool
-          
-          mkdir -p distribution_payload/linux/
-          # The --appimage-extract-and-run flag is required on GitHub Action runners to bypass FUSE requirements
-          ./appimagetool --appimage-extract-and-run AppDir distribution_payload/linux/bearit-linux-x86_64.AppImage
+          jpackage --type deb --input target/ --main-jar bearit-${{ inputs.version_string }}.jar --main-class com.edwares.BearitApp --name bearit --app-version ${{ inputs.version_string }} --dest distribution_payload/linux/
         shell: bash
 
       # Normalize cross-platform payload artifacts for extraction
@@ -113,10 +88,13 @@ jobs:
           # Conditionally pull the platform specific installer into the clean root upload directory
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             cp distribution_payload/windows/*.exe final_artifacts/
-          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
-            cp distribution_payload/macos/*.dmg final_artifacts/
+          elif [ "${{ matrix.os }}" = "macos-13" ]; then
+            cp distribution_payload/macos/*.dmg final_artifacts/bearit-macOS-Intel.dmg
+          elif [ "${{ matrix.os }}" = "macos-14" ]; then
+            cp distribution_payload/macos/*.dmg final_artifacts/bearit-macOS-AppleSilicon.dmg          
           elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
             cp distribution_payload/linux/*.AppImage final_artifacts/
+            cp distribution_payload/linux/*.deb final_artifacts/            
           fi
         shell: bash
 

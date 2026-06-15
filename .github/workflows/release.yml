@@ -30,11 +30,18 @@ jobs:
           name: compiled-bearit-package-windows-latest-${{ github.event.release.tag_name }}
           path: release_payload/
 
-      # Fetch macOS Artifacts
-      - name: Download macOS Artifact
+      # Fetch macOS Intel Artifacts
+      - name: Download macOS Intel Artifact
         uses: actions/download-artifact@v4
         with:
-          name: compiled-bearit-package-macos-latest-${{ github.event.release.tag_name }}
+          name: compiled-bearit-package-macos-13-${{ github.event.release.tag_name }}
+          path: release_payload/
+
+      # Fetch macOS Apple Silicon Artifacts
+      - name: Download macOS Apple Silicon Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: compiled-bearit-package-macos-14-${{ github.event.release.tag_name }}
           path: release_payload/
 
       # Fetch Linux Artifacts
@@ -53,4 +60,5 @@ jobs:
             release_payload/*.jar
             release_payload/*.exe
             release_payload/*.dmg
+            release_payload/*.deb
             release_payload/*.AppImage
