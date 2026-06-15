@@ -11,6 +11,7 @@ jobs:
     with:
       git_ref: ${{ github.ref }} 
       version_string: ${{ github.event.release.tag_name }} 
+      app_version: ${{ github.event.release.tag_name }}
 
   # Extract compiled binaries from all OS matrices and deploy them to the Release asset slot
   upload_to_release:

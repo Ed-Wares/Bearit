@@ -16,3 +16,4 @@ jobs:
       git_ref: ${{ github.ref }}
       # Use the short commit hash as the version for CI builds
       version_string: "ci-${{ github.sha }}"
+      app_version: "0.0.1" # Standardized fallback to bypass strict OS validation rules
