@@ -79,26 +79,7 @@ public class BearitFrame extends JFrame {
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
-                if (checkAllTabsBeforeExit()) {
-                    props.setFrameWidth(getWidth());
-                    props.setFrameHeight(getHeight());
-                    // Save Session ---
-                    List<String> openFiles = new ArrayList<>();
-                    for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
-                        Component c = tabbedPane.getComponentAt(i);
-                        if (c instanceof AdvancedTextEditorPanel) {
-                            File f = ((AdvancedTextEditorPanel) c).getActiveFile();
-                            if (f != null) openFiles.add(f.getAbsolutePath());
-                        }
-                        if (c instanceof BearitTextHexWrapper) {
-                            File f = ((BearitTextHexWrapper) c).getHiddenTextEditor().getActiveFile();
-                            if (f != null) openFiles.add(f.getAbsolutePath());
-                        }
-                    }
-                    // Pass the current tab index to the session saver
-                    BearitProperties.getInstance().saveSession(openFiles, tabbedPane.getSelectedIndex());
-                    System.exit(0);
-                }
+                onClosingEvent(e);
             }
         });
 
@@ -225,6 +206,30 @@ public class BearitFrame extends JFrame {
 
         // Force the UI to adapt to the saved theme immediately on launch
         applyTheme(BearitProperties.getInstance().getTheme());
+    }
+
+    private void onClosingEvent(WindowEvent e) {
+        BearitProperties props = BearitProperties.getInstance();
+        if (checkAllTabsBeforeExit()) {
+            props.setFrameWidth(getWidth());
+            props.setFrameHeight(getHeight());
+            // Save Session ---
+            List<String> openFiles = new ArrayList<>();
+            for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
+                Component c = tabbedPane.getComponentAt(i);
+                if (c instanceof AdvancedTextEditorPanel) {
+                    File f = ((AdvancedTextEditorPanel) c).getActiveFile();
+                    if (f != null) openFiles.add(f.getAbsolutePath());
+                }
+                if (c instanceof BearitTextHexWrapper) {
+                    File f = ((BearitTextHexWrapper) c).getHiddenTextEditor().getActiveFile();
+                    if (f != null) openFiles.add(f.getAbsolutePath());
+                }
+            }
+            // Pass the current tab index to the session saver
+            props.saveSession(openFiles, tabbedPane.getSelectedIndex());
+            System.exit(0);
+        }
     }
 
     // --- Tab Management ---
@@ -1328,11 +1333,7 @@ private void updateFrameTitle() {
         // Add listener and shortcut to the new Save All menu item
         saveAllItem.addActionListener(e -> performSaveAll());
         
-        exitItem.addActionListener(e -> {
-            if (checkAllTabsBeforeExit()) {
-                System.exit(0);
-            }
-        });
+        exitItem.addActionListener(e -> onClosingEvent(null));
 
         fileMenu.add(newItem);
         fileMenu.add(openItem);
