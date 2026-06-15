@@ -14,45 +14,117 @@ on:
 
 jobs:
   compile_project:
-    name: Execute Maven Native Compilation
-    runs-on: ubuntu-latest
+    name: Execute Native Compilation & Packaging
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest] # Spin up virtual machines for all three platform targets simultaneously
+
 
     steps:
-      # 1. Pull the codebase into the virtual machine environment
+      # Pull the codebase into the virtual machine environment
       - name: Fetch Codebase Repository
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.git_ref }}
 
-      # 2. Provision JDK 21 Environment (Using Amazon Corretto build)
+      # Provision JDK 21 Environment
       - name: Provision Amazon Corretto JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: 'corretto'
           java-version: '21'
-          cache: 'maven' # Speeds up subsequent compiles by caching heavy dependency trees
+          cache: 'maven'
 
-      # 3. Inject the dynamic Version String into the Maven project properties
+      # Inject the dynamic Version String into the Maven project properties
       - name: Apply Dynamic Compilation Version
         run: |
           mvn versions:set -DnewVersion=${{ inputs.version_string }} -DgenerateBackupPoms=false
+        shell: bash
 
-      # 4. Build and Package the application into a clean executable JAR file
+      # Build and Package the application into a clean executable JAR file
       - name: Compile Code and Package Executable Artifact
         run: mvn clean package -DskipTests
 
-      # 5. Standardize the output filename so it can be handled safely by delivery streams
+      # Native Bundle Generation using JDK jpackage
+      # --- WINDOWS EXE GENERATION ---
+      - name: Build Windows Native Executable (EXE)
+        if: matrix.os == 'windows-latest'
+        run: |
+          jpackage --type exe --input target/ --main-jar bearit-${{ inputs.version_string }}.jar --main-class com.edwares.BearitApp --name bearit --app-version ${{ inputs.version_string }} --dest distribution_payload/windows/
+        shell: bash
+
+      # --- MAC DMG GENERATION ---
+      - name: Build macOS Native Executable (DMG)
+        if: matrix.os == 'macos-latest'
+        run: |
+          jpackage --type dmg --input target/ --main-jar bearit-${{ inputs.version_string }}.jar --main-class com.edwares.BearitApp --name bearit --app-version ${{ inputs.version_string }} --dest distribution_payload/macos/
+
+      # --- LINUX APPIMAGE GENERATION ---
+      - name: Build Linux Native Executable (AppImage)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          # 1. Generate the raw compiled application directory using jpackage
+          jpackage --type app-image --input target/ --main-jar bearit-${{ inputs.version_string }}.jar --main-class com.edwares.BearitApp --name bearit --app-version ${{ inputs.version_string }} --dest raw_linux/
+          
+          # 2. Setup the AppDir structure required by AppImageTool
+          mkdir -p AppDir/usr
+          cp -r raw_linux/bearit/* AppDir/usr/
+          
+          # 3. Create the AppRun entry point script
+          cat << 'EOF' > AppDir/AppRun
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          exec "$HERE/usr/bin/bearit" "$@"
+          EOF
+          chmod +x AppDir/AppRun
+          
+          # 4. Create the .desktop metadata file required by Linux Desktop Environments
+          cat << 'EOF' > AppDir/bearit.desktop
+          [Desktop Entry]
+          Type=Application
+          Name=bearit
+          Exec=bearit
+          Icon=bearit
+          Categories=Utility;Development;
+          EOF
+          
+          # 5. Create a placeholder icon (AppImage requires an icon to compile successfully)
+          # Note: If you have a real icon, you can copy it here instead of generating this SVG
+          echo '<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="50" fill="#333"/></svg>' > AppDir/bearit.svg
+          
+          # 6. Download AppImageTool and compile the AppDir into a single AppImage binary
+          wget -O appimagetool "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x appimagetool
+          
+          mkdir -p distribution_payload/linux/
+          # The --appimage-extract-and-run flag is required on GitHub Action runners to bypass FUSE requirements
+          ./appimagetool --appimage-extract-and-run AppDir distribution_payload/linux/bearit-linux-x86_64.AppImage
+        shell: bash
+
+      # Normalize cross-platform payload artifacts for extraction
       - name: Normalize Executable File Nomenclature
         run: |
-          mkdir -p distribution_payload
-          # Dynamically finds your compiled JAR file in the target directory and standardizes its filename
-          cp target/bearit-*.jar distribution_payload/bearit.jar
+          mkdir -p final_artifacts
+          # Always copy the platform agnostic JAR file safely
+          cp target/bearit-*.jar final_artifacts/bearit.jar
+          
+          # Conditionally pull the platform specific installer into the clean root upload directory
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp distribution_payload/windows/*.exe final_artifacts/
+          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+            cp distribution_payload/macos/*.dmg final_artifacts/
+          elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            cp distribution_payload/linux/*.AppImage final_artifacts/
+          fi
+        shell: bash
 
-      # 6. Archive the compiled binary as a downloadable workflow artifact
+      # Archive the individual platform bundle workspace back to the runner pipeline
       - name: Archive Compiled Binary Workspace
         uses: actions/upload-artifact@v4
         with:
-          name: compiled-bearit-package-${{ inputs.version_string }}
-          path: distribution_payload/bearit.jar
-          retention-days: 7 # Safe storage limit to keep the workspace clean
+          name: compiled-bearit-package-${{ matrix.os }}-${{ inputs.version_string }}
+          path: final_artifacts/*
+          retention-days: 7
           if-no-files-found: error

@@ -5,29 +5,52 @@ on:
     types: [published]
 
 jobs:
-  # 1. Trigger the reusable Maven builder
+  # Trigger the reusable multi-platform Maven builder matrix
   build_release_binary:
     uses: ./.github/workflows/build.yml
     with:
       git_ref: ${{ github.ref }} 
       version_string: ${{ github.event.release.tag_name }} 
 
-  # 2. Extract compiled binary from the workspace and deploy it to the Release asset slot
+  # Extract compiled binaries from all OS matrices and deploy them to the Release asset slot
   upload_to_release:
     needs: build_release_binary
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Essential permission context to mutate Release assets
+      contents: write
 
     steps:
-      # Adjusted name matching string schema to perfectly align with build.yml output signature
-      - name: Download Artifact from Build Stage
+      - name: Create Merged Asset Workspace Directory
+        run: mkdir -p release_payload
+
+      # Fetch Windows Artifacts
+      - name: Download Windows Artifact
         uses: actions/download-artifact@v4
         with:
-          name: compiled-bearit-package-${{ github.event.release.tag_name }}
-          
-      - name: Upload Asset to Github Release Page
+          name: compiled-bearit-package-windows-latest-${{ github.event.release.tag_name }}
+          path: release_payload/
+
+      # Fetch macOS Artifacts
+      - name: Download macOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: compiled-bearit-package-macos-latest-${{ github.event.release.tag_name }}
+          path: release_payload/
+
+      # Fetch Linux Artifacts
+      - name: Download Ubuntu Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: compiled-bearit-package-ubuntu-latest-${{ github.event.release.tag_name }}
+          path: release_payload/
+
+      # Publish everything to the user-facing release hub
+      - name: Upload Assets to Github Release Page
         uses: softprops/action-gh-release@v2
         with:
-          # Targets the downloaded file inside the local job instance
-          files: bearit.jar
+          # This glob pattern grabs the jar, exe, dmg, and AppImage packages simultaneously out of the workspace
+          files: |
+            release_payload/*.jar
+            release_payload/*.exe
+            release_payload/*.dmg
+            release_payload/*.AppImage
