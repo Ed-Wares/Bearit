@@ -64,6 +64,8 @@ jobs:
             --app-version ${{ inputs.app_version }} \
             --dest distribution_payload/windows/ \
             --icon src/main/resources/Bearit.ico \
+            --vendor "EdWares" \
+            --win-menu-group "EdWares" \
             --win-per-user-install \
             --win-dir-chooser \
             --win-menu \
@@ -74,7 +76,7 @@ jobs:
       - name: Build macOS Native Executable (DMG)
         if: startsWith(matrix.os, 'macos')
         run: |
-          jpackage --type dmg --input target/ --main-jar bearit-${{ inputs.app_version }}.jar --main-class com.edwares.BearitApp --name bearit --app-version ${{ inputs.app_version }} --dest distribution_payload/macos/ --icon src/main/resources/Bearit.icns
+          jpackage --type dmg --input target/ --main-jar bearit-${{ inputs.app_version }}.jar --main-class com.edwares.BearitApp --name bearit --app-version ${{ inputs.app_version }} --dest distribution_payload/macos/ --icon src/main/resources/Bearit.icns --vendor "EdWares"
 
       # --- LINUX DEB GENERATION ---
       - name: Build Linux Native Executable (DEB)
@@ -120,6 +122,7 @@ jobs:
             --app-version ${{ inputs.app_version }} \
             --dest distribution_payload/linux/ \
             --icon src/main/resources/Bearit.png \
+            --vendor "EdWares" \
             --resource-dir linux_resources/ \
             --linux-menu-group "Utility;Development;"
         shell: bash

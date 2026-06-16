@@ -183,74 +183,144 @@ public class ContextMenuInstaller {
 
     private static void installForUbuntu(Component parent, String javaPath, String jarPath) throws Exception {
         String userHome = System.getProperty("user.home");
+        Path symlinkPath = Paths.get("/usr/local/bin/bearit");
+        boolean isNative = Files.exists(symlinkPath);
+
+        // --- Resolve Absolute Icon Path ---
+        String iconPath = "text-editor"; // Safe generic fallback
+        if (isNative) {
+            // jpackage usually places the native icon here
+            File nativeIcon = new File("/opt/bearit/lib/bearit.png");
+            if (nativeIcon.exists()) {
+                iconPath = nativeIcon.getAbsolutePath();
+            } else {
+                // If the specific file name varies, fallback to the registered system name
+                iconPath = "bearit"; 
+            }
+        } else {
+            // Portable mode: Look for a bearit.png in the same folder as the jar
+            File portableIcon = new File(new File(jarPath).getParentFile(), "bearit.png");
+            if (portableIcon.exists()) {
+                iconPath = portableIcon.getAbsolutePath();
+            }
+        }
+
+        // --- Create the Execution Command ---
+        // The '%F' is critical: It tells Linux to pass the exact file path(s) into your application natively.
+        String execCommand = isNative
+                ? "/usr/local/bin/bearit %F"
+                : "\"" + javaPath + "\" -jar \"" + jarPath + "\" %F";
+
+
+        // --- NATIVE MAIN MENU INTEGRATION (MIME TYPES) ---
+        Path localAppsDir = Paths.get(userHome, ".local", "share", "applications");
+        if (!Files.exists(localAppsDir)) {
+            Files.createDirectories(localAppsDir);
+        }
+
+        // We generate a hidden .desktop file specifically to handle right-click events
+        Path desktopFilePath = localAppsDir.resolve("bearit-opener.desktop");
+        String desktopContent = "[Desktop Entry]\n" +
+                "Type=Application\n" +
+                "Name=Bearit\n" +
+                "Exec=" + execCommand + "\n" +
+                "Icon=" + iconPath + "\n" + // Uses the absolute path or safe fallback
+                "Terminal=false\n" +
+                "NoDisplay=true\n" + // Hides this duplicate file from the main App Drawer
+                "MimeType=text/plain;application/octet-stream;text/x-java;application/json;text/xml;\n";
+
+        Files.write(desktopFilePath, desktopContent.getBytes());
+
+        // Use the native xdg-mime tool to tell Linux that Bearit is the preferred editor for these files.
+        // This instantly pushes Bearit to the very top of the right-click menu in Nautilus and Caja!
+        String[] mimesToClaim = {
+                "text/plain",               // Standard text files
+                "application/octet-stream", // Unknown binaries (perfect for Hex Editing)
+                "text/x-java",              // Java source files
+                "application/json",         // JSON files
+                "text/xml"                  // XML files
+        };
+
+        for (String mime : mimesToClaim) {
+            Runtime.getRuntime().exec(new String[]{"xdg-mime", "default", "bearit-opener.desktop", mime}).waitFor();
+        }
+
+        // Force the desktop environments to immediately reload their right-click menus
+        Runtime.getRuntime().exec(new String[]{"update-desktop-database", localAppsDir.toString()}).waitFor();
+
+
+        // --- SCRIPTS FALLBACK (Keep this for files that aren't strictly text/binary) ---
         Path nautilusScriptsDir = Paths.get(userHome, ".local", "share", "nautilus", "scripts");
         Path cajaScriptsDir = Paths.get(userHome, ".config", "caja", "scripts");
         
-        // --- Detect Native Installation vs Portable/Jar Execution ---
-        String scriptContent = "";
-        Path symlinkPath = Paths.get("/usr/local/bin/bearit");
-        
-        if (Files.exists(symlinkPath)) {
-            // The .deb package is installed. Route through the native system alias.
-            // Using the absolute path ensures it works even if the file manager's environment PATH is restricted.
-            scriptContent = "#!/bin/bash\n" +
-                            "/usr/local/bin/bearit \"$1\"\n";
-        } else {
-            // No symlink found. Fall back to calling the JVM and Jar directly.
-            scriptContent = "#!/bin/bash\n" +
-                            "\"" + javaPath + "\" -jar \"" + jarPath + "\" \"$1\"\n";
-        }
+        String scriptContent = isNative 
+                ? "#!/bin/bash\n/usr/local/bin/bearit \"$1\"\n"
+                : "#!/bin/bash\n\"" + javaPath + "\" -jar \"" + jarPath + "\" \"$1\"\n";
 
-        boolean installed = false;
+        boolean installedScripts = false;
 
-        // Install for Nautilus
-        if (!Files.exists(nautilusScriptsDir)) {
-            Files.createDirectories(nautilusScriptsDir);
-        }
+        if (!Files.exists(nautilusScriptsDir)) Files.createDirectories(nautilusScriptsDir);
         Path nautilusScriptPath = nautilusScriptsDir.resolve("Edit with Bearit");
         Files.write(nautilusScriptPath, scriptContent.getBytes());
         setExecutablePermissions(nautilusScriptPath);
-        installed = true;
+        installedScripts = true;
 
-        // Install for Caja
-        if (!Files.exists(cajaScriptsDir)) {
-            Files.createDirectories(cajaScriptsDir);
-        }
+        if (!Files.exists(cajaScriptsDir)) Files.createDirectories(cajaScriptsDir);
         Path cajaScriptPath = cajaScriptsDir.resolve("Edit with Bearit");
         Files.write(cajaScriptPath, scriptContent.getBytes());
         setExecutablePermissions(cajaScriptPath);
-        installed = true;
+        installedScripts = true;
 
-        if (installed) {
-            //JOptionPane.showMessageDialog(parent, "Context menu script installed successfully!\nRight-click any file in Nautilus or Caja -> Scripts -> Edit with Bearit.", "Success", JOptionPane.INFORMATION_MESSAGE);
-            DialogUtil.showMessageDialog(parent, "Context menu script installed successfully!\nRight-click any file in Nautilus or Caja -> Scripts -> Edit with Bearit.", "Success", JOptionPane.INFORMATION_MESSAGE);
+
+        // --- SUCCESS PROMPT ---
+        if (installedScripts) {
+            DialogUtil.showMessageDialog(parent, 
+                    "Context menu installed successfully!\n\n" +
+                    "• Bearit is now at the top of the main right-click menu for Text and Binary files.\n" +
+                    "• For unassociated file types, Bearit is still available in the 'Scripts' menu.", 
+                    "Success", JOptionPane.INFORMATION_MESSAGE);
         }
     }
 
     private static void uninstallForUbuntu(Component parent) throws Exception {
         String userHome = System.getProperty("user.home");
-        Path nautilusScriptPath = Paths.get(userHome, ".local", "share", "nautilus", "scripts", "Edit with Bearit");
-        Path cajaScriptPath = Paths.get(userHome, ".config", "caja", "scripts", "Edit with Bearit");
-        
-        boolean removedNautilus = false;
-        boolean removedCaja = false;
+        boolean removedAnything = false;
 
+        // Remove the MIME Type Desktop File
+        Path desktopFilePath = Paths.get(userHome, ".local", "share", "applications", "bearit-opener.desktop");
+        if (Files.exists(desktopFilePath)) {
+            Files.delete(desktopFilePath);
+            removedAnything = true;
+            
+            // Force the desktop environments to refresh and fallback to their default editors (e.g., Gedit)
+            Path localAppsDir = Paths.get(userHome, ".local", "share", "applications");
+            Runtime.getRuntime().exec(new String[]{"update-desktop-database", localAppsDir.toString()}).waitFor();
+        }
+
+        // Remove the Nautilus Script
+        Path nautilusScriptPath = Paths.get(userHome, ".local", "share", "nautilus", "scripts", "Edit with Bearit");
         if (Files.exists(nautilusScriptPath)) {
             Files.delete(nautilusScriptPath);
-            removedNautilus = true;
+            removedAnything = true;
         }
 
+        // Remove the Caja Script
+        Path cajaScriptPath = Paths.get(userHome, ".config", "caja", "scripts", "Edit with Bearit");
         if (Files.exists(cajaScriptPath)) {
             Files.delete(cajaScriptPath);
-            removedCaja = true;
+            removedAnything = true;
         }
 
-        if (removedNautilus || removedCaja) {
-            //JOptionPane.showMessageDialog(parent, "Context menu script removed successfully from Linux file managers.", "Success", JOptionPane.INFORMATION_MESSAGE);
-            DialogUtil.showMessageDialog(parent, "Context menu script removed successfully from Linux file managers.", "Success", JOptionPane.INFORMATION_MESSAGE);
+        // 4. Success Prompt
+        if (removedAnything) {
+            DialogUtil.showMessageDialog(parent, 
+                    "Context menu integrations removed successfully!\n\n" +
+                    "Ubuntu has reverted back to its default text editor.", 
+                    "Success", JOptionPane.INFORMATION_MESSAGE);
         } else {
-            //JOptionPane.showMessageDialog(parent, "Context menu scripts were not found. They may have already been removed.", "Notice", JOptionPane.INFORMATION_MESSAGE);
-            DialogUtil.showMessageDialog(parent, "Context menu scripts were not found. They may have already been removed.", "Notice", JOptionPane.INFORMATION_MESSAGE);
+            DialogUtil.showMessageDialog(parent, 
+                    "No context menu integrations were found to remove.", 
+                    "Info", JOptionPane.INFORMATION_MESSAGE);
         }
     }
 
