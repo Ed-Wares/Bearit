@@ -10,6 +10,7 @@ public class ShortcutUtil {
 
     // Windows Constants
     public static final String WIN_SHORTCUT_NAME = "Bearit.lnk";
+    public static final String WIN_BAT_NAME = "bearit.bat";
     public static final String WIN_ICON_NAME = "Bearit.ico";
 
     // Linux Constants
@@ -25,6 +26,7 @@ public class ShortcutUtil {
 
             if (osName.contains("win")) {
                 File shortcutFile = new File(parentDir, WIN_SHORTCUT_NAME);
+                File batFile = new File(parentDir, WIN_BAT_NAME);
                 File iconFile = new File(parentDir, WIN_ICON_NAME);
 
                 if (!iconFile.exists() && parentDir.canWrite()) {
@@ -32,6 +34,9 @@ public class ShortcutUtil {
                 }
                 if (!shortcutFile.exists() && parentDir.canWrite()) {
                     createWindowsShortcut(shortcutFile, jarFile, iconFile);
+                }
+                if (!batFile.exists() && parentDir.canWrite()) {
+                    createWindowsBatFile(jarFile);
                 }
             } else if (osName.contains("nix") || osName.contains("nux") || osName.contains("aix")) {
                 File shortcutFile = new File(parentDir, LINUX_SHORTCUT_NAME);
@@ -119,6 +124,23 @@ public class ShortcutUtil {
             pb.start();
         } catch (IOException e) {
             System.err.println("Failed to create shortcut: " + e.getMessage());
+        }
+    }
+
+    private static void createWindowsBatFile(File jarFile) {
+        // --- Generate a CLI Batch Script for Portable Mode ---
+        // This allows the user to just type 'bearit' and perfectly preserves their terminal's working directory.
+        try {
+            File appDir = jarFile.getParentFile();
+            File batFile = new File(appDir, "bearit.bat");
+            String javaHome = System.getProperty("java.home");
+            String javawPath = new File(javaHome, "bin" + File.separator + "javaw.exe").getAbsolutePath();
+            
+            // The %* dynamically passes any and all file paths/arguments straight into your JAR
+            String batContent = "@echo off\r\nstart \"\" \"" + javawPath + "\" -jar \"" + jarFile.getAbsolutePath() + "\" %*";
+            Files.write(batFile.toPath(), batContent.getBytes());
+        } catch (Exception e) {
+            System.err.println("Failed to create batch file: " + e.getMessage());
         }
     }
 }

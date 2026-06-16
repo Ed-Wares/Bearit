@@ -30,8 +30,7 @@ public class ContextMenuInstaller {
                 //JOptionPane.showMessageDialog(parent, "Unsupported operating system.", "Install Failed", JOptionPane.ERROR_MESSAGE);
                 DialogUtil.showMessageDialog(parent, "Unsupported operating system.", "Install Failed", JOptionPane.ERROR_MESSAGE);
             }
-            // Prompt the user for default app takeover
-            DefaultEditorManager.promptAndSetDefault(null);
+            //DefaultEditorManager.promptAndSetDefault(null); // Prompt the user for default app
         } catch (Exception e) {
             //JOptionPane.showMessageDialog(parent, "Failed to install context menu: \n" + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
             DialogUtil.showMessageDialog(parent, "Failed to install context menu: \n" + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
@@ -41,10 +40,10 @@ public class ContextMenuInstaller {
 
     public static void uninstall(Component parent) {
         String os = System.getProperty("os.name").toLowerCase();
-        
         try {
+            String jarPath = getRunningJarPath();
             if (os.contains("win")) {
-                uninstallForWindows(parent);
+                uninstallForWindows(parent, jarPath);
             } else if (os.contains("nix") || os.contains("nux") || os.contains("aix")) {
                 uninstallForUbuntu(parent);
             } else if (os.contains("mac")) {
@@ -73,41 +72,110 @@ public class ContextMenuInstaller {
     // --- Windows Implementation ---
 
     private static void installForWindows(Component parent, String jarPath) throws Exception {
-        // Ensure the shortcut and icon are generated first using your utility
-        ShortcutUtil.ensureShortcutExists();
 
         File jarFile = new File(jarPath);
-        File parentDir = jarFile.getParentFile();
-        File shortcutFile = new File(parentDir, ShortcutUtil.WIN_SHORTCUT_NAME);
-        File iconFile = new File(parentDir, ShortcutUtil.WIN_ICON_NAME);
-
-        // To safely execute a .lnk file from the Windows registry, we use 'cmd.exe /c start'
-        // The empty quotes "" act as the window title parameter to 'start'
-        String command = String.format("cmd.exe /c start \"\" \"%s\" \"%%1\"", shortcutFile.getAbsolutePath());
+        File appDir = jarFile.getParentFile();
         
+        // Navigate up one more level to check for the native jpackage launcher
+        File installDir = appDir != null ? appDir.getParentFile() : null;
+        File nativeExe = installDir != null ? new File(installDir, "bearit.exe") : null;
+
+        String command;
+        String iconPath;
+        String targetPathDir; // The directory we will add to the PATH
+
+        if (nativeExe != null && nativeExe.exists()) {
+            // --- JPACKAGE NATIVE INSTALL DETECTED ---
+            // Route directly to the native Windows executable.
+            // The "%1" passes the right-clicked file path directly to your main args!
+            command = String.format("\"%s\" \"%%1\"", nativeExe.getAbsolutePath());
+            // Jpackage executables embed your custom .ico directly inside the .exe file, 
+            // so Windows can extract the registry icon straight from the launcher itself.
+            iconPath = nativeExe.getAbsolutePath();
+            targetPathDir = installDir.getAbsolutePath();
+            
+        } else {
+            // --- PORTABLE / JAR EXECUTION DETECTED ---
+            // Fallback to the existing ShortcutUtil approach
+            ShortcutUtil.ensureShortcutExists();
+            File shortcutFile = new File(appDir, ShortcutUtil.WIN_SHORTCUT_NAME);
+            File iconFile = new File(appDir, ShortcutUtil.WIN_ICON_NAME);
+            // Use cmd.exe to launch the .lnk file safely
+            command = String.format("cmd.exe /c start \"\" \"%s\" \"%%1\"", shortcutFile.getAbsolutePath());
+            iconPath = iconFile.getAbsolutePath();
+            targetPathDir = appDir.getAbsolutePath();
+        }
+
+        // Cleanly escape the paths so the Windows Registry string parser doesn't break
+        String escapedIconPath = iconPath.replace("\"", "\\\"");
+        String escapedCommand = command.replace("\"", "\\\"");
+
         String regAddMenu = "reg add \"HKCU\\Software\\Classes\\*\\shell\\Bearit\" /ve /d \"Edit with Bearit\" /f";
-        String regAddIcon = String.format("reg add \"HKCU\\Software\\Classes\\*\\shell\\Bearit\" /v Icon /t REG_SZ /d \"%s\" /f", iconFile.getAbsolutePath().replace("\"", "\\\""));
-        String regAddCmd = String.format("reg add \"HKCU\\Software\\Classes\\*\\shell\\Bearit\\command\" /ve /d \"%s\" /f", command.replace("\"", "\\\""));
+        String regAddIcon = String.format("reg add \"HKCU\\Software\\Classes\\*\\shell\\Bearit\" /v Icon /t REG_SZ /d \"%s\" /f", escapedIconPath);
+        String regAddCmd = String.format("reg add \"HKCU\\Software\\Classes\\*\\shell\\Bearit\\command\" /ve /d \"%s\" /f", escapedCommand);
 
         Runtime.getRuntime().exec(new String[]{"cmd.exe", "/c", regAddMenu}).waitFor();
         Runtime.getRuntime().exec(new String[]{"cmd.exe", "/c", regAddIcon}).waitFor();
         Runtime.getRuntime().exec(new String[]{"cmd.exe", "/c", regAddCmd}).waitFor();
 
-        //JOptionPane.showMessageDialog(parent, "Context menu installed successfully!\nRight-click any file in Windows Explorer to see 'Edit with Bearit'.", "Success", JOptionPane.INFORMATION_MESSAGE);
-        DialogUtil.showMessageDialog(parent, "Context menu installed successfully!\nRight-click any file in Windows Explorer to see 'Edit with Bearit'.", "Success", JOptionPane.INFORMATION_MESSAGE);
+        // Prompt the user for the PATH integration
+        int addPathChoice = JOptionPane.showConfirmDialog(parent,
+                "Context menu installed successfully!\nRight-click any file in Windows Explorer to see 'Edit with Bearit'\n\n" +
+                "Would you also like to add Bearit to your system PATH\nso you can launch it from the command line?",
+                "Add to PATH?", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+
+        if (addPathChoice == JOptionPane.YES_OPTION) {
+            // PowerShell script: Checks if the path exists before appending it to prevent duplicates
+            String psScript = String.format(
+                    "$p = [Environment]::GetEnvironmentVariable('Path', 'User'); " +
+                    "if ($p -notmatch [regex]::Escape('%s')) { " +
+                    "[Environment]::SetEnvironmentVariable('Path', $p + ';%s', 'User') }",
+                    targetPathDir, targetPathDir);
+
+            Runtime.getRuntime().exec(new String[]{"powershell.exe", "-Command", psScript}).waitFor();
+            
+            DialogUtil.showMessageDialog(parent, 
+                    "Successfully added to PATH!\nPlease restart any open command prompts to use the 'bearit' command.", 
+                    "Success", JOptionPane.INFORMATION_MESSAGE);
+        } else {
+            // Fallback success message if they only wanted the context menu
+            DialogUtil.showMessageDialog(parent, "Setup complete.", "Success", JOptionPane.INFORMATION_MESSAGE);
+        }
     }
 
-    private static void uninstallForWindows(Component parent) throws Exception {
+    private static void uninstallForWindows(Component parent, String jarPath) throws Exception {
+        // Detect the execution path so we know exactly what folder to rip out of the PATH variable
+        File jarFile = new File(jarPath);
+        File appDir = jarFile.getParentFile();
+        File installDir = appDir != null ? appDir.getParentFile() : null;
+        File nativeExe = installDir != null ? new File(installDir, "bearit.exe") : null;
+
+        String targetPathDir = (nativeExe != null && nativeExe.exists()) 
+                                ? installDir.getAbsolutePath() 
+                                : appDir.getAbsolutePath();
+
+        // Remove the Context Menu Registry Keys
         String regDelete = "reg delete \"HKCU\\Software\\Classes\\*\\shell\\Bearit\" /f";
-        Process p = Runtime.getRuntime().exec(new String[]{"cmd.exe", "/c", regDelete});
-        p.waitFor();
-        
-        // Exit code 0 is success, 1 usually means the key didn't exist in the first place
-        if (p.exitValue() == 0 || p.exitValue() == 1) {
-            //JOptionPane.showMessageDialog(parent, "Context menu removed successfully from Windows.", "Success", JOptionPane.INFORMATION_MESSAGE);
-            DialogUtil.showMessageDialog(parent, "Context menu removed successfully from Windows.", "Success", JOptionPane.INFORMATION_MESSAGE);
-        } else {
-            throw new Exception("Registry deletion failed with exit code: " + p.exitValue());
+        Runtime.getRuntime().exec(new String[]{"cmd.exe", "/c", regDelete}).waitFor();
+
+        // Prompt the user to clean up the PATH integration
+        int removePathChoice = JOptionPane.showConfirmDialog(parent,
+                "Context menu removed successfully.\n\nWould you also like to remove Bearit from your system PATH?",
+                "Remove from PATH?", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+
+        if (removePathChoice == JOptionPane.YES_OPTION) {
+            // PowerShell script: Splits the PATH array, filters out the Bearit directory, and joins it back together
+            String psScript = String.format(
+                    "$p = [Environment]::GetEnvironmentVariable('Path', 'User'); " +
+                    "$newP = ($p -split ';' | Where-Object { $_ -ne '%s' -and $_ -ne '' }) -join ';'; " +
+                    "[Environment]::SetEnvironmentVariable('Path', $newP, 'User')",
+                    targetPathDir);
+
+            Runtime.getRuntime().exec(new String[]{"powershell.exe", "-Command", psScript}).waitFor();
+            
+            DialogUtil.showMessageDialog(parent, 
+                    "Successfully removed from PATH!\nPlease restart any open command prompts.", 
+                    "Success", JOptionPane.INFORMATION_MESSAGE);
         }
     }
 
@@ -118,9 +186,21 @@ public class ContextMenuInstaller {
         Path nautilusScriptsDir = Paths.get(userHome, ".local", "share", "nautilus", "scripts");
         Path cajaScriptsDir = Paths.get(userHome, ".config", "caja", "scripts");
         
-        String scriptContent = "#!/bin/bash\n" +
-                               "\"" + javaPath + "\" -jar \"" + jarPath + "\" \"$1\"\n";
+        // --- Detect Native Installation vs Portable/Jar Execution ---
+        String scriptContent = "";
+        Path symlinkPath = Paths.get("/usr/local/bin/bearit");
         
+        if (Files.exists(symlinkPath)) {
+            // The .deb package is installed. Route through the native system alias.
+            // Using the absolute path ensures it works even if the file manager's environment PATH is restricted.
+            scriptContent = "#!/bin/bash\n" +
+                            "/usr/local/bin/bearit \"$1\"\n";
+        } else {
+            // No symlink found. Fall back to calling the JVM and Jar directly.
+            scriptContent = "#!/bin/bash\n" +
+                            "\"" + javaPath + "\" -jar \"" + jarPath + "\" \"$1\"\n";
+        }
+
         boolean installed = false;
 
         // Install for Nautilus
