@@ -80,7 +80,38 @@ jobs:
       - name: Build Linux Native Executable (AppImage)
         if: matrix.os == 'ubuntu-22.04'
         run: |
-          jpackage --type deb --input target/ --main-jar bearit-${{ inputs.app_version }}.jar --main-class com.edwares.BearitApp --name bearit --app-version ${{ inputs.app_version }} --dest distribution_payload/linux/ --icon src/main/resources/Bearit.png
+          # Create a custom resource directory for Debian lifecycle scripts
+          mkdir -p linux_resources
+
+          # Create the post-installation script to build the symlink
+          cat << 'EOF' > linux_resources/postinst
+          #!/bin/sh
+          # Standard Debian post-installation hook: link the binary to the system PATH
+          ln -sf /opt/bearit/bin/bearit /usr/local/bin/bearit
+          exit 0
+          EOF
+          chmod +x linux_resources/postinst
+
+          # Create the pre-removal script to clean up the symlink on uninstall
+          cat << 'EOF' > linux_resources/prerm
+          #!/bin/sh
+          # Standard Debian pre-removal hook: delete the link
+          rm -f /usr/local/bin/bearit
+          exit 0
+          EOF
+          chmod +x linux_resources/prerm
+
+          # Run jpackage and pass the custom resource directory
+          jpackage --type deb \
+            --input target/ \
+            --main-jar bearit-${{ inputs.app_version }}.jar \
+            --main-class com.edwares.BearitApp \
+            --name bearit \
+            --app-version ${{ inputs.app_version }} \
+            --dest distribution_payload/linux/ \
+            --icon src/main/resources/Bearit.png \
+            --resource-dir linux_resources/
+            
         shell: bash
 
       # Normalize cross-platform payload artifacts for extraction
