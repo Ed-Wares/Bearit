@@ -18,6 +18,12 @@ public class AppContentExtractor {
 
     private static final String RESOURCE_FOLDER = "app-content/";
 
+    public static File getAppContentDir() {
+        String userHome = System.getProperty("user.home");
+        // Create a hidden directory for your app: ~/.bearit/
+        return new File(new File(userHome, ".bearit"), RESOURCE_FOLDER);
+    }
+
     public static void extractIfPresent() {
         try {
             // Get the physical path of the running application
@@ -28,8 +34,10 @@ public class AppContentExtractor {
                 System.out.println("Not running from a JAR. Skipping internal resource extraction.");
                 return;
             }
-
-            File targetDirectory = jarPath.getParentFile();
+            File targetDirectory = getAppContentDir().getParentFile();
+            if (!targetDirectory.exists()) {
+                targetDirectory.mkdirs(); // Safely creates the directory if it doesn't exist
+            }
             boolean extractedAnything = false;
 
             // Open the JAR file to read its internal manifest/entries

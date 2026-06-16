@@ -76,32 +76,42 @@ jobs:
         run: |
           jpackage --type dmg --input target/ --main-jar bearit-${{ inputs.app_version }}.jar --main-class com.edwares.BearitApp --name bearit --app-version ${{ inputs.app_version }} --dest distribution_payload/macos/ --icon src/main/resources/Bearit.icns
 
-      # --- LINUX APPIMAGE GENERATION ---
-      - name: Build Linux Native Executable (AppImage)
+      # --- LINUX DEB GENERATION ---
+      - name: Build Linux Native Executable (DEB)
         if: matrix.os == 'ubuntu-22.04'
         run: |
-          # Create a custom resource directory for Debian lifecycle scripts
           mkdir -p linux_resources
-
-          # Create the post-installation script to build the symlink
+          
+          # Post-Install Script
           cat << 'EOF' > linux_resources/postinst
           #!/bin/sh
-          # Standard Debian post-installation hook: link the binary to the system PATH
+          # Create the terminal alias
           ln -sf /opt/bearit/bin/bearit /usr/local/bin/bearit
+          
+          # Manually register the application with the GNOME App Drawer
+          # (jpackage usually names the internal file bearit-bearit.desktop)
+          if [ -f /opt/bearit/lib/bearit-bearit.desktop ]; then
+              cp /opt/bearit/lib/bearit-bearit.desktop /usr/share/applications/bearit.desktop
+              update-desktop-database /usr/share/applications/
+          fi
           exit 0
           EOF
           chmod +x linux_resources/postinst
 
-          # Create the pre-removal script to clean up the symlink on uninstall
+          # Pre-Removal Script
           cat << 'EOF' > linux_resources/prerm
           #!/bin/sh
-          # Standard Debian pre-removal hook: delete the link
+          # Clean up the terminal alias
           rm -f /usr/local/bin/bearit
+          
+          # Clean up the GNOME App Drawer entry
+          rm -f /usr/share/applications/bearit.desktop
+          update-desktop-database /usr/share/applications/
           exit 0
           EOF
           chmod +x linux_resources/prerm
 
-          # Run jpackage and pass the custom resource directory
+          # Run jpackage
           jpackage --type deb \
             --input target/ \
             --main-jar bearit-${{ inputs.app_version }}.jar \
@@ -110,8 +120,8 @@ jobs:
             --app-version ${{ inputs.app_version }} \
             --dest distribution_payload/linux/ \
             --icon src/main/resources/Bearit.png \
-            --resource-dir linux_resources/
-            
+            --resource-dir linux_resources/ \
+            --linux-menu-group "Utility;Development;"
         shell: bash
 
       # Normalize cross-platform payload artifacts for extraction

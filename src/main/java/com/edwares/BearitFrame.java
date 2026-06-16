@@ -913,8 +913,8 @@ private void updateFrameTitle() {
             command = command.replace("%f", activeFile.getAbsolutePath());
         }
 
-        // --- Resolve the %rp (Running Path) variable ---
-        command = resolveRunningPath(command);
+        command = resolveRunningPath(command);  //Resolve the %rp (Running Path) 
+        command = resolveAppContentPath(command); // resolve %acp
         final String finalCommand = command;
 
         new SwingWorker<Void, String>() {
@@ -976,6 +976,19 @@ private void updateFrameTitle() {
         }
         
         return input.replace("%rp", rp);
+    }
+
+    private String resolveAppContentPath(String input) {
+        if (input == null || !input.contains("%acp")) return input;
+        
+        String acp;
+        try {
+            acp = AppContentExtractor.getAppContentDir().getAbsolutePath();
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            acp = "%acp";
+        }
+        return input.replace("%acp", acp);
     }
     
     private void appendToolOutput(String text) {
@@ -1106,7 +1119,8 @@ private void updateFrameTitle() {
                 // Fallback to "build.png" if the properties file is missing a defined icon
                 String finalIconName = (iconProp != null && !iconProp.trim().isEmpty()) ? iconProp.trim() : "build.png";
                 // --- Resolve the %rp variable for the icon path ---
-                finalIconName = resolveRunningPath(finalIconName);                
+                finalIconName = resolveRunningPath(finalIconName);
+                finalIconName = resolveAppContentPath(finalIconName); // resolve %acp
                 if (!finalIconName.contains(".")) {
                     finalIconName += ".png";
                 }
