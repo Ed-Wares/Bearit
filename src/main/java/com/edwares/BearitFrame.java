@@ -176,8 +176,6 @@ public class BearitFrame extends JFrame {
             boolean isHex = (c instanceof BearitTextHexWrapper);
             syncHexToggles(isHex);
             updateFrameTitle();
-            // --- Listen for tab clicks to update font sizes dynamically ---
-            refreshTabFonts();
         });
 
         add(createToolBar(), BorderLayout.NORTH);
@@ -1557,6 +1555,9 @@ private void updateFrameTitle() {
         BearitProperties props = BearitProperties.getInstance();
         props.setTheme(themeName);
         DialogUtil.applyGlobalTheme(this, themeName);
+        if (tabbedPane != null) {
+            tabbedPane.setUI(new ThemedTabbedPaneUI(themeName));
+        }
         // Update all open tabs
         for (int i = 0; i < tabbedPane.getTabCount(); i++) {
             Component c = tabbedPane.getComponentAt(i);
@@ -1823,38 +1824,4 @@ private void updateFrameTitle() {
         }
     }
 
-    private void refreshTabFonts() {
-        int selectedIndex = tabbedPane.getSelectedIndex();
-        if (selectedIndex < 0) return;
-
-        // Fetch the standard system font to ensure cross-platform consistency
-        Font baseFont = UIManager.getFont("Label.font");
-        if (baseFont == null) baseFont = new Font("Dialog", Font.PLAIN, 12);
-        
-        // Create the highlighted font (Bold and 2 pixels larger)
-        Font selectedFont = baseFont.deriveFont(Font.PLAIN, baseFont.getSize() + 2f);
-        // Create the standard unselected font
-        Font unselectedFont = baseFont.deriveFont(Font.PLAIN, (float) baseFont.getSize());
-
-        for (int i = 0; i < tabbedPane.getTabCount(); i++) {
-            boolean isSelected = (i == selectedIndex);
-            Component tabHeader = tabbedPane.getTabComponentAt(i);
-            
-            // Target the custom tab headers
-            if (tabHeader instanceof Container) {
-                for (Component c : ((Container) tabHeader).getComponents()) {
-                    if (c instanceof JLabel) {
-                        JLabel label = (JLabel) c;
-                        
-                        // Safeguard: Do not enlarge the text of your "X" close button
-                        if (label.getText() != null && label.getText().trim().equalsIgnoreCase("x")) {
-                            continue;
-                        }
-                        
-                        label.setFont(isSelected ? selectedFont : unselectedFont);
-                    }
-                }
-            }
-        }
-    }
 }
