@@ -3,6 +3,7 @@ package com.edwares;
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.PosixFilePermission;
@@ -80,11 +81,11 @@ public class LargeFileManager {
 
     public static void generateTestFile(double sizeInGb) throws IOException {
         File defaultDest = new File(String.format(java.util.Locale.US, "bearit_test_file_%.2fGB.txt", sizeInGb));
-        generateTestFile(defaultDest, sizeInGb, null);
+        generateTestFile(defaultDest, sizeInGb, false, null);
     }
 
     // UI User-initiated usage with progress callback
-    public static void generateTestFile(File targetFile, double sizeInGb, BiConsumer<Long, Long> progressCallback) throws IOException {
+    public static void generateTestFile(File targetFile, double sizeInGb, boolean preventNewLines, BiConsumer<Long, Long> progressCallback) throws IOException {
         long totalBytesTarget = (long) (sizeInGb * 1024L * 1024L * 1024L);
         
         System.out.println("Generating test file: " + targetFile.getAbsolutePath());
@@ -92,18 +93,18 @@ public class LargeFileManager {
 
         String recurringLine = "Bearit Test String. Line padding block designed to generate volume safely and efficiently. ";
         byte[] lineBytes = recurringLine.getBytes(StandardCharsets.UTF_8);
-
+        String newLine = preventNewLines ? "" : "\n";
         try (FileChannel channel = FileChannel.open(targetFile.toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
             ByteBuffer buffer = ByteBuffer.allocate(CHUNK_SIZE);
             long bytesWritten = 0;
             int lastPrintedProgress = -1;
-            int lineCnt = 1;
+            long lineCnt = 1;
             long lastReportTime = 0;
             while (bytesWritten < totalBytesTarget) {
                 buffer.clear();
                 while (buffer.remaining() > lineBytes.length + 20 && bytesWritten + buffer.position() < totalBytesTarget) {
                     buffer.put(lineBytes);
-                    String lineNumStr = String.valueOf(lineCnt++) + "\n";
+                    String lineNumStr = String.format("%-20d%s", lineCnt++, newLine); //- space padding to be added to the right of the lineCnt
                     byte[] lineNumBytes = lineNumStr.getBytes(StandardCharsets.UTF_8);
                     buffer.put(lineNumBytes);                
                     if (Thread.currentThread().isInterrupted()) { // Allows the SwingWorker to cleanly cancel the file generation
@@ -148,6 +149,7 @@ public class LargeFileManager {
 
     public void setFile(File file) {
         this.currentFile = file;
+        setBinaryMode(isLikelyBinaryFile(file));            
         this.pendingSaveAsFile = null;
         this.currentChunkIndex = 0;
         clearDirtyChunks();
@@ -162,9 +164,67 @@ public class LargeFileManager {
         this.pendingSaveAsFile = file; 
     }
 
+    public boolean isBinaryMode() {
+        return this.isBinaryMode;
+    }
+
     public void setBinaryMode(boolean isBinary) {
         this.isBinaryMode = isBinary;
         clearIndexCaches(); // Re-calculate boundaries strictly mathematically
+    }
+
+    /**
+     * Dynamically selects the encoding. 
+     * ISO_8859_1 is mathematically required for binary files to prevent 
+     * Java from destroying invalid UTF-8 byte sequences.
+     */
+    private Charset getActiveCharset() {
+        return isBinaryMode ? StandardCharsets.ISO_8859_1 : StandardCharsets.UTF_8;
+    }
+
+    /**
+     * Performs a lightning-fast heuristic scan of the first 160KB of a file 
+     * to determine if it is a binary or raw text file.
+     */
+    public static boolean isLikelyBinaryFile(File file) {
+        if (file == null || !file.exists() || file.length() == 0) {
+            return false;
+        }
+
+        int bufferSize = 163840; // Read only the first 160KB
+        try (java.io.InputStream is = new java.io.FileInputStream(file)) {
+            byte[] buffer = new byte[bufferSize];
+            int bytesRead = is.read(buffer);
+
+            if (bytesRead == -1) return false;
+
+            int controlCount = 0;
+
+            for (int i = 0; i < bytesRead; i++) {
+                byte b = buffer[i];
+
+                // The absolute strongest indicator of a binary file is a Null byte
+                if (b == 0x00) {
+                    return true;
+                }
+
+                // Count non-printable control characters (excluding \n, \r, \t)
+                if (b < 0x20 && b != 0x0A && b != 0x0D && b != 0x09) {
+                    controlCount++;
+                }
+            }
+
+            // If more than 10% of the sample is obscure control characters, assume binary
+            if (bytesRead > 0 && ((double) controlCount / bytesRead) > 0.10) {
+                return true;
+            }
+
+        } catch (java.io.IOException e) {
+            // Fallback to safe text mode if the header check fails
+            return false; 
+        }
+
+        return false;
     }
 
     public int getTotalChunks() {
@@ -187,7 +247,7 @@ public class LargeFileManager {
     public void commitCurrentChunk(String text) throws IOException {
         File tempFile = Files.createTempFile("bearit_chunk_" + currentChunkIndex + "_", ".tmp").toFile();
         tempFile.deleteOnExit();
-        Files.writeString(tempFile.toPath(), text, StandardCharsets.UTF_8);
+        Files.writeString(tempFile.toPath(), text, getActiveCharset());
         dirtyChunks.put(currentChunkIndex, tempFile);
         preloadCache.remove(currentChunkIndex); 
         
@@ -233,7 +293,7 @@ public class LargeFileManager {
                     raf.seek(start);
                     raf.readFully(previewBytes);
                     
-                    String previewStr = new String(previewBytes, java.nio.charset.StandardCharsets.UTF_8);
+                    String previewStr = new String(previewBytes, getActiveCharset());
                     if (previewEnd < end) {
                         previewStr += "\n\n... [Scrolling Preview: Release scrollbar to render full chunk] ...";
                     }
@@ -303,7 +363,7 @@ public class LargeFileManager {
 
     public String getChunkContent(int index) throws IOException {
         if (dirtyChunks.containsKey(index)) {
-            return Files.readString(dirtyChunks.get(index).toPath(), StandardCharsets.UTF_8);
+            return Files.readString(dirtyChunks.get(index).toPath(), getActiveCharset());
         } else if (currentFile != null && currentFile.exists()) {
             long[] boundaries = getChunkBoundaries(index);
             long bytesToRead = boundaries[1] - boundaries[0];
@@ -312,7 +372,7 @@ public class LargeFileManager {
                     ByteBuffer buffer = ByteBuffer.allocate((int) bytesToRead);
                     channel.position(boundaries[0]);
                     channel.read(buffer);
-                    return new String(buffer.array(), StandardCharsets.UTF_8);
+                    return new String(buffer.array(), getActiveCharset());
                 }
             }
         }
@@ -373,7 +433,7 @@ public class LargeFileManager {
                 totalMatches += chunkMatches;
 
                 // Write the replaced text chunk to the temporary file
-                destChannel.write(ByteBuffer.wrap(sb.toString().getBytes(StandardCharsets.UTF_8)));
+                destChannel.write(ByteBuffer.wrap(sb.toString().getBytes(getActiveCharset())));
                 
                 // Publish Progress back to the UI
                 if (progressPublisher != null) {
@@ -434,7 +494,7 @@ public class LargeFileManager {
         long absoluteStartOffset = 0; 
         
         if (dirtyChunks.containsKey(index)) {
-            content = Files.readString(dirtyChunks.get(index).toPath(), StandardCharsets.UTF_8);
+            content = Files.readString(dirtyChunks.get(index).toPath(), getActiveCharset());
             isPreview = false; 
             absoluteStartOffset = getChunkBoundaries(index)[0];
         } else if (currentFile != null && currentFile.exists()) {
@@ -451,7 +511,7 @@ public class LargeFileManager {
                     ByteBuffer buffer = ByteBuffer.allocate((int) bytesToRead);
                     channel.position(boundaries[0]);
                     channel.read(buffer);
-                    content = new String(buffer.array(), StandardCharsets.UTF_8);
+                    content = new String(buffer.array(), getActiveCharset());
                     
                     if (isPreview && bytesToRead == PREVIEW_SIZE) {
                         content += "\n\n... [Scrolling Preview: Release scrollbar to render full 25MB chunk] ...";

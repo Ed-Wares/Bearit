@@ -941,6 +941,9 @@ public class AdvancedTextEditorPanel extends JPanel {
      */    
     public String getCommitText() {
         String text = textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
+        if (isBinaryMode()) {
+            text = decodeViewToBinary(text); // --- REVERSE THE BINARY ENCODING ---
+        }
         if (loadedChunkIndex < fileManager.getTotalChunks() - 1) {
             return text + "\n";
         }
@@ -1283,7 +1286,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         setUnsavedChanges(false);
         loadedChunkIndex = 0;
         pendingTargetChunk = -1;
-        fileSizeDateStatus = AdvancedTextEditorPanel.getFileInfoString(activeFile);
+        fileSizeDateStatus = getFileInfoString(activeFile);
         
         documentCache.clear();
         globalUndoManager.discardAllEdits();
@@ -1308,7 +1311,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             executeSaveRoutine();
             
             this.activeFile = file;
-            this.fileSizeDateStatus = AdvancedTextEditorPanel.getFileInfoString(activeFile);
+            this.fileSizeDateStatus = getFileInfoString(activeFile);
             setUnsavedChanges(false);
             isDirty = false;
             updateTitle(file.getName());
@@ -1321,7 +1324,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         try {
             // --- Pass null to progressCallback since this runs entirely on the main UI thread ---
             fileManager.saveAll(getCommitText(), null);
-            updateStatusLabel(chunkStatus, AdvancedTextEditorPanel.getFileInfoString(activeFile));
+            updateStatusLabel(chunkStatus, getFileInfoString(activeFile));
             isDirty = false;
             setUnsavedChanges(false);
             restartBackgroundIndexer();
@@ -1339,7 +1342,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             fileManager.setCurrentFile(file);
             // Perform the I/O on the current thread (blocking)
             fileManager.saveAll(getCommitText(), null);
-            updateStatusLabel(chunkStatus, AdvancedTextEditorPanel.getFileInfoString(activeFile));
+            updateStatusLabel(chunkStatus, getFileInfoString(activeFile));
             
             // Update state synchronously
             isDirty = false;
@@ -1386,7 +1389,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                     setUnsavedChanges(false);
                     pendingTargetChunk = -1;
                     applyStateUpdates(get(), 0, -1, null);
-                    updateStatusLabel(chunkStatus, AdvancedTextEditorPanel.getFileInfoString(activeFile));
+                    updateStatusLabel(chunkStatus, getFileInfoString(activeFile));
                     restartBackgroundIndexer();
                 } catch (Exception ex) {
                     showError("Streaming save operation failure: " + ex.getMessage());
@@ -1753,6 +1756,14 @@ public class AdvancedTextEditorPanel extends JPanel {
                         content = content.substring(0, content.length() - 1);
                     }
                 }
+                // --- handle binary encoding logic ---
+                if (isBinaryMode()) {
+                    content = encodeBinaryForView(content);
+                //  } else {
+                //      // Fallback to prevent crashes in minified UTF-8 text files
+                //      content = content.replaceAll("[\\p{Cc}\\p{Cf}&&[^\\r\\n\\t]]", "");
+                }
+                
                 newDoc.insertString(0, content, null);
             } catch (Exception ex) {}
             
@@ -2795,7 +2806,13 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
         
         if (textArea != null) {
-            // This triggers the background DocumentListener, which erroneously flags the file as dirty
+            // --- Apply protections when syncing from Hex Editor ---
+            if (isBinaryMode()) {
+                text = encodeBinaryForView(text);
+            } else {
+                text = text.replaceAll("[\\p{Cc}\\p{Cf}&&[^\\r\\n\\t]]", "");
+            }
+            
             textArea.setText(text);
             textArea.setCaretPosition(0);
         }
@@ -2826,15 +2843,20 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
         }
     }
-     
+
     public long getGlobalCaretByteOffset() {
         try {
-            int rawCaret = getRawCaretPosition();
+            int rawCaret = getRawCaretPosition(); // Handles soft wrap \u200B removal natively
             long chunkStartOffset = fileManager.getChunkBoundaries(loadedChunkIndex)[0];
-            String rawChunkText = fileManager.getChunkContent(loadedChunkIndex);
             
-            // JTextArea strips '\r', so the visual text length is shorter than the raw string length.
-            // We must map the visual caret back to the original raw string index.
+            // --- PERFECT BINARY MATH ---
+            if (isBinaryMode()) {
+                // Because \r is PUA encoded, Swing doesn't swallow it. Lengths map 1-to-1 perfectly!
+                return chunkStartOffset + rawCaret;
+            }
+            
+            // Standard Text Mode - Account for missing \r bytes and UTF-8 multi-byte characters
+            String rawChunkText = fileManager.getChunkContent(loadedChunkIndex);
             int jTextAreaIdx = 0;
             int originalStringIdx = 0;
             while (jTextAreaIdx < rawCaret && originalStringIdx < rawChunkText.length()) {
@@ -2929,12 +2951,59 @@ public class AdvancedTextEditorPanel extends JPanel {
     /**
      * Generates the combined status string for the UI.
      */
-    public static String getFileInfoString(File file) {
+    public String getFileInfoString(File file) {
         if (file != null && file.exists()) {
             String sizeStr = humanReadableByteCount(file.length());
             String dateStr = formatLastModified(file.lastModified());
-            return "Size: " + sizeStr + "  |  Modified: " + dateStr;
+            String isBinary = this.isBinaryMode() ? "  |  Binary" : "";
+            return "Size: " + sizeStr + "  |  Modified: " + dateStr + isBinary;
         }
         return "Unsaved/New File";
-    }    
+    }
+    
+    public boolean isBinaryMode() {
+        return fileManager.isBinaryMode();
+    }
+
+    /**
+     * Translates dangerous control bytes into safe visual placeholders 
+     * while perfectly preserving their exact original hex values.
+     */
+    private String encodeBinaryForView(String rawContent) {
+        if (!isBinaryMode()) return rawContent;
+        
+        StringBuilder sb = new StringBuilder(rawContent.length());
+        for (int i = 0; i < rawContent.length(); i++) {
+            char c = rawContent.charAt(i);
+            
+            // Allow \n (0x0A) and \t (0x09) and printable ASCII to render natively.
+            // Force \r (0x0D) and other controls to PUA to prevent Swing from mutating them.
+            if (c == '\n' || c == '\t' || (c >= 32 && c <= 126)) {
+                sb.append(c);
+            } else {
+                sb.append((char) (0xE000 + (c & 0xFF)));
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Reverses the visual placeholders back into their true underlying byte values.
+     */
+    private String decodeViewToBinary(String uiText) {
+        if (!isBinaryMode()) return uiText;
+
+        StringBuilder sb = new StringBuilder(uiText.length());
+        for (int i = 0; i < uiText.length(); i++) {
+            char c = uiText.charAt(i);
+            // Reverse the PUA characters back to their exact original byte values
+            if (c >= 0xE000 && c <= 0xE0FF) {
+                sb.append((char) (c - 0xE000));
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+    
 }

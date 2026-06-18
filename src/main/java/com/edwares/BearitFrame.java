@@ -11,7 +11,10 @@ import java.awt.datatransfer.StringSelection;
 import java.awt.event.*;
 import java.awt.font.TextAttribute;
 import java.io.File;
+import java.lang.management.ManagementFactory;
+import com.sun.management.OperatingSystemMXBean;
 import java.net.URL;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -701,10 +704,46 @@ private void updateFrameTitle() {
     }
 
     private void performGenerateTestFile() {
+        // --- Build the Custom Input Panel ---
+        JPanel inputPanel = new JPanel(new BorderLayout(0, 10));
+        inputPanel.setOpaque(false);
+        
+        JPanel sizePanel = new JPanel(new BorderLayout(5, 5));
+        sizePanel.setOpaque(false);
+        sizePanel.add(new JLabel("Enter target test file size in Gigabytes (e.g., 1.5):"), BorderLayout.NORTH);
+        JTextField txtSize = new JTextField(10);
+        txtSize.addAncestorListener(new javax.swing.event.AncestorListener() {
+            @Override
+            public void ancestorAdded(javax.swing.event.AncestorEvent event) {
+                // The first invokeLater waits for the dialog to be drawn
+                SwingUtilities.invokeLater(() -> {
+                    // The second invokeLater waits for JOptionPane to assign its default focus,
+                    // and then immediately steals it back for the text field!
+                    SwingUtilities.invokeLater(() -> {
+                        txtSize.requestFocusInWindow();
+                    });
+                });
+            }
+            @Override
+            public void ancestorRemoved(javax.swing.event.AncestorEvent event) {}
+            @Override
+            public void ancestorMoved(javax.swing.event.AncestorEvent event) {}
+        });
+        sizePanel.add(txtSize, BorderLayout.CENTER);
+
+        
+        JCheckBox chkNoNewLines = new JCheckBox("Do not add new lines to generated file");
+        chkNoNewLines.setToolTipText("Generates a single continuous line. Excellent for testing horizontal scroll performance.");
+        chkNoNewLines.setOpaque(false);
+        
+        inputPanel.add(sizePanel, BorderLayout.NORTH);
+        inputPanel.add(chkNoNewLines, BorderLayout.CENTER);
         //String input = JOptionPane.showInputDialog(this, "Enter target test file size in Gigabytes (e.g., 1.5):", "Generate Test File", JOptionPane.QUESTION_MESSAGE);
-        String input = DialogUtil.showInputDialog(this, "Enter target test file size in Gigabytes (e.g., 1.5):", "Generate Test File");
-                
-        if (input != null && !input.trim().isEmpty()) {
+        int result = DialogUtil.showConfirmDialog(this, inputPanel, "Generate Test File", JOptionPane.OK_CANCEL_OPTION);
+        boolean preventNewLines = chkNoNewLines.isSelected();
+        String input = txtSize.getText();
+        
+        if (result == JOptionPane.OK_OPTION && input != null && !input.trim().isEmpty()) {
             try {
                 double gbSize = Double.parseDouble(input.trim());
                 if (gbSize <= 0) throw new NumberFormatException("Size must be positive.");
@@ -740,7 +779,7 @@ private void updateFrameTitle() {
                     SwingWorker<File, long[]> worker = new SwingWorker<File, long[]>() {
                         @Override
                         protected File doInBackground() throws Exception {
-                            LargeFileManager.generateTestFile(destFile, gbSize, (written, total) -> {
+                            LargeFileManager.generateTestFile(destFile, gbSize, preventNewLines, (written, total) -> {
                                 publish(new long[]{written, total});
                             });
                             return destFile;
@@ -847,7 +886,6 @@ private void updateFrameTitle() {
             long targetGlobalOffset = hexWrapper.getHexEditor().getGlobalSelectedByteOffset();
             
             hexWrapper.syncToHiddenEditor(); 
-            hexWrapper.cleanupAndRevert(); // This sets binary mode back to FALSE!
             
             AdvancedTextEditorPanel restoredTextPanel = hexWrapper.getHiddenTextEditor();
             tabbedPane.setComponentAt(idx, restoredTextPanel);
@@ -1730,12 +1768,35 @@ private void updateFrameTitle() {
         // Fetch the Properties File Path
         String propsPath = BearitProperties.getInstance().getPropertiesFile().getAbsolutePath();
 
+        Runtime rt = Runtime.getRuntime();
+        // --- System RAM (Physical Memory) ---
+        OperatingSystemMXBean osBean = (com.sun.management.OperatingSystemMXBean)ManagementFactory.getOperatingSystemMXBean();
+        long totalRamGB = osBean.getTotalMemorySize() / (1024L * 1024L * 1024L);
+        long freeRamGB = osBean.getFreeMemorySize() / (1024L * 1024L * 1024L);
+
+        // --- CPU Cores ---
+        int availableCores = rt.availableProcessors();
+        
+        // --- Max Java Heap Size (JVM Memory) ---
+        long maxMemory = rt.maxMemory();
+        String maxHeapStr = (maxMemory == Long.MAX_VALUE) ? "No Limit" : (maxMemory / (1024 * 1024)) + " MB";
+        
+        // --- Hard Drive Space ---
+        File currentDrive = new File(".");
+        String driveName = Paths.get(".").toAbsolutePath().getRoot().toString();
+        long totalSpaceGB = currentDrive.getTotalSpace() / (1024L * 1024L * 1024L);
+        long usableSpaceGB = currentDrive.getUsableSpace() / (1024L * 1024L * 1024L);
+
         // Consolidate the data into a single formatted string
         String fullDebugText =  "Bearit Version: " + appVersion + "\n" +
                                 "OS: " + osInfo + "\n" +
                                 "Java: " + javaInfo + "\n" +
                                 "Install Path: " + jarPath + "\n" +
-                                "Preferences: " + propsPath + "\n" ;
+                                "Preferences: " + propsPath + "\n" +
+                                "Max Java Heap: " + maxHeapStr + "\n" +
+                                "System RAM: " + freeRamGB + " GB Free / " + totalRamGB + " GB Total\n" +
+                                "CPU Cores: " + availableCores + "\n" +
+                                "Drive Space (" + driveName + "): " + usableSpaceGB + " GB Free / " + totalSpaceGB + " GB Total\n" ;
 
         // ---  Debug Panel ---
         JPanel debugPanel = new JPanel(new BorderLayout(0, 10)); // Swapped to BorderLayout
@@ -1753,7 +1814,7 @@ private void updateFrameTitle() {
         
         // Wrap it in a scroll pane just in case paths get extremely long
         JScrollPane scrollPane = new JScrollPane(debugTextArea);
-        scrollPane.setPreferredSize(new Dimension(200, 90));
+        scrollPane.setPreferredSize(new Dimension(200, 100));
         debugPanel.add(scrollPane, BorderLayout.CENTER);
 
         // --- Build the Copy Button ---

@@ -50,8 +50,6 @@ public class BearitTextHexWrapper extends JPanel {
         // --- Global Syncing Initialization (Replaces loadCurrentChunkFromBearit) ---
         long globalCaret = hiddenTextEditor.getGlobalCaretByteOffset();
         LargeFileManager fm = hiddenTextEditor.getFileManager();
-        fm.setBinaryMode(true); 
-        
         int targetChunk = 0;
         try {
             // Find exactly which strict 25MB Hex Chunk contains this byte
@@ -65,20 +63,13 @@ public class BearitTextHexWrapper extends JPanel {
             currentLoadedChunk = targetChunk;
             byte[] rawBytes = fm.getChunkBytes(currentLoadedChunk);
             long offset = fm.getChunkBoundaries(currentLoadedChunk)[0];
-            hexEditor.setFileSizeDateStatus(AdvancedTextEditorPanel.getFileInfoString(hiddenTextEditor.getActiveFile()));
+            hexEditor.setFileSizeDateStatus(hiddenTextEditor.getFileInfoString(hiddenTextEditor.getActiveFile()));
             hexEditor.updateChunkStatus(currentLoadedChunk + 1, fm.getTotalChunks());
             hexEditor.loadData(rawBytes, offset);
             hexEditor.setSelectedByteOffset((int)(globalCaret - offset));
         } catch (Exception e) {
             e.printStackTrace();
         }
-    }
-
-    /**
-     * Reverts LargeFileManager back to text mode when toggling off.
-     */
-    public void cleanupAndRevert() {
-        hiddenTextEditor.getFileManager().setBinaryMode(false);
     }
 
     public AdvancedTextEditorPanel getHiddenTextEditor() {
@@ -119,16 +110,11 @@ public class BearitTextHexWrapper extends JPanel {
             
             LargeFileManager fm = hiddenTextEditor.getFileManager();
             
-            // Temporarily switch to text mode to properly read the new bytes as UTF-8 strings
-            fm.setBinaryMode(false);
             try {
                 String updatedText = fm.getChunkContent(currentLoadedChunk);
                 hiddenTextEditor.forceSetText(updatedText);
             } catch (Exception e) {
                 e.printStackTrace();
-            } finally {
-                // Restore binary mode so the Hex Editor continues functioning
-                fm.setBinaryMode(true); 
             }
         } finally {
             // Unlock when finished so future saves/closes work correctly
@@ -163,7 +149,6 @@ public class BearitTextHexWrapper extends JPanel {
             
             @Override
             protected Void doInBackground() throws Exception {
-                fm.setBinaryMode(true);
                 rawBytes = fm.getChunkBytes(newIndex);
                 offset = fm.getChunkBoundaries(newIndex)[0];
                 return null;

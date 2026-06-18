@@ -75,7 +75,9 @@ public class DialogUtil {
      */
     public static String showInputDialog(Component parent, Object message, String title) {
         JOptionPane pane = new JOptionPane(message, JOptionPane.QUESTION_MESSAGE, JOptionPane.OK_CANCEL_OPTION);
-        pane.setWantsInput(true);
+        if (message instanceof String) {
+            pane.setWantsInput(true);
+        }
         JDialog dialog = pane.createDialog(parent, title);
         
         themeDialog(dialog);
