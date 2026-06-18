@@ -82,6 +82,7 @@ public class ThemedTabbedPaneUI extends BasicTabbedPaneUI {
         int selectedIndex = tabPane.getSelectedIndex();
         Font selectedFont = baseFont.deriveFont(Font.PLAIN, baseFont.getSize() + 2f);
         Font unselectedFont = baseFont.deriveFont(Font.PLAIN, (float) baseFont.getSize());
+        Font CloseNewFont = baseFont.deriveFont(Font.PLAIN, baseFont.getSize() + 4f);
 
         for (int i = 0; i < tabPane.getTabCount(); i++) {
             boolean isSelected = (i == selectedIndex);
@@ -99,19 +100,31 @@ public class ThemedTabbedPaneUI extends BasicTabbedPaneUI {
                 for (Component c : container.getComponents()) {
                     if (c instanceof JLabel) {
                         JLabel label = (JLabel) c;
-                        
-                        // Enforce transparent label boundaries so background colors don't clash
-                        label.setOpaque(false);
-                        
+                        label.setOpaque(false); // Enforce transparent label boundaries so background colors don't clash
                         // Skip the small "x" asset safely
-                        if (label.getText() != null && label.getText().trim().equalsIgnoreCase("x")) {
-                            continue;
-                        }
-                        
                         // Dynamically scale fonts and drop foreground text visibility back if unselected
                         label.setFont(isSelected ? selectedFont : unselectedFont);
                         label.setForeground(isSelected ? activeFg : inactiveFg);
+                        label.setBackground(isSelected ? activeBg : inactiveBg);
+                    } else if (c instanceof JButton) { // close
+                        JButton btn = (JButton) c;
+                        btn.setOpaque(false); // Enforce transparent label boundaries so background colors don't clash
+                        if (btn.getText() != null && btn.getText().trim().equalsIgnoreCase("x")) {
+                            btn.setFont(CloseNewFont);
+                            btn.setForeground(isSelected ? activeFg : inactiveFg);
+                            btn.setBackground(isSelected ? activeBg : inactiveBg);
+                        }
                     }
+                }
+            // --- Standard Tabs (Like our "+" Dummy Tab) ---
+            } else {
+                String title = tabPane.getTitleAt(i);
+                if ("+".equals(title)) {
+                    // Force the + button to always use the bold button font and active color
+                    tabPane.setForegroundAt(i, activeFg);
+                    tabPane.setFont(CloseNewFont);
+                } else {
+                    tabPane.setForegroundAt(i, isSelected ? activeFg : inactiveFg);
                 }
             }
         }
@@ -139,11 +152,20 @@ public class ThemedTabbedPaneUI extends BasicTabbedPaneUI {
 
     @Override
     protected void paintText(Graphics g, int tabPlacement, Font font, FontMetrics metrics, int tabIndex, String title, Rectangle textRect, boolean isSelected) {
-        // Fallback for non-custom fallback tab instances
-        g.setFont(isSelected ? font.deriveFont(font.getSize() + 2f) : font);
-        g.setColor(isSelected ? activeFg : inactiveFg);
+        // If this is the "+" tab, hijack the font rendering to match our buttonFont sizing
+        if ("+".equals(title)) {
+            Font buttonFont = font.deriveFont(Font.PLAIN, font.getSize() + 4f);
+            g.setFont(buttonFont);
+            metrics = g.getFontMetrics(buttonFont);
+            g.setColor(activeFg);
+        } else {
+            // Fallback for non-custom fallback tab instances
+            g.setFont(isSelected ? font.deriveFont(font.getSize() + 2f) : font);
+            g.setColor(isSelected ? activeFg : inactiveFg);
+        }
         int textY = textRect.y + metrics.getAscent() + ((textRect.height - metrics.getHeight()) / 2);
         g.drawString(title, textRect.x, textY);
+
     }
 
     @Override
