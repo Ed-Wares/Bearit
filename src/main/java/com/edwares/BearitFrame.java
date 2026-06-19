@@ -252,38 +252,8 @@ public class BearitFrame extends JFrame {
             AdvancedTextEditorPanel editor = new AdvancedTextEditorPanel();
             BearitProperties props = BearitProperties.getInstance();
             editor.setFont(new Font(props.getFontName(), Font.PLAIN, props.getFontSize()));
-
-            int insertIndex = Math.max(0, tabbedPane.getTabCount() - 1);
-            tabbedPane.insertTab("Untitled", null, editor, null, insertIndex);
-
-            // Custom Tab Header with Close Button
-            JPanel tabHeader = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-            tabHeader.setOpaque(false);
-            JLabel lblTitle = new JLabel("Untitled ");
-            JButton btnClose = new JButton("x");
-            btnClose.setMargin(new Insets(0, 2, 0, 2));
-            btnClose.setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 4));
-            btnClose.setFocusable(false);
-            btnClose.setContentAreaFilled(false);
-            
-            btnClose.addMouseListener(new MouseAdapter() {
-                private Color originalColor = btnClose.getForeground();
-                public void mouseEntered(MouseEvent evt) { originalColor = btnClose.getForeground(); btnClose.setForeground(Color.RED); }
-                public void mouseExited(MouseEvent evt) { btnClose.setForeground(originalColor); }
-            });
-            
-            btnClose.addActionListener(e -> closeTab(editor));
-
-            boolean isDark = "Dark".equals(props.getTheme());
-            if (isDark) {
-                tabHeader.setBackground(new Color(50, 50, 50));
-                lblTitle.setForeground(new Color(200, 200, 200));
-            }
-
-            tabHeader.add(lblTitle);
-            tabHeader.add(btnClose);
-            tabbedPane.setTabComponentAt(insertIndex, tabHeader);
-
+            JLabel lblTitle = new JLabel("Untitled");
+            JPanel tabHeader = ThemedTabbedPaneUI.insertNewTabWithClose(tabbedPane, lblTitle, editor, e -> closeTab(editor));
             // --- Component-Level Tab Right-Click Listener & Left-Click Selector ---
             MouseAdapter tabMouseListener = new MouseAdapter() {
                 public void mousePressed(MouseEvent e) { handleMouse(e); }
@@ -315,7 +285,7 @@ public class BearitFrame extends JFrame {
             };
             
             tabHeader.addMouseListener(tabMouseListener);
-            lblTitle.addMouseListener(tabMouseListener);
+            //lblTitle.addMouseListener(tabMouseListener);
 
             editor.addPropertyChangeListener("editorTitle", evt -> updateTabHeader(editor, lblTitle));
             editor.addPropertyChangeListener("unsavedChanges", evt -> updateTabHeader(editor, lblTitle));
@@ -343,7 +313,6 @@ public class BearitFrame extends JFrame {
             isUpdatingTabs = false; // Disengage lock
             updateFrameTitle();
             // --- Immediately sweep the new tab with our custom theme interceptors! ---
-            //DialogUtil.applyGlobalTheme(this, BearitProperties.getInstance().getTheme());
             applyTheme(BearitProperties.getInstance().getTheme());
         }
     }
@@ -1837,52 +1806,4 @@ private void updateFrameTitle() {
         debugPanel.add(buttonPanel, BorderLayout.SOUTH);
         return debugPanel;
     }
-
-    // --- CUSTOM THEME ICONS TO BYPASS MACOS RENDERING BUGS ---
-    private static class ThemeCheckBoxIcon implements javax.swing.Icon {
-        private final Color color;
-        public ThemeCheckBoxIcon(Color color) { this.color = color; }
-        
-        @Override public int getIconWidth() { return 16; }
-        @Override public int getIconHeight() { return 16; }
-        
-        @Override public void paintIcon(Component c, Graphics g, int x, int y) {
-            AbstractButton b = (AbstractButton) c;
-            // Only draw the checkmark if the menu item is actually selected
-            if (b.isSelected()) {
-                Graphics2D g2 = (Graphics2D) g.create();
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setColor(color);
-                g2.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                
-                // Draw a perfect geometric checkmark
-                g2.drawLine(x + 3, y + 8, x + 6, y + 12);
-                g2.drawLine(x + 6, y + 12, x + 13, y + 4);
-                g2.dispose();
-            }
-        }
-    }
-
-    private static class ThemeRadioIcon implements javax.swing.Icon {
-        private final Color color;
-        public ThemeRadioIcon(Color color) { this.color = color; }
-        
-        @Override public int getIconWidth() { return 16; }
-        @Override public int getIconHeight() { return 16; }
-        
-        @Override public void paintIcon(Component c, Graphics g, int x, int y) {
-            AbstractButton b = (AbstractButton) c;
-            // Only draw the dot if the menu item is actually selected
-            if (b.isSelected()) {
-                Graphics2D g2 = (Graphics2D) g.create();
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setColor(color);
-                
-                // Draw a centered radio dot
-                g2.fillOval(x + 4, y + 4, 8, 8);
-                g2.dispose();
-            }
-        }
-    }
-
 }

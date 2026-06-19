@@ -4,7 +4,9 @@ import javax.swing.*;
 import javax.swing.event.ChangeListener;
 import javax.swing.plaf.ComponentUI;
 import javax.swing.plaf.basic.BasicTabbedPaneUI;
+
 import java.awt.*;
+import java.awt.event.*;
 
 public class ThemedTabbedPaneUI extends BasicTabbedPaneUI {
 
@@ -177,5 +179,31 @@ public class ThemedTabbedPaneUI extends BasicTabbedPaneUI {
     protected void paintContentBorder(Graphics g, int tabPlacement, int selectedIndex) {
         // Leave completely empty! This prevents Swing from drawing a 3D box around the text editor.
         // Because there is no border, the active tab will seamlessly bleed right into the editor background.
+    }
+
+    //creates a new tab with a title label and close button
+    public static JPanel insertNewTabWithClose(JTabbedPane tabbedPane, JLabel lblTitle, Component component, ActionListener closeActionListener) {
+        int insertIndex = Math.max(0, tabbedPane.getTabCount() - 1);
+        tabbedPane.insertTab(lblTitle.getText(), null, component, null, insertIndex);
+        // Custom Tab Header with Close Button
+        JPanel tabHeader = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        tabHeader.setOpaque(false);
+        //JLabel lblTitle = new JLabel(title);
+        JButton btnClose = new JButton("x");
+        btnClose.setMargin(new Insets(0, 2, 0, 2));
+        btnClose.setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 4));
+        btnClose.setFocusable(false);
+        btnClose.setContentAreaFilled(false);
+        //change font color when mouse enters/exits
+        btnClose.addMouseListener(new MouseAdapter() {
+            private Color originalColor = btnClose.getForeground();
+            public void mouseEntered(MouseEvent evt) { originalColor = btnClose.getForeground(); btnClose.setForeground(Color.RED); }
+            public void mouseExited(MouseEvent evt) { btnClose.setForeground(originalColor); }
+        });        
+        btnClose.addActionListener(closeActionListener);
+        tabHeader.add(lblTitle);
+        tabHeader.add(btnClose);
+        tabbedPane.setTabComponentAt(insertIndex, tabHeader);
+        return tabHeader;
     }
 }

@@ -7,7 +7,6 @@ import javax.swing.border.TitledBorder;
 
 import java.awt.*;
 import java.io.File;
-import java.io.FilenameFilter;
 
 public class DialogUtil {
 
