@@ -375,7 +375,7 @@ public class HexEditorPanel extends JPanel {
         btnGo.setMargin(new Insets(1, 4, 1, 4));
         btnGo.setFocusable(false); // Prevents it from stealing keyboard focus unnecessarily
         // Wire both the Enter key in the text box AND the button to the same action
-        java.awt.event.ActionListener goAction = e -> jumpToAddress();
+        java.awt.event.ActionListener goAction = e -> jumpToHexAddress(txtGoto.getText().trim());
         txtGoto.addActionListener(goAction);
         btnGo.addActionListener(goAction);
         gotoPanel.add(txtGoto, BorderLayout.CENTER);
@@ -433,9 +433,10 @@ public class HexEditorPanel extends JPanel {
         for (int i = bpr + 1; i <= bpr * 2; i++) hexTable.getColumnModel().getColumn(i).setPreferredWidth(15); 
     }
 
-    private void jumpToAddress() {
+    public void jumpToHexAddress(String hexAddress) {
         try {
-            long targetGlobalOffset = Long.parseLong(txtGoto.getText().trim(), 16);
+            if (hexAddress.startsWith("0x") || hexAddress.startsWith("0X")) hexAddress = hexAddress.substring(2);
+            long targetGlobalOffset = Long.parseLong(hexAddress, 16);
             long localOffset = targetGlobalOffset - baseAddressOffset;
             
             if (localOffset >= 0 && localOffset < dataBytes.length) {

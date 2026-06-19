@@ -30,17 +30,12 @@ public class BearitApp {
 
         // --- Handle Single Instance Logic for the GUI ---
         // We only want one GUI window open at a time.
-        boolean isPrimaryInstance = SingleInstanceManager.lockOrPassArguments(args, fileToOpen -> {
-            // THIS CALLBACK RUNS ON THE PRIMARY INSTANCE WHEN A SECONDARY INSTANCE SENDS A FILE
-            
-            // Assuming TextEditorFrame acts as a Singleton, or you can retrieve the active frame
+        boolean isPrimaryInstance = SingleInstanceManager.lockOrPassArguments(args, remoteArgs -> {
             BearitFrame mainFrame = BearitFrame.getInstance(); 
-            
             if (mainFrame != null) {
-                // Route the incoming file to your existing load method
-                mainFrame.loadInitialFile(fileToOpen);
+                // Route the raw String array into the frame
+                mainFrame.processRemoteCommands(remoteArgs);
                 
-                // Force the existing window to the front to alert the user
                 mainFrame.setExtendedState(JFrame.NORMAL);
                 mainFrame.toFront();
                 mainFrame.repaint();
@@ -50,7 +45,7 @@ public class BearitApp {
         // If we failed to get the lock, we successfully passed the file to the primary instance.
         // We must exit now to prevent a second GUI from booting.
         if (!isPrimaryInstance) {
-            System.out.println("Another instance is running. Passing arguments and exiting.");
+            System.out.println("Commands routed to existing instance. Exiting.");
             System.exit(0);
         }
 
@@ -60,15 +55,11 @@ public class BearitApp {
         } catch (Exception e) {
             // Fallback gracefully
         }
-
+        
         SwingUtilities.invokeLater(() -> {
             BearitFrame editor = new BearitFrame();
-            
-            // If a file was provided via command line on the FIRST boot, load it
-            if (cli.getFileToOpen() != null) {
-                editor.loadInitialFile(cli.getFileToOpen());
-            }
-            
+            // Process the startup args through the exact same logic pipeline!
+            editor.processRemoteCommands(args);
             editor.setVisible(true);
         });
     }

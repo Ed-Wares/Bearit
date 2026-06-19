@@ -480,24 +480,23 @@ public class BearitFrame extends JFrame {
         return true;
     }
 
-    private AdvancedTextEditorPanel getActiveEditor() {
+    private Component getActiveTabComponent() {
         int idx = tabbedPane.getSelectedIndex();
         if (idx == -1) return null;
-        
-        Component c = tabbedPane.getComponentAt(idx);
-        
+        return tabbedPane.getComponentAt(idx);
+    }
+
+    private AdvancedTextEditorPanel getActiveEditor() {
+        Component c = getActiveTabComponent();
         if (c instanceof AdvancedTextEditorPanel) {
             return (AdvancedTextEditorPanel) c;
         } else if (c instanceof BearitTextHexWrapper) {
-            // --- Removed the heavy sync call from here! ---
-            //wrapper.syncToHiddenEditor(); 
             return ((BearitTextHexWrapper) c).getHiddenTextEditor();
         }
-        
         return null;
     }
 
-private void updateFrameTitle() {
+    private void updateFrameTitle() {
         AdvancedTextEditorPanel activeEditor = getActiveEditor(); 
         
         if (activeEditor != null) {
@@ -1805,5 +1804,53 @@ private void updateFrameTitle() {
         buttonPanel.add(copyBtn);
         debugPanel.add(buttonPanel, BorderLayout.SOUTH);
         return debugPanel;
+    }
+
+    public void processRemoteCommands(String[] args) {
+        CommandLineParser cli = new CommandLineParser(args);
+        
+        // Handle File Opening first
+        if (cli.getFileToOpen() != null) {
+            loadInitialFile(cli.getFileToOpen());
+        }
+
+        // Ensure we have an active tab to control
+        if (tabbedPane == null || getActiveTabComponent() == null) {
+            return;
+        }
+
+        //get active tab's editor component
+        Component editorComponent = getActiveTabComponent();
+        AdvancedTextEditorPanel textEditor = null;
+        BearitTextHexWrapper hexWrapper = null;
+        if (editorComponent instanceof AdvancedTextEditorPanel) {
+            textEditor = (AdvancedTextEditorPanel) editorComponent;
+        } else if (editorComponent instanceof BearitTextHexWrapper) {
+            hexWrapper = (BearitTextHexWrapper)editorComponent;
+        }        
+
+        // Handle Mode Toggling
+        if (cli.isHexModeOn() && hexWrapper == null) {
+            toggleHexModeForCurrentTab(true);
+        } else if (cli.isTextModeOn() && hexWrapper != null) {
+            toggleHexModeForCurrentTab(false);
+        }
+
+        // Handle Selection
+        String range = cli.getSelectRange();
+        if (range != null) {
+            String[] parts = range.split(",");
+            if (parts.length == 2) {
+                try {
+                    long start = Long.parseLong(parts[0].trim());
+                    long end = Long.parseLong(parts[1].trim());
+                    if (textEditor != null) textEditor.setGlobalSelection(start, end);
+                    if (hexWrapper != null) hexWrapper.setGlobalSelection(start);
+                    //wrapper.setGlobalSelection(start, end);
+                } catch (NumberFormatException e) {
+                    System.err.println("Invalid selection format. Expected -s start;end");
+                }
+            }
+        }
     }
 }

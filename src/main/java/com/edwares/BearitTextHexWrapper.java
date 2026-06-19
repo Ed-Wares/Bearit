@@ -181,6 +181,15 @@ public class BearitTextHexWrapper extends JPanel {
         worker.execute();
     }
 
+    public void setGlobalSelection(long globalStart) {
+        try {
+            String hexAddress = Long.toHexString(globalStart).toUpperCase();
+            hexEditor.jumpToHexAddress(hexAddress);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
     public HexEditorPanel getHexEditor() {
         return hexEditor;
     }

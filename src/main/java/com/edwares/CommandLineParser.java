@@ -6,14 +6,30 @@ public class CommandLineParser {
     private boolean showHelp = false;
     private Double generateSizeGb = null;
     private File fileToOpen = null;
+    
+    private boolean hexModeOn = false;
+    private boolean textModeOn = false;
+    private String selectRange = null;
 
     public CommandLineParser(String[] args) {
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
 
-            if ("-?".equals(arg) || "-h".equals(arg) || "--help".equals(arg)) {
+            // Removed -h from the help check
+            if ("-?".equals(arg) || "--help".equals(arg)) {
                 showHelp = true;
-            // --- Text file generation ---
+            } else if ("-h".equalsIgnoreCase(arg)) {
+                hexModeOn = true;
+            } else if ("-t".equalsIgnoreCase(arg)) {
+                textModeOn = true;
+            } else if ("-s".equalsIgnoreCase(arg)) {
+                if (i + 1 < args.length) {
+                    selectRange = args[++i];
+                } else {
+                    System.err.println("Error: -s requires a range argument (start;end).");
+                    showHelp = true;
+                }
+                // --- Text file generation ---
             } else if ("-g".equals(arg)) {
                 if (i + 1 < args.length) {
                     try {
@@ -26,8 +42,8 @@ public class CommandLineParser {
                     System.err.println("Error: -g requires a size argument in GB.");
                     showHelp = true;
                 }
-            // --- Binary file generation ---
-            } else if ("-gb".equals(args[i]) && i + 1 < args.length) {
+                // --- Binary file generation ---
+            } else if ("-gb".equals(arg) && i + 1 < args.length) {
                 try {
                     double size = Double.parseDouble(args[i + 1]);
                     FileGenUtil.generateBinaryTestFile(size);
@@ -47,17 +63,14 @@ public class CommandLineParser {
         }
     }
 
-    public boolean isShowHelp() {
-        return showHelp;
-    }
-
-    public Double getGenerateSizeGb() {
-        return generateSizeGb;
-    }
-
-    public File getFileToOpen() {
-        return fileToOpen;
-    }
+    public boolean isShowHelp() { return showHelp; }
+    public Double getGenerateSizeGb() { return generateSizeGb; }
+    public File getFileToOpen() { return fileToOpen; }
+    
+    // Getters for the new commands
+    public boolean isHexModeOn() { return hexModeOn; }
+    public boolean isTextModeOn() { return textModeOn; }
+    public String getSelectRange() { return selectRange; }
 
     public void printHelp() {
         System.out.println("Bearit Text Editor");
@@ -65,14 +78,15 @@ public class CommandLineParser {
         System.out.println("");
         System.out.println("Options:");
         System.out.println("  -?                        Show this help message and exit.");
-        System.out.println("  -g <GENERATE_SIZE_GB>     Generates a test text file of the specified size in Gigabytes.");
-        System.out.println("                            Example: -g 1.5 will generate a 1.5GB test file.");
-        System.out.println("  -gb <GENERATE_SIZE_GB>    Generates a test binary file of the specified size in Gigabytes.");
-        System.out.println("                            Example: -g 0.1 will generate a 0.1GB or 100MB binary file.");
+        System.out.println("  -h                        Activate Hex Editor Mode for the active tab.");
+        System.out.println("  -t                        Activate Text Editor Mode for the active tab.");
+        System.out.println("  -s <start,end>            Select text/bytes in the active tab (e.g., -s 1024,2048).");
+        System.out.println("  -g <GENERATE_SIZE_GB>     Generates a test text file.");
+        System.out.println("  -gb <GENERATE_SIZE_GB>    Generates a test binary file.");
         System.out.println("");
         System.out.println("Examples:");
         System.out.println("  java -jar bearit-1.0-SNAPSHOT.jar");
         System.out.println("  java -jar bearit-1.0-SNAPSHOT.jar large_application.log");
-        System.out.println("  java -jar bearit-1.0-SNAPSHOT.jar -g 50");
+        System.out.println("  java -jar bearit-1.0-SNAPSHOT.jar -g 50");        
     }
 }

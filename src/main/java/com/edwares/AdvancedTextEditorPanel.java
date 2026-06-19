@@ -979,40 +979,98 @@ public class AdvancedTextEditorPanel extends JPanel {
         if (input != null && !input.trim().isEmpty()) {
             try {
                 long targetLine = Long.parseLong(input.trim());
-                lblLoadingStatus.setText("Searching for line position...");
-                
-                String commitText = getCommitText();
-                boolean wasDirty = isDirty;
-                isDirty = false;
-                
-                new SwingWorker<Integer, Void>() {
-                    @Override
-                    protected Integer doInBackground() throws Exception {
-                        if (wasDirty && !isCurrentlyPreview) {
-                            fileManager.commitCurrentChunk(commitText);
-                        }
-                        return fileManager.getChunkForLine(targetLine);
-                    }
-                    @Override
-                    protected void done() {
-                        try {
-                            int targetChunk = get();
-                            if (targetChunk == loadedChunkIndex) {
-                                jumpToLocalLine(targetLine);
-                                lblLoadingStatus.setText("");
-                            } else {
-                                triggerAsyncLoad(targetChunk, 0, -1, false, () -> jumpToLocalLine(targetLine));
-                            }
-                        } catch (Exception e) {
-                            lblLoadingStatus.setText("");
-                        }
-                    }
-                }.execute();
+                gotoLine(targetLine);
             } catch (NumberFormatException ex) {
                 //JOptionPane.showMessageDialog(this, "Please enter a valid numeric line value.", "Invalid Input", JOptionPane.ERROR_MESSAGE);
                 DialogUtil.showMessageDialog(this, "Please enter a valid numeric line value.", "Invalid Input", JOptionPane.ERROR_MESSAGE);
             }
         }
+    }
+
+    // goto and line in the file in any chunk
+    public void gotoLine(long targetLineNum) {
+        lblLoadingStatus.setText("Searching for line position...");
+        
+        String commitText = getCommitText();
+        boolean wasDirty = isDirty;
+        isDirty = false;
+        
+        new SwingWorker<Integer, Void>() {
+            @Override
+            protected Integer doInBackground() throws Exception {
+                if (wasDirty && !isCurrentlyPreview) {
+                    fileManager.commitCurrentChunk(commitText);
+                }
+                return fileManager.getChunkForLine(targetLineNum);
+            }
+            @Override
+            protected void done() {
+                try {
+                    int targetChunk = get();
+                    if (targetChunk == loadedChunkIndex) {
+                        jumpToLocalLine(targetLineNum);
+                        lblLoadingStatus.setText("");
+                    } else {
+                        triggerAsyncLoad(targetChunk, 0, -1, false, () -> jumpToLocalLine(targetLineNum));
+                    }
+                } catch (Exception e) {
+                    lblLoadingStatus.setText("");
+                }
+            }
+        }.execute();
+    }
+
+    // select text in editor from any chunk in the file
+    public void setGlobalSelection(long globalStart, long globalEnd) {
+        if (textArea == null) return;
+        try {
+            long chunkStartOffset = fileManager.getChunkBoundaries(loadedChunkIndex)[0];
+            
+            int localStartByte = (int) Math.max(0, globalStart - chunkStartOffset);
+            int localEndByte = (int) Math.max(0, globalEnd - chunkStartOffset);
+            
+            int visualStart = 0;
+            int visualEnd = 0;
+            
+            if (isBinaryMode()) {
+                visualStart = localStartByte;
+                visualEnd = localEndByte;
+            } else {
+                String rawChunkText = fileManager.getChunkContent(loadedChunkIndex);
+                int currentByteCount = 0;
+                int originalStringIdx = 0;
+                int strippedIndex = 0;
+                
+                while (originalStringIdx < rawChunkText.length() && currentByteCount < localEndByte) {
+                    char c = rawChunkText.charAt(originalStringIdx);
+                    
+                    if (c <= 0x7F) currentByteCount += 1;
+                    else if (c <= 0x7FF) currentByteCount += 2;
+                    else if (Character.isHighSurrogate(c)) { currentByteCount += 4; originalStringIdx++; } 
+                    else currentByteCount += 3;
+                    
+                    if (c != '\r') {
+                        if (c == '\n' || c == '\t') strippedIndex++;
+                        else if (Character.getType(c) != Character.CONTROL && Character.getType(c) != Character.FORMAT) strippedIndex++;
+                    }
+                    
+                    if (currentByteCount == localStartByte || (currentByteCount > localStartByte && visualStart == 0 && localStartByte > 0)) {
+                        visualStart = rawToVisualIndex(strippedIndex);
+                    }
+                    originalStringIdx++;
+                }
+                visualEnd = rawToVisualIndex(strippedIndex);
+            }
+            
+            if (visualStart >= 0 && visualEnd <= textArea.getDocument().getLength()) {
+                textArea.setCaretPosition(visualStart);
+                textArea.moveCaretPosition(visualEnd);
+                textArea.requestFocusInWindow();
+                
+                java.awt.Rectangle viewRect = textArea.modelToView2D(visualEnd).getBounds();
+                textArea.scrollRectToVisible(viewRect);
+            }
+        } catch (Exception e) {}
     }
 
     private Component getDialogParent() {
