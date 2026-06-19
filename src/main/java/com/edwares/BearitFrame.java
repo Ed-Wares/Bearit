@@ -748,7 +748,7 @@ private void updateFrameTitle() {
                     SwingWorker<File, long[]> worker = new SwingWorker<File, long[]>() {
                         @Override
                         protected File doInBackground() throws Exception {
-                            LargeFileManager.generateTestFile(destFile, gbSize, preventNewLines, (written, total) -> {
+                            FileGenUtil.generateTestFile(destFile, gbSize, preventNewLines, (written, total) -> {
                                 publish(new long[]{written, total});
                             });
                             return destFile;

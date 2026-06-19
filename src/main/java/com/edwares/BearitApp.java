@@ -21,7 +21,7 @@ public class BearitApp {
 
         if (cli.getGenerateSizeGb() != null) {
             try {
-                LargeFileManager.generateTestFile(cli.getGenerateSizeGb());
+                FileGenUtil.generateTestFile(cli.getGenerateSizeGb());
             } catch (IOException e) {
                 System.err.println("Error generating file: " + e.getMessage());
             }
