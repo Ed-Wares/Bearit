@@ -106,16 +106,13 @@ public class BearitTextHexWrapper extends JPanel {
         try {
             if (isDirty) {
                 applyHexEdits();
-            }
-            
-            LargeFileManager fm = hiddenTextEditor.getFileManager();
-            
-            try {
-                String updatedText = fm.getChunkContent(currentLoadedChunk);
-                hiddenTextEditor.forceSetText(updatedText);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+                try {
+                    String updatedText = hiddenTextEditor.getFileManager().getChunkContent(currentLoadedChunk);
+                    hiddenTextEditor.forceSetText(updatedText);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }            
         } finally {
             // Unlock when finished so future saves/closes work correctly
             isSyncing = false; 

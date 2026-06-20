@@ -8,6 +8,8 @@ import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -28,9 +30,10 @@ public class HexEditorPanel extends JPanel {
     private boolean isUpdatingScroll = false;
     
     // Inspector UI
-    private JTextField lblAddress, lblChunkAddress, lbl8Bit, lbl16Bit, lbl32Bit, lbl64Bit;
-    private JTextField lblFloat, lblDouble, lblBinary, lblUnix32, lblUnix64;
+    private JTextField lblAddress, lblChunkAddress, lblPosition, lbl8Bit, lbl16Bit, lbl32Bit, lbl64Bit;
+    private JTextField lblFloat, lblBinary, lblUnix32, lblUnix64;
     private JTextField lblDosTime, lblWin32Time;
+    private JTextField lblUtf8, lblUtf16, lblEbcdic;
     private JTextField txtGoto;
     private JComboBox<Integer> comboBytesPerRow;
 
@@ -393,6 +396,7 @@ public class HexEditorPanel extends JPanel {
         // Translations
         lblAddress = addInspectorRow("Global Address:", panel, ++gbc.gridy);
         lblChunkAddress = addInspectorRow("Chunk Address:", panel, ++gbc.gridy);
+        lblPosition = addInspectorRow("Position:", panel, ++gbc.gridy);
         lbl8Bit = addInspectorRow("Int8:", panel, ++gbc.gridy);
         lbl16Bit = addInspectorRow("Int16 (LE):", panel, ++gbc.gridy);
         lbl32Bit = addInspectorRow("Int32 (LE):", panel, ++gbc.gridy);
@@ -403,6 +407,10 @@ public class HexEditorPanel extends JPanel {
         lblUnix64 = addInspectorRow("Unix 64:", panel, ++gbc.gridy);
         lblWin32Time = addInspectorRow("Win32 Time:", panel, ++gbc.gridy);
         lblDosTime = addInspectorRow("MS-DOS Time:", panel, ++gbc.gridy);
+        lblUtf8 = addInspectorRow("UTF-8:", panel, ++gbc.gridy);
+        lblUtf16 = addInspectorRow("UTF-16:", panel, ++gbc.gridy);
+        lblEbcdic = addInspectorRow("EBCDIC:", panel, ++gbc.gridy);
+        
 
         gbc.gridy++; gbc.weighty = 1.0;
         panel.add(Box.createVerticalGlue(), gbc);
@@ -457,30 +465,69 @@ public class HexEditorPanel extends JPanel {
     }
 
     private void updateInspector() {
-        int row = hexTable.getSelectedRow();
-        int col = hexTable.getSelectedColumn();
-        if (row < 0 || col < 1 || dataBytes == null) return;
         
+        int localAddress = getSelectedByteOffset();
+        if (localAddress == -1) {
+            // Clear the inspector if nothing is selected
+            lblAddress.setText("-");
+            lblChunkAddress.setText("-");
+            lblPosition.setText("-");
+            lbl8Bit.setText("-");
+            lbl16Bit.setText("-");
+            lbl32Bit.setText("-");
+            lbl64Bit.setText("-");
+            lblFloat.setText("-");
+            lblBinary.setText("-");
+            lblUnix32.setText("-");
+            lblUnix64.setText("-");
+            lblWin32Time.setText("-");
+            lblDosTime.setText("-");
+            lblUtf8.setText("-");
+            lblUtf16.setText("-");
+            lblEbcdic.setText("-");
+            return;
+        }
+        long globalAddress = localAddress == -1 ? baseAddressOffset : baseAddressOffset + localAddress;
         hexTable.repaint(); // Force repaint for cross-highlighting
 
-        int bpr = tableModel.getBytesPerRow();
-        int byteOffset = col <= bpr ? (col - 1) : (col - bpr - 1);
-        int index = row * bpr + byteOffset;
-
-        if (index >= dataBytes.length) return;
-
-        lblAddress.setText(String.format("0x%08X", baseAddressOffset + index));
-        lblChunkAddress.setText(String.format("0x%08X", index));
+        lblAddress.setText(String.format("0x%08X", globalAddress));
+        lblChunkAddress.setText(String.format("0x%08X", localAddress));
+        lblPosition.setText(String.format("%d", globalAddress));
 
         byte[] buf = new byte[8];
-        int len = Math.min(8, dataBytes.length - index);
-        System.arraycopy(dataBytes, index, buf, 0, len);
+        int len = Math.min(8, dataBytes.length - localAddress);
+        System.arraycopy(dataBytes, localAddress, buf, 0, len);
         ByteBuffer bb = ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN);
 
         lbl8Bit.setText(String.valueOf(buf[0]));
         lblBinary.setText(String.format("%8s", Integer.toBinaryString(buf[0] & 0xFF)).replace(' ', '0'));
         lbl16Bit.setText(len >= 2 ? String.valueOf(bb.getShort(0)) : "-");
-        
+
+        // UTF-8 is variable-length (1 to 4 bytes). We grab up to 4 bytes from the current cursor position and let Java's standard charset decoder figure out the bounds of the first character.
+        int utf8Len = Math.min(4, dataBytes.length - localAddress);
+        if (utf8Len > 0) {
+            String utf8Raw = new String(dataBytes, localAddress, utf8Len, StandardCharsets.UTF_8);
+            lblUtf8.setText(getSafeDisplayChar(utf8Raw));
+        } else {
+            lblUtf8.setText("N/A"); // End of file edge case
+        }
+
+        // --- UTF-16 Character ---
+        if (utf8Len >= 2) {
+            String utf16Raw = new String(dataBytes, localAddress, 2, StandardCharsets.UTF_16BE);
+            lblUtf16.setText(getSafeDisplayChar(utf16Raw));
+        } else {
+            lblUtf16.setText("N/A"); // End of file edge case
+        }
+
+        // --- EBCDIC Character ---
+        if (utf8Len >= 1) {
+            String ebcdicRaw = new String(dataBytes, localAddress, 1, Charset.forName("Cp037"));
+            lblEbcdic.setText(getSafeDisplayChar(ebcdicRaw));
+        } else {
+            lblEbcdic.setText("N/A"); // End of file edge case
+        }      
+
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
 
         if (len >= 4) {
@@ -736,5 +783,24 @@ public class HexEditorPanel extends JPanel {
             globalVBar.setUI(new ThemedScrollBarUI(theme));
         }        
         hexTable.repaint();
+    }
+
+    /**
+     * Extracts the first character from a decoded string and ensures it is 
+     * visually safe to display in a standard UI label.
+     */
+    private String getSafeDisplayChar(String decodedString) {
+        if (decodedString == null || decodedString.isEmpty()) return ".";
+        
+        int codePoint = decodedString.codePointAt(0);
+        
+        // If it is a control character, format character, or unassigned, return a dot
+        if (Character.isISOControl(codePoint) || 
+            Character.getType(codePoint) == Character.FORMAT ||
+            Character.getType(codePoint) == Character.UNASSIGNED) {
+            return ".";
+        }
+        
+        return new String(Character.toChars(codePoint));
     }
 }
