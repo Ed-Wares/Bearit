@@ -130,6 +130,9 @@ public class AdvancedTextEditorPanel extends JPanel {
     private JButton btnSwap;
     private SwingWorker<?, ?> activeSearchWorker = null; // Tracks the currently running search/replace background thread
 
+    private boolean lastGotoLineFlag = true;
+    private String lastGotoValue = "";
+
     private final DocumentListener editorDocumentListener = new DocumentListener() {
         public void insertUpdate(DocumentEvent e) { registerEdit(); }
         public void removeUpdate(DocumentEvent e) { registerEdit(); }
@@ -976,16 +979,59 @@ public class AdvancedTextEditorPanel extends JPanel {
         } catch (Exception e) {}
     }
 
-    public void showGotoLineDialog() {
-        //String input = JOptionPane.showInputDialog(this, "Enter Destination Line Number:", "Go To Line", JOptionPane.QUESTION_MESSAGE);
-        String input = DialogUtil.showInputDialog(getDialogParent(), "Enter Destination Line Number:", "Go To Line");
-        if (input != null && !input.trim().isEmpty()) {
-            try {
-                long targetLine = Long.parseLong(input.trim());
-                gotoLine(targetLine);
-            } catch (NumberFormatException ex) {
-                //JOptionPane.showMessageDialog(this, "Please enter a valid numeric line value.", "Invalid Input", JOptionPane.ERROR_MESSAGE);
-                DialogUtil.showMessageDialog(this, "Please enter a valid numeric line value.", "Invalid Input", JOptionPane.ERROR_MESSAGE);
+    public void showGotoDialog() {
+        JPanel panel = new JPanel(new BorderLayout(5, 10));
+        panel.setOpaque(false);
+        
+        JPanel radPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        radPanel.setOpaque(false);
+        JRadioButton radLine = new JRadioButton("Line", true);
+        radLine.setOpaque(false);
+        radLine.setSelected(lastGotoLineFlag);
+        JRadioButton radPosition = new JRadioButton("Position (Byte Offset)");
+        radPosition.setOpaque(false);
+        
+        ButtonGroup group = new ButtonGroup();
+        group.add(radLine);
+        group.add(radPosition);
+        radPanel.add(radLine);
+        radPanel.add(radPosition);
+        
+        JTextField txtInput = new JTextField(15);
+        txtInput.setText(lastGotoValue);
+        txtInput.selectAll();
+        
+        // Ensure the text field grabs focus automatically
+        txtInput.addAncestorListener(new javax.swing.event.AncestorListener() {
+            @Override
+            public void ancestorAdded(javax.swing.event.AncestorEvent event) {
+                SwingUtilities.invokeLater(() -> SwingUtilities.invokeLater(txtInput::requestFocusInWindow));
+            }
+            @Override public void ancestorRemoved(javax.swing.event.AncestorEvent event) {}
+            @Override public void ancestorMoved(javax.swing.event.AncestorEvent event) {}
+        });
+
+        panel.add(radPanel, BorderLayout.NORTH);
+        panel.add(txtInput, BorderLayout.CENTER);
+
+        int result = DialogUtil.showConfirmDialog(getDialogParent(), panel, "Go To...", JOptionPane.OK_CANCEL_OPTION);
+        
+        if (result == JOptionPane.OK_OPTION) {
+            String input = txtInput.getText();
+            if (input != null && !input.trim().isEmpty()) {
+                try {
+                    long target = Long.parseLong(input.trim());
+                    lastGotoValue = input;
+                    lastGotoLineFlag = radLine.isSelected();
+                    if (radLine.isSelected()) {
+                        gotoLine(target);
+                    } else {
+                        // setGlobalSelection flawlessly triggers chunk-loading and absolute byte positioning!
+                        setGlobalSelection(target, target);
+                    }
+                } catch (NumberFormatException ex) {
+                    DialogUtil.showMessageDialog(this, "Please enter a valid numeric value.", "Invalid Input", JOptionPane.ERROR_MESSAGE);
+                }
             }
         }
     }
@@ -1026,53 +1072,84 @@ public class AdvancedTextEditorPanel extends JPanel {
     // select text in editor from any chunk in the file
     public void setGlobalSelection(long globalStart, long globalEnd) {
         if (textArea == null) return;
+        
         try {
-            long chunkStartOffset = fileManager.getChunkBoundaries(loadedChunkIndex)[0];
-            
-            int localStartByte = (int) Math.max(0, globalStart - chunkStartOffset);
-            int localEndByte = (int) Math.max(0, globalEnd - chunkStartOffset);
-            
-            int visualStart = 0;
-            int visualEnd = 0;
-            
-            if (isBinaryMode()) {
-                visualStart = localStartByte;
-                visualEnd = localEndByte;
-            } else {
-                String rawChunkText = fileManager.getChunkContent(loadedChunkIndex);
-                int currentByteCount = 0;
-                int originalStringIdx = 0;
-                int strippedIndex = 0;
-                
-                while (originalStringIdx < rawChunkText.length() && currentByteCount < localEndByte) {
-                    char c = rawChunkText.charAt(originalStringIdx);
-                    
-                    if (c <= 0x7F) currentByteCount += 1;
-                    else if (c <= 0x7FF) currentByteCount += 2;
-                    else if (Character.isHighSurrogate(c)) { currentByteCount += 4; originalStringIdx++; } 
-                    else currentByteCount += 3;
-                    
-                    if (c != '\r') {
-                        if (c == '\n' || c == '\t') strippedIndex++;
-                        else if (Character.getType(c) != Character.CONTROL && Character.getType(c) != Character.FORMAT) strippedIndex++;
-                    }
-                    
-                    if (currentByteCount == localStartByte || (currentByteCount > localStartByte && visualStart == 0 && localStartByte > 0)) {
-                        visualStart = rawToVisualIndex(strippedIndex);
-                    }
-                    originalStringIdx++;
+            // Find the exact chunk that contains the starting byte
+            int targetChunk = 0;
+            for (int i = 0; i < fileManager.getTotalChunks(); i++) {
+                long[] bounds = fileManager.getChunkBoundaries(i);
+                // bounds[0] is inclusive, bounds[1] is exclusive
+                if (globalStart >= bounds[0] && globalStart < bounds[1]) {
+                    targetChunk = i;
+                    break;
                 }
-                visualEnd = rawToVisualIndex(strippedIndex);
             }
             
-            if (visualStart >= 0 && visualEnd <= textArea.getDocument().getLength()) {
-                textArea.setCaretPosition(visualStart);
-                textArea.moveCaretPosition(visualEnd);
-                textArea.requestFocusInWindow();
-                
-                java.awt.Rectangle viewRect = textArea.modelToView2D(visualEnd).getBounds();
-                textArea.scrollRectToVisible(viewRect);
+            final int finalTargetChunk = targetChunk;
+            
+            // Wrap the highlighting math in a Runnable so we can delay it if a chunk load is needed
+            Runnable applySelection = () -> {
+                try {
+                    long chunkStartOffset = fileManager.getChunkBoundaries(finalTargetChunk)[0];
+                    
+                    int localStartByte = (int) Math.max(0, globalStart - chunkStartOffset);
+                    int localEndByte = (int) Math.max(0, globalEnd - chunkStartOffset);
+                    
+                    int visualStart = 0;
+                    int visualEnd = 0;
+                    
+                    if (isBinaryMode()) {
+                        visualStart = localStartByte;
+                        visualEnd = localEndByte;
+                    } else {
+                        String rawChunkText = fileManager.getChunkContent(finalTargetChunk);
+                        int currentByteCount = 0;
+                        int originalStringIdx = 0;
+                        int strippedIndex = 0;
+                        
+                        while (originalStringIdx < rawChunkText.length() && currentByteCount < localEndByte) {
+                            char c = rawChunkText.charAt(originalStringIdx);
+                            
+                            if (c <= 0x7F) currentByteCount += 1;
+                            else if (c <= 0x7FF) currentByteCount += 2;
+                            else if (Character.isHighSurrogate(c)) { currentByteCount += 4; originalStringIdx++; } 
+                            else currentByteCount += 3;
+                            
+                            if (c != '\r') {
+                                if (c == '\n' || c == '\t') strippedIndex++;
+                                else if (Character.getType(c) != Character.CONTROL && Character.getType(c) != Character.FORMAT) strippedIndex++;
+                            }
+                            
+                            if (currentByteCount == localStartByte || (currentByteCount > localStartByte && visualStart == 0 && localStartByte > 0)) {
+                                visualStart = rawToVisualIndex(strippedIndex);
+                            }
+                            originalStringIdx++;
+                        }
+                        visualEnd = rawToVisualIndex(strippedIndex);
+                    }
+                    
+                    if (visualStart >= 0 && visualEnd <= textArea.getDocument().getLength()) {
+                        textArea.setCaretPosition(visualStart);
+                        textArea.moveCaretPosition(visualEnd);
+                        textArea.requestFocusInWindow();
+                        
+                        java.awt.Rectangle viewRect = textArea.modelToView2D(visualEnd).getBounds();
+                        textArea.scrollRectToVisible(viewRect);
+                    }
+                } catch (Exception e) {}
+            };
+            
+            // Either run it immediately, or trigger an async load and run it when finished!
+            if (finalTargetChunk == loadedChunkIndex) {
+                applySelection.run();
+            } else {
+                lblLoadingStatus.setText("Searching for byte position...");
+                triggerAsyncLoad(finalTargetChunk, 0, -1, false, () -> {
+                    lblLoadingStatus.setText("");
+                    applySelection.run();
+                });
             }
+            
         } catch (Exception e) {}
     }
 
@@ -1564,7 +1641,7 @@ public class AdvancedTextEditorPanel extends JPanel {
 
         im.put(KeyStroke.getKeyStroke(KeyEvent.VK_G, InputEvent.CTRL_DOWN_MASK), "showGotoLine");
         am.put("showGotoLine", new AbstractAction() {
-            public void actionPerformed(ActionEvent e) { showGotoLineDialog(); }
+            public void actionPerformed(ActionEvent e) { showGotoDialog(); }
         });
 
         im.put(KeyStroke.getKeyStroke(KeyEvent.VK_Z, InputEvent.CTRL_DOWN_MASK), "undo");
@@ -2775,8 +2852,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         JMenuItem searchItem = new JMenuItem("Search & Replace...");
         searchItem.addActionListener(e -> showSearchDialog());
 
-        JMenuItem gotoItem = new JMenuItem("Go To Line...");
-        gotoItem.addActionListener(e -> showGotoLineDialog());
+        JMenuItem gotoItem = new JMenuItem("Go To Line or Position...");
+        gotoItem.addActionListener(e -> showGotoDialog());
 
         // Convert Case Sub-Menu
         JMenu convertCaseMenu = new JMenu("Convert Case");

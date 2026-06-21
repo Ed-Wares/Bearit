@@ -1027,7 +1027,7 @@ public class BearitFrame extends JFrame {
         
         // --- Search / Navigate ---
         JButton btnSearch = createIconButton("search.png", "Search", "Search and Replace across full file", e -> { if (getActiveEditor() != null) getActiveEditor().showSearchDialog(); });
-        JButton btnGoto = createIconButton("location_on.png", "Go To", "Jump to specific line number", e -> { if (getActiveEditor() != null) getActiveEditor().showGotoLineDialog(); });
+        JButton btnGoto = createIconButton("location_on.png", "Go To", "Jump to specific line number or position", e -> { if (getActiveEditor() != null) getActiveEditor().showGotoDialog(); });
 
         // --- Toggle Buttons ---
         btnWordWrap = createIconToggleButton("wrap_text.png", "Wrap", "Toggle global Word Wrap mode", null);
@@ -1338,7 +1338,7 @@ public class BearitFrame extends JFrame {
         JMenuItem pasteItem = new JMenuItem("Paste");
         JMenuItem selectAllItem = new JMenuItem("Select All");
         JMenuItem searchItem = new JMenuItem("Search & Replace...");
-        JMenuItem gotoItem = new JMenuItem("Go To Line...");
+        JMenuItem gotoItem = new JMenuItem("Go To Line or Position...");
 
         // Map accelerators to show standard system keyboard shortcuts in the menu UI
         undoItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_Z, InputEvent.CTRL_DOWN_MASK));
@@ -1354,7 +1354,7 @@ public class BearitFrame extends JFrame {
         selectAllItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().selectAll(); });
 
         searchItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().showSearchDialog(); });
-        gotoItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().showGotoLineDialog(); });
+        gotoItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().showGotoDialog(); });
 
         // --- Convert Case Sub-Menu ---
         JMenu convertCaseMenu = new JMenu("Convert Case");
