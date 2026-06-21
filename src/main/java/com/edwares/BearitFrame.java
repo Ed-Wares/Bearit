@@ -571,6 +571,11 @@ public class BearitFrame extends JFrame {
 
     private void performSave() {
         AdvancedTextEditorPanel active = getActiveEditor();
+        Component c = getActiveTabComponent();
+        if (c instanceof BearitTextHexWrapper) {
+            BearitTextHexWrapper activeHex = (BearitTextHexWrapper) c;
+            activeHex.syncToHiddenEditor(); // check if the hex view has changed since last sync
+        }
         if (active != null) {
             performSaveFor(active, false);
         }
@@ -578,6 +583,11 @@ public class BearitFrame extends JFrame {
 
     private void performSaveAs() {
         AdvancedTextEditorPanel active = getActiveEditor();
+        Component c = getActiveTabComponent();
+        if (c instanceof BearitTextHexWrapper) {
+            BearitTextHexWrapper activeHex = (BearitTextHexWrapper) c;
+            activeHex.syncToHiddenEditor(); // check if the hex view has changed since last sync
+        }
         if (active != null) {
             //if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
             File selected = DialogUtil.showSaveFileDialog(this, "Save File As");

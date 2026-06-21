@@ -57,6 +57,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     private File activeFile = null;
     private String chunkStatus = "";
     private String fileSizeDateStatus = "";
+    private String hiddenBoundaryNewline = "";
 
     // Tracks the active load task so we can kill it if the user scrolls past it
     private SwingWorker<LargeFileManager.ChunkState, Void> activeChunkWorker = null;
@@ -944,8 +945,10 @@ public class AdvancedTextEditorPanel extends JPanel {
         if (isBinaryMode()) {
             text = decodeViewToBinary(text); // --- REVERSE THE BINARY ENCODING ---
         }
+        
+        // --- ONLY APPEND WHAT WAS STRIPPED ---
         if (loadedChunkIndex < fileManager.getTotalChunks() - 1) {
-            return text + "\n";
+            return text + hiddenBoundaryNewline;
         }
         return text;
     }
@@ -1807,10 +1810,14 @@ public class AdvancedTextEditorPanel extends JPanel {
             try {
                 String content = state.content();
                 // Strip the trailing newline used strictly for chunk file boundaries
-                if (state.hasNext()) {
+                // --- CONDITIONAL BOUNDARY STRIPPING ---
+                hiddenBoundaryNewline = ""; 
+                if (!isBinaryMode() && state.hasNext()) {
                     if (content.endsWith("\r\n")) {
+                        hiddenBoundaryNewline = "\r\n";
                         content = content.substring(0, content.length() - 2);
                     } else if (content.endsWith("\n")) {
+                        hiddenBoundaryNewline = "\n";
                         content = content.substring(0, content.length() - 1);
                     }
                 }
@@ -2863,6 +2870,18 @@ public class AdvancedTextEditorPanel extends JPanel {
             documentCache.clear();
         }
         
+        // --- APPLY BOUNDARY STRIPPING ON TAB SYNC ---
+        hiddenBoundaryNewline = "";
+        if (!isBinaryMode() && loadedChunkIndex < fileManager.getTotalChunks() - 1) {
+            if (text.endsWith("\r\n")) {
+                hiddenBoundaryNewline = "\r\n";
+                text = text.substring(0, text.length() - 2);
+            } else if (text.endsWith("\n")) {
+                hiddenBoundaryNewline = "\n";
+                text = text.substring(0, text.length() - 1);
+            }
+        }
+
         if (textArea != null) {
             // --- Apply protections when syncing from Hex Editor ---
             if (isBinaryMode()) {
@@ -2876,7 +2895,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
         
         // Forcefully restore the exact state to whatever it was a millisecond ago
-        this.isDirty = false; // Reset local text edits since we just forced a full synchronized override
+        this.isDirty = false; 
         setUnsavedChanges(hadUnsavedAsterisk);
     }
 

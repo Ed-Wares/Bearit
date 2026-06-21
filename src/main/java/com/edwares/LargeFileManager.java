@@ -17,7 +17,7 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 public class LargeFileManager {
-    public static final int CHUNK_SIZE = 25 * 1024 * 1024; 
+    public static int CHUNK_SIZE = 25 * 1024 * 1024; // 25MB chunks
     private static final int PREVIEW_SIZE = 10 * 1024; 
 
     private File currentFile;
