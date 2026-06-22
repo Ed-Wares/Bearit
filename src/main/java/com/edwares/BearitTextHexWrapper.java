@@ -98,11 +98,12 @@ public class BearitTextHexWrapper extends JPanel {
         hiddenTextEditor.setUnsavedChanges(false); 
     }
 
-    public void syncToHiddenEditor() {
+    public void syncToHiddenEditorBlocking() {
         // --- RE-ENTRANCY LOCK: ---
         if (isSyncing) return; 
         isSyncing = true;
-        
+        //hexEditor.setUIEnabled(false);
+        hexEditor.showChunkLoadProgressBar(true);
         try {
             if (isDirty) {
                 applyHexEdits();
@@ -116,8 +117,110 @@ public class BearitTextHexWrapper extends JPanel {
         } finally {
             // Unlock when finished so future saves/closes work correctly
             isSyncing = false; 
+            //hexEditor.setUIEnabled(true);
+            hexEditor.showChunkLoadProgressBar(false);
         }
     }
+
+    public void syncToHiddenEditor(final boolean switchEditors) {
+        // --- RE-ENTRANCY LOCK: ---
+        if (isSyncing) return; 
+        isSyncing = true;
+
+        if (!isDirty) {
+            isSyncing = false;
+            return;
+        }
+
+        // Lock the Hex UI so the user doesn't click around while it saves
+        hexEditor.setUIEnabled(false); 
+        hexEditor.setStatus("Syncing Editors...");
+        hexEditor.showChunkLoadProgressBar(true);
+        hiddenTextEditor.setLoadingStatus("Syncing Editors...");
+        hiddenTextEditor.showChunkLoadProgressBar(true);
+        // --- Capture the exact GLOBAL byte offset before reverting ---
+        final long targetGlobalOffset = hexEditor.getGlobalSelectedByteOffset();
+
+        // Change the return type to Document!
+        SwingWorker<javax.swing.text.Document, Integer> worker = new SwingWorker<>() {
+            boolean hadUnsavedAsterisk;
+            String hiddenBoundary = "";
+
+            @Override
+            protected javax.swing.text.Document doInBackground() throws Exception {
+                // --- ACTUALLY SAVE THE EDITS TO THE FILE MANAGER! ---
+                applyHexEdits();                
+                LargeFileManager fm = hiddenTextEditor.getFileManager();
+                String text = fm.getChunkContent(currentLoadedChunk);
+                hadUnsavedAsterisk = hiddenTextEditor.hasUnsavedChanges(); 
+                
+                // Conditionally strip boundary
+                if (!hiddenTextEditor.isBinaryMode() && currentLoadedChunk < fm.getTotalChunks() - 1) {
+                    if (text.endsWith("\r\n")) {
+                        hiddenBoundary = "\r\n";
+                        text = text.substring(0, text.length() - 2);
+                    } else if (text.endsWith("\n")) {
+                        hiddenBoundary = "\n";
+                        text = text.substring(0, text.length() - 1);
+                    }
+                }
+
+                // Execute the heavy regex/encoding loops
+                if (hiddenTextEditor.isBinaryMode()) {
+                    StringBuilder sb = new StringBuilder(text.length());
+                    int len = text.length();
+                    for (int i = 0; i < len; i++) {
+                        char c = text.charAt(i);
+                        if (c == '\n' || c == '\t' || (c >= 32 && c <= 126)) {
+                            sb.append(c);
+                        } else {
+                            sb.append((char) (0xE000 + (c & 0xFF)));
+                        }
+                    }
+                    text = sb.toString();
+                } else {
+                    text = text.replaceAll("[\\p{Cc}\\p{Cf}&&[^\\r\\n\\t]]", "");
+                }
+                
+                // --- BUILD THE DOCUMENT IN THE BACKGROUND ---                
+                javax.swing.text.Document prebuiltDoc = hiddenTextEditor.buildDocumentOffThread(text);
+                return prebuiltDoc;
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    javax.swing.text.Document finalDoc = get();
+                    hexEditor.setStatus("Applying to UI...");
+                    hiddenTextEditor.setLoadingStatus("Applying to UI...");
+                    
+                    // Pass the processed variables instantly
+                    hiddenTextEditor.setHiddenBoundaryNewline(hiddenBoundary);
+                    
+                    // SWAP THE DOCUMENT ALMOST INSTANTLY
+                    hiddenTextEditor.applyForceSetDocumentUI(finalDoc, hadUnsavedAsterisk);
+                    
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    hexEditor.setStatus("Sync Failed");
+                    hiddenTextEditor.setLoadingStatus("Sync Failed");
+                } finally {
+                    isSyncing = false; 
+                    hexEditor.setUIEnabled(true);
+                    hexEditor.setStatus("Ready");
+                    hexEditor.showChunkLoadProgressBar(false);
+                    hiddenTextEditor.setLoadingStatus("Ready");
+                    hiddenTextEditor.showChunkLoadProgressBar(false);
+                    if (switchEditors) {
+                        hiddenTextEditor.focusEditor();
+                        hiddenTextEditor.setGlobalSelection(targetGlobalOffset, targetGlobalOffset);
+                    }
+                }
+            }
+        };        
+        worker.execute();
+    }
+
 
     public int getHexSelectedByteOffset() {
         return hexEditor.getSelectedByteOffset();

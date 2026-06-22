@@ -41,6 +41,7 @@ public class HexEditorPanel extends JPanel {
     private JLabel lblStatus;
     private JLabel lblChunkFileStatus;
     private String chunkStatus = "";
+    private JProgressBar chunkLoadProgressBar; 
     private String fileSizeDateStatus = "";
     private Consumer<Boolean> onPrevChunk;
     private Consumer<Boolean> onNextChunk;  
@@ -262,10 +263,16 @@ public class HexEditorPanel extends JPanel {
         lblChunkFileStatus.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 15)); // Add spacing on the right
         
         lblStatus = new JLabel("Ready");
+
+        chunkLoadProgressBar = new JProgressBar();
+        chunkLoadProgressBar.setIndeterminate(true);
+        chunkLoadProgressBar.setPreferredSize(new Dimension(100, 14));
+        chunkLoadProgressBar.setVisible(false);
         
         // Add them to the flow layout in the desired order
         leftPanel.add(lblChunkFileStatus);
         leftPanel.add(lblStatus);
+        leftPanel.add(chunkLoadProgressBar);
         
         // Anchor the entire group to the left side of the bottom panel
         panel.add(leftPanel, BorderLayout.WEST);
@@ -275,6 +282,10 @@ public class HexEditorPanel extends JPanel {
 
     public void setStatus(String message) {
         lblStatus.setText(message);
+    }
+
+    public void showChunkLoadProgressBar(boolean visibleFlag) {
+        chunkLoadProgressBar.setVisible(visibleFlag);
     }
 
     public void setOnPrevChunk(java.util.function.Consumer<Boolean> listener) { this.onPrevChunk = listener; }

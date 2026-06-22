@@ -574,7 +574,7 @@ public class BearitFrame extends JFrame {
         Component c = getActiveTabComponent();
         if (c instanceof BearitTextHexWrapper) {
             BearitTextHexWrapper activeHex = (BearitTextHexWrapper) c;
-            activeHex.syncToHiddenEditor(); // check if the hex view has changed since last sync
+            activeHex.syncToHiddenEditor(false); // check if the hex view has changed since last sync
         }
         if (active != null) {
             performSaveFor(active, false);
@@ -586,7 +586,7 @@ public class BearitFrame extends JFrame {
         Component c = getActiveTabComponent();
         if (c instanceof BearitTextHexWrapper) {
             BearitTextHexWrapper activeHex = (BearitTextHexWrapper) c;
-            activeHex.syncToHiddenEditor(); // check if the hex view has changed since last sync
+            activeHex.syncToHiddenEditor(false); // check if the hex view has changed since last sync
         }
         if (active != null) {
             //if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
@@ -618,7 +618,7 @@ public class BearitFrame extends JFrame {
         for (int i = 0; i < tabbedPane.getTabCount(); i++) {
             Component c = tabbedPane.getComponentAt(i);
             if (c instanceof BearitTextHexWrapper && ((BearitTextHexWrapper) c).getHiddenTextEditor() == editor) {
-                ((BearitTextHexWrapper) c).syncToHiddenEditor();
+                ((BearitTextHexWrapper) c).syncToHiddenEditor(false);
                 break;
             }
         }
@@ -848,15 +848,13 @@ public class BearitFrame extends JFrame {
             // --- Capture the exact GLOBAL byte offset before reverting ---
             final long targetGlobalOffset = hexWrapper.getHexEditor().getGlobalSelectedByteOffset();
             
-            hexWrapper.syncToHiddenEditor(); 
+            hexWrapper.syncToHiddenEditor(true); 
             
             AdvancedTextEditorPanel restoredTextPanel = hexWrapper.getHiddenTextEditor();
             tabbedPane.setComponentAt(idx, restoredTextPanel);
             
             restoredTextPanel.revalidate();
             restoredTextPanel.repaint();
-            tabbedPane.revalidate();
-            tabbedPane.repaint();
             syncHexToggles(false);
             restoredTextPanel.focusEditor();
             restoredTextPanel.setGlobalSelection(targetGlobalOffset, targetGlobalOffset);

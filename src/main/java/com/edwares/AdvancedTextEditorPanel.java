@@ -2939,6 +2939,59 @@ public class AdvancedTextEditorPanel extends JPanel {
         return loadedChunkIndex;
     }
 
+    public void setLoadingStatus(String statusText) {
+        lblLoadingStatus.setText(statusText);
+    }
+
+    public void showChunkLoadProgressBar(boolean visibleFlag) {
+        chunkLoadProgressBar.setVisible(visibleFlag);
+    }
+
+    /** Used by the background Hex Wrapper to set the boundary correctly without locking the UI */
+    public void setHiddenBoundaryNewline(String hiddenNewline) {
+        this.hiddenBoundaryNewline = hiddenNewline;
+    }
+
+    /**
+     * Builds the heavy Swing Text Document structure completely off the UI thread.
+     * Because it is not attached to a JTextArea yet, this is perfectly thread-safe
+     * and absorbs the 3-5 second processing penalty in the background!
+     */
+    public javax.swing.text.Document buildDocumentOffThread(String text) throws javax.swing.text.BadLocationException {
+        javax.swing.text.Document newDoc = createWrappedDocument();
+        // Insert the massive string without triggering UI repaints or Undo history
+        newDoc.insertString(0, text, null);
+        return newDoc;
+    }
+
+    /**
+     * Instantly applies a pre-built Document to the UI, bypassing the EDT freeze.
+     */
+    public void applyForceSetDocumentUI(javax.swing.text.Document newDoc, boolean hadUnsavedAsterisk) {
+        if (documentCache != null) documentCache.clear();
+        
+        if (textArea != null) {
+            // Attach the standard listeners NOW, so the initial load isn't tracked in Undo history
+            newDoc.addDocumentListener(editorDocumentListener);
+            newDoc.addUndoableEditListener(e -> {
+                if (!isNavigating && !isCurrentlyPreview) {
+                    globalUndoManager.addEdit(new ChunkAwareEdit(loadedChunkIndex, e.getEdit()));
+                }
+            });
+
+            // This takes ~10 milliseconds instead of 5 seconds!
+            textArea.setDocument(newDoc);
+            textArea.setCaretPosition(0);
+            
+            if (!isCurrentlyPreview) {
+                documentCache.put(loadedChunkIndex, newDoc);
+            }
+        }
+        
+        this.isDirty = false; 
+        setUnsavedChanges(hadUnsavedAsterisk);
+    }
+
     public void forceSetText(String text) {
         // Capture the exact save state before the JTextArea ruins it
         boolean hadUnsavedAsterisk = this.hasUnsavedChanges(); 
