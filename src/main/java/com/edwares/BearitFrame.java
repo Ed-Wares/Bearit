@@ -396,6 +396,7 @@ public class BearitFrame extends JFrame {
         popup.add(copyFullFilenameItem);
         popup.add(showExplorerItem);
         
+        DialogUtil.themePopupMenu(popup);
         popup.show(invoker, x, y);
     }
 
