@@ -122,6 +122,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     private JComboBox<String> lastActiveCombo = null;    
     private JCheckBox chkCaseInsensitive;
     private JCheckBox chkRegex;
+    private JCheckBox chkAllTabs;
     private JButton btnFindPrev;
     private JButton btnFindNext;
     private JButton btnCount;
@@ -323,6 +324,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         // Re-enable the blinking cursor (500 milliseconds is the standard OS default) ---
         customCaret.setBlinkRate(500);
         textArea.setCaret(customCaret);
+        customCaret.setSelectionVisible(true);
         
         // Intelligent Focus Listener ---
         textArea.addFocusListener(new FocusAdapter() {
@@ -1177,6 +1179,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         if (comboReplace != null) comboReplace.setEnabled(enabled);
         if (chkCaseInsensitive != null) chkCaseInsensitive.setEnabled(enabled);
         if (chkRegex != null) chkRegex.setEnabled(enabled);
+        if (chkAllTabs != null) chkAllTabs.setEnabled(enabled);
         if (btnFindPrev != null) btnFindPrev.setEnabled(enabled);
         if (btnFindNext != null) btnFindNext.setEnabled(enabled);
         if (btnCount != null) btnCount.setEnabled(enabled);
@@ -1201,52 +1204,54 @@ public class AdvancedTextEditorPanel extends JPanel {
     public void performCountMatches(String target) {
         if (target == null || target.isEmpty()) return;
         setSearchDialogEnabled(false);
-        lblLoadingStatus.setText("Running full file match count... 0%");
+        lblLoadingStatus.setText("Running full match count... 0%");
         
-        String commitText = getCommitText();
-        boolean wasDirty = isDirty;
-        isDirty = false;
+        java.util.List<AdvancedTextEditorPanel> targets = (chkAllTabs != null && chkAllTabs.isSelected()) ? getAllOpenEditors() : java.util.Arrays.asList(this);
+
+        for (AdvancedTextEditorPanel editor : targets) {
+            if (editor.isDirty && !editor.isCurrentlyPreview) {
+                try { editor.fileManager.commitCurrentChunk(editor.getCommitText()); } catch(Exception e){}
+                editor.isDirty = false;
+            }
+        }
         
         activeSearchWorker = new SwingWorker<Long, Integer>() {
             @Override
             protected Long doInBackground() throws Exception {
-                if (wasDirty && !isCurrentlyPreview) {
-                    fileManager.commitCurrentChunk(commitText);
-                }
-                long count = 0;
+                long totalCount = 0;
                 Pattern p = getSearchPattern(target);
-                int totalChunks = fileManager.getTotalChunks();
-                
-                for (int i = 0; i < totalChunks; i++) {
-                    // ABORT check
-                    if (isCancelled()) return count; 
+                int totalGlobalChunks = targets.stream().mapToInt(e -> e.fileManager.getTotalChunks()).sum();
+                int chunksProcessed = 0;
 
-                    String content = fileManager.getChunkContent(i);
-                    Matcher m = p.matcher(content);
-                    while (m.find()) {
-                        if (isCancelled()) return count; // Inner ABORT check
-                        count++;
+                for (AdvancedTextEditorPanel editor : targets) {
+                    int totalChunks = editor.fileManager.getTotalChunks();
+                    for (int i = 0; i < totalChunks; i++) {
+                        if (isCancelled()) return totalCount;
+                        String content = editor.fileManager.getChunkContent(i);
+                        Matcher m = p.matcher(content);
+                        while (m.find()) {
+                            if (isCancelled()) return totalCount;
+                            totalCount++;
+                        }
+                        chunksProcessed++;
+                        if (totalGlobalChunks > 0) publish((int) (((double) chunksProcessed / totalGlobalChunks) * 100));
                     }
-                    
-                    int pct = (int) (((i + 1) / (double) totalChunks) * 100);
-                    publish(pct);
                 }
-                return count;
+                return totalCount;
             }
             
             @Override
             protected void process(java.util.List<Integer> chunks) {
                 if (!chunks.isEmpty()) {
                     int pct = chunks.get(chunks.size() - 1);
-                    lblLoadingStatus.setText("Running full file match count... " + pct + "%");
+                    lblLoadingStatus.setText("Running full match count... " + pct + "%");
                 }
             }
             
             @Override
             protected void done() {
                 try {
-                    if (isCancelled()) return; // Don't show dialog if aborted
-                    //JOptionPane.showMessageDialog(getDialogParent(), "Total occurrences found: " + get(), "Match Count", JOptionPane.INFORMATION_MESSAGE);
+                    if (isCancelled()) return;
                     DialogUtil.showMessageDialog(getDialogParent(), "Total occurrences found: " + get(), "Match Count", JOptionPane.INFORMATION_MESSAGE);
                 } catch (Exception e) {
                 } finally {
@@ -1260,32 +1265,41 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     public void performReplaceAll(String target, String replacement) {
         if (target == null || target.isEmpty()) return;
-        
         setSearchDialogEnabled(false);
         lblLoadingStatus.setText("Replacing all globally... 0%");
         
-        String commitText = getCommitText();
-        boolean wasDirty = isDirty;
-        isDirty = false;
+        java.util.List<AdvancedTextEditorPanel> targets = (chkAllTabs != null && chkAllTabs.isSelected()) ? getAllOpenEditors() : java.util.Arrays.asList(this);
+
+        for (AdvancedTextEditorPanel editor : targets) {
+            if (editor.isDirty && !editor.isCurrentlyPreview) {
+                try { editor.fileManager.commitCurrentChunk(editor.getCommitText()); } catch(Exception e){}
+                editor.isDirty = false;
+            }
+        }
 
         activeSearchWorker = new SwingWorker<Integer, Integer>() {
             @Override
             protected Integer doInBackground() throws Exception {
-                // Save any pending edits in the current view before global replace starts
-                if (wasDirty && !isCurrentlyPreview) {
-                    fileManager.commitCurrentChunk(commitText);
-                }
-
-                // Compile the global search settings
+                int totalReplaced = 0;
                 Pattern p = getSearchPattern(target);
                 String rep = (chkRegex != null && chkRegex.isSelected()) ? replacement : Matcher.quoteReplacement(replacement);
-                
-                // Pass the logic down to the file manager, injecting lambda callbacks 
-                // for both the progress publisher and the cancellation checker.
-                return fileManager.replaceAllGlobal(p, rep, 
-                    pct -> publish(pct), 
-                    () -> isCancelled()
-                );
+                int totalGlobalChunks = targets.stream().mapToInt(e -> e.fileManager.getTotalChunks()).sum();
+                int[] chunksProcessed = {0};
+
+                for (AdvancedTextEditorPanel editor : targets) {
+                    if (isCancelled()) break;
+                    int replacedInEditor = editor.fileManager.replaceAllGlobal(p, rep, 
+                        pct -> {
+                            int currentBase = chunksProcessed[0];
+                            double localContrib = (pct / 100.0) * editor.fileManager.getTotalChunks();
+                            if (totalGlobalChunks > 0) publish((int) (((currentBase + localContrib) / totalGlobalChunks) * 100));
+                        }, 
+                        () -> isCancelled()
+                    );
+                    totalReplaced += replacedInEditor;
+                    chunksProcessed[0] += editor.fileManager.getTotalChunks();
+                }
+                return totalReplaced;
             }
             
             @Override
@@ -1301,26 +1315,24 @@ public class AdvancedTextEditorPanel extends JPanel {
             protected void done() {
                 try {
                     if (isCancelled()) return; 
-                    
                     int count = get();
                     
-                    // Wipe the caches since the entire global file just changed
-                    documentCache.clear(); 
-                    globalUndoManager.discardAllEdits();
-                    setUnsavedChanges(true); 
-                    
-                    // Reload the current chunk so the UI reflects the new text
-                    triggerAsyncLoad(loadedChunkIndex, 0, -1, false, () -> {
-                        lblLoadingStatus.setText("");
-                        restartBackgroundIndexer();
-                        //JOptionPane.showMessageDialog(getDialogParent(), "Global replacement complete.\nTotal replacements: " + count, "Replace All", JOptionPane.INFORMATION_MESSAGE);
-                        DialogUtil.showMessageDialog(getDialogParent(), "Global replacement complete.\nTotal replacements: " + count, "Replace All", JOptionPane.INFORMATION_MESSAGE);
-                    });
-                    
-                } catch (Exception e) {
-                    if (!isCancelled()) {
-                        showError("Replace all failed: " + e.getMessage());
+                    for (AdvancedTextEditorPanel editor : targets) {
+                        editor.documentCache.clear(); 
+                        editor.globalUndoManager.discardAllEdits();
+                        editor.setUnsavedChanges(true); 
+
+                        if (editor == AdvancedTextEditorPanel.this) {
+                            editor.triggerAsyncLoad(editor.loadedChunkIndex, 0, -1, false, () -> editor.restartBackgroundIndexer());
+                        } else {
+                            SwingUtilities.invokeLater(() -> editor.triggerAsyncLoad(editor.loadedChunkIndex, 0, -1, false, () -> editor.restartBackgroundIndexer()));
+                        }
                     }
+                    
+                    lblLoadingStatus.setText("");
+                    DialogUtil.showMessageDialog(getDialogParent(), "Global replacement complete.\nTotal replacements: " + count, "Replace All", JOptionPane.INFORMATION_MESSAGE);
+                } catch (Exception e) {
+                    if (!isCancelled()) showError("Replace all failed: " + e.getMessage());
                 } finally {
                     lblLoadingStatus.setText("");
                     setSearchDialogEnabled(true);
@@ -2129,9 +2141,12 @@ public class AdvancedTextEditorPanel extends JPanel {
             JPanel optionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
             chkCaseInsensitive = new JCheckBox("Case Insensitive");
             chkRegex = new JCheckBox("Regular Expression");
+            chkAllTabs = new JCheckBox("All Open Tabs");
             optionsPanel.add(chkCaseInsensitive);
-            optionsPanel.add(Box.createHorizontalStrut(20)); // Spacer
+            optionsPanel.add(Box.createHorizontalStrut(15)); // Spacer
             optionsPanel.add(chkRegex);
+            optionsPanel.add(Box.createHorizontalStrut(15));
+            optionsPanel.add(chkAllTabs);
 
             gbc.gridx = 1; gbc.gridy = 2; gbc.weightx = 1.0; gbc.gridwidth = 2; 
             inputPanel.add(optionsPanel, gbc);
@@ -2147,12 +2162,12 @@ public class AdvancedTextEditorPanel extends JPanel {
             btnFindPrev.addActionListener(e -> {
                 String txt = getSearchText();
                 updateSearchHistory(txt);
-                performFindPrevious(txt);
+                performFind(txt, false);
             });
             btnFindNext.addActionListener(e -> {
                 String txt = getSearchText();
                 updateSearchHistory(txt);
-                performFindNext(txt);
+                performFind(txt, true);
             });
             btnReplace.addActionListener(e -> {
                 String stxt = getSearchText();
@@ -2503,214 +2518,209 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
     }
 
-    private void performFindNext(String target) {
+    public void performFind(String target, boolean searchForward) {
         if (target == null || target.isEmpty()) return;
         setSearchDialogEnabled(false);
 
-        Pattern p = getSearchPattern(target);
-        int visualCaret = textArea.getCaretPosition();
-        String selected = textArea.getSelectedText();
+        // Explicitly make variables FINAL for the SwingWorker
+        final String fTarget = target;
+        final Pattern fPattern = getSearchPattern(fTarget);
+        final boolean fForward = searchForward;
         
-        if (selected != null) {
-            String strippedSelection = selected.replace("\u200B\n", "").replace("\u200B", "");
-            if (p.matcher(strippedSelection).matches()) {
-                visualCaret = textArea.getSelectionEnd();
+        // Get all tabs in left-to-right physical order
+        final java.util.List<AdvancedTextEditorPanel> fTargets = (chkAllTabs != null && chkAllTabs.isSelected()) 
+            ? getAllOpenEditors() 
+            : java.util.Arrays.asList(this);
+        
+        // Find the currently active editor on the screen, not just the one that spawned this dialog
+        Window window = SwingUtilities.getWindowAncestor(this);
+        AdvancedTextEditorPanel tempActive = getCurrentlyActiveEditor(window);
+        if (tempActive == null || !fTargets.contains(tempActive)) {
+            tempActive = this;
+        }
+        final AdvancedTextEditorPanel activeEditor = tempActive;
+        final int activeIndex = fTargets.indexOf(activeEditor);
+        
+        // Synchronous check in the CURRENTLY ACTIVE editor's loaded chunk
+        int visualCaret = fForward ? activeEditor.textArea.getCaretPosition() : activeEditor.textArea.getSelectionStart();
+        String selected = activeEditor.textArea.getSelectedText();
+        
+        if (fForward) {
+            if (selected != null) {
+                String strippedSelection = selected.replace("\u200B\n", "").replace("\u200B", "");
+                if (fPattern.matcher(strippedSelection).matches()) {
+                    visualCaret = activeEditor.textArea.getSelectionEnd();
+                }
+            }
+            int rawCaret = activeEditor.visualToRawIndex(visualCaret);
+            String rawText = activeEditor.textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
+            Matcher m = fPattern.matcher(rawText);
+            
+            if (m.find(rawCaret)) {
+                int visualStart = Math.min(activeEditor.rawToVisualIndex(m.start()), activeEditor.textArea.getDocument().getLength());
+                int visualEnd = Math.min(activeEditor.rawToVisualIndex(m.end()), activeEditor.textArea.getDocument().getLength());
+                activeEditor.textArea.setCaretPosition(visualStart);
+                activeEditor.textArea.moveCaretPosition(visualEnd);
+                activeEditor.textArea.requestFocusInWindow();
+                setSearchDialogEnabled(true);
+                return;
+            }
+        } else {
+            int rawCaret = activeEditor.visualToRawIndex(visualCaret);
+            String rawText = activeEditor.textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
+            String searchableRawText = rawText.substring(0, rawCaret);
+            Matcher m = fPattern.matcher(searchableRawText);
+            
+            int lastIdx = -1;
+            int lastLen = 0;
+            while (m.find()) {
+                lastIdx = m.start();
+                lastLen = m.end() - m.start();
+            }
+            
+            if (lastIdx != -1) {
+                int visualStart = Math.min(activeEditor.rawToVisualIndex(lastIdx), activeEditor.textArea.getDocument().getLength());
+                int visualEnd = Math.min(activeEditor.rawToVisualIndex(lastIdx + lastLen), activeEditor.textArea.getDocument().getLength());
+                activeEditor.textArea.setCaretPosition(visualStart);
+                activeEditor.textArea.moveCaretPosition(visualEnd);
+                activeEditor.textArea.requestFocusInWindow();
+                setSearchDialogEnabled(true);
+                return;
             }
         }
 
-        int rawCaret = visualToRawIndex(visualCaret);
-        String rawText = textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
-        Matcher m = p.matcher(rawText);
+        // Setup Background Search
+        lblLoadingStatus.setText(fForward ? "Scanning for next match..." : "Scanning for previous match...");
         
-        if (m.find(rawCaret)) {
-            int visualStart = Math.min(rawToVisualIndex(m.start()), textArea.getDocument().getLength());
-            int visualEnd = Math.min(rawToVisualIndex(m.end()), textArea.getDocument().getLength());
-            textArea.setCaretPosition(visualStart);
-            textArea.moveCaretPosition(visualEnd);
-            setSearchDialogEnabled(true);
-            return;
+        final String fCommitText = activeEditor.getCommitText();
+        final boolean fWasDirty = activeEditor.isDirty;
+        activeEditor.isDirty = false;
+        
+        class MatchResult {
+            AdvancedTextEditorPanel editor;
+            int chunkIdx, foundIdx, foundLen;
         }
 
-        lblLoadingStatus.setText("Scanning file for next match...");
-        String commitText = getCommitText();
-        boolean wasDirty = isDirty;
-        isDirty = false;
-        
-        activeSearchWorker = new SwingWorker<Integer, Integer>() {
-            int foundIdx = -1;
-            int foundLen = 0;
-            
+        activeSearchWorker = new SwingWorker<MatchResult, Integer>() {
             @Override
-            protected Integer doInBackground() throws Exception {
-                if (wasDirty && !isCurrentlyPreview) {
-                    fileManager.commitCurrentChunk(commitText);
+            protected MatchResult doInBackground() throws Exception {
+                if (fWasDirty && !activeEditor.isCurrentlyPreview) {
+                    activeEditor.fileManager.commitCurrentChunk(fCommitText);
                 }
-                int total = fileManager.getTotalChunks();
-                int chunksToScan = total - (loadedChunkIndex + 1);
-                int chunksScanned = 0;
-                
-                for (int i = loadedChunkIndex + 1; i < total; i++) {
-                    if (isCancelled()) return -1; // ABORT check
 
-                    String content = fileManager.getChunkContent(i);
-                    Matcher mc = p.matcher(content);
-                    if (mc.find()) {
-                        foundIdx = mc.start();
-                        foundLen = mc.end() - mc.start();
-                        return i;
+                int totalGlobalChunks = fTargets.stream().mapToInt(e -> e.fileManager.getTotalChunks()).sum();
+                int chunksScanned = 0;
+
+                // Loop exactly fTargets.size() times, using modulo math to seamlessly wrap around tabs
+                for (int count = 0; count < fTargets.size(); count++) {
+                    int t;
+                    if (fForward) {
+                        t = (activeIndex + count) % fTargets.size();
+                    } else {
+                        // Modulo of negative numbers is weird in Java, so we add the size to prevent negative indices
+                        t = (activeIndex - count + fTargets.size()) % fTargets.size();
                     }
                     
-                    chunksScanned++;
-                    int pct = (int) ((chunksScanned / (double) Math.max(1, chunksToScan)) * 100);
-                    publish(pct);
+                    AdvancedTextEditorPanel editor = fTargets.get(t);
+                    int totalChunks = editor.fileManager.getTotalChunks();
+                    
+                    int startChunk;
+                    int endChunk;
+                    int step;
+
+                    if (fForward) {
+                        startChunk = (count == 0) ? editor.loadedChunkIndex + 1 : 0;
+                        endChunk = totalChunks - 1;
+                        step = 1;
+                    } else {
+                        startChunk = (count == 0) ? editor.loadedChunkIndex - 1 : Math.max(0, totalChunks - 1);
+                        endChunk = 0;
+                        step = -1;
+                    }
+
+                    for (int i = startChunk; (fForward ? i <= endChunk : i >= endChunk); i += step) {
+                        if (isCancelled()) return null;
+
+                        String content = editor.fileManager.getChunkContent(i);
+                        Matcher mc = fPattern.matcher(content);
+                        
+                        if (fForward) {
+                            if (mc.find()) {
+                                MatchResult res = new MatchResult();
+                                res.editor = editor; res.chunkIdx = i; 
+                                res.foundIdx = mc.start(); res.foundLen = mc.end() - mc.start();
+                                return res;
+                            }
+                        } else {
+                            int tempIdx = -1; int tempLen = 0;
+                            while (mc.find()) {
+                                if (isCancelled()) return null; 
+                                tempIdx = mc.start();
+                                tempLen = mc.end() - mc.start();
+                            }
+                            if (tempIdx != -1) {
+                                MatchResult res = new MatchResult();
+                                res.editor = editor; res.chunkIdx = i; 
+                                res.foundIdx = tempIdx; res.foundLen = tempLen;
+                                return res;
+                            }
+                        }
+                        
+                        chunksScanned++;
+                        if (totalGlobalChunks > 0) publish((int) (((double) chunksScanned / totalGlobalChunks) * 100));
+                    }
                 }
-                return -1;
+                return null;
             }
             
             @Override
             protected void process(java.util.List<Integer> chunks) {
                 if (!chunks.isEmpty()) {
                     int pct = chunks.get(chunks.size() - 1);
-                    lblLoadingStatus.setText("Scanning file for next match... " + pct + "%");
+                    lblLoadingStatus.setText((fForward ? "Scanning for next match... " : "Scanning for previous match... ") + pct + "%");
                 }
             }
             
             @Override
             protected void done() {
                 try {
-                    if (isCancelled()) return; // Don't prompt wrap-around if aborted
-                    int targetChunk = get();
-                    if (targetChunk != -1) {
-                        triggerAsyncLoad(targetChunk, 0, -1, false, () -> {
-                            int visualStart = Math.min(rawToVisualIndex(foundIdx), textArea.getDocument().getLength());
-                            int visualEnd = Math.min(rawToVisualIndex(foundIdx + foundLen), textArea.getDocument().getLength());
-                            textArea.setCaretPosition(visualStart);
-                            textArea.moveCaretPosition(visualEnd);
-                        });
-                    } else {
-                        //int response = JOptionPane.showConfirmDialog(getDialogParent(), "Reached end of file. Start again from the top?", "Search Wrap Around", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
-                        int response = DialogUtil.showConfirmDialog(getDialogParent(), "Reached end of file. Start again from the top?", "Search Wrap Around", JOptionPane.YES_NO_OPTION);
-                        if (response == JOptionPane.YES_OPTION) {
-                            triggerAsyncLoad(0, 1, -1, false, () -> {
-                                textArea.setCaretPosition(0);
-                                performFindNext(target);
-                            });
-                        }
-                    }
-                } catch (Exception e) {
-                } finally {
-                    lblLoadingStatus.setText("");
-                    setSearchDialogEnabled(true);
-                }
-            }
-        };
-        activeSearchWorker.execute();
-    }
-
-    private void performFindPrevious(String target) {
-        if (target == null || target.isEmpty()) return;
-        setSearchDialogEnabled(false);
-
-        Pattern p = getSearchPattern(target);
-        int visualCaret = textArea.getSelectionStart();
-        int rawCaret = visualToRawIndex(visualCaret);
-        String rawText = textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
-        
-        String searchableRawText = rawText.substring(0, rawCaret);
-        Matcher m = p.matcher(searchableRawText);
-        
-        int lastIdx = -1;
-        int lastLen = 0;
-        while (m.find()) {
-            lastIdx = m.start();
-            lastLen = m.end() - m.start();
-        }
-        
-        if (lastIdx != -1) {
-            int visualStart = Math.min(rawToVisualIndex(lastIdx), textArea.getDocument().getLength());
-            int visualEnd = Math.min(rawToVisualIndex(lastIdx + lastLen), textArea.getDocument().getLength());
-            textArea.setCaretPosition(visualStart);
-            textArea.moveCaretPosition(visualEnd);
-            setSearchDialogEnabled(true);
-            return;
-        }
-
-        lblLoadingStatus.setText("Scanning file for previous match... 0%");
-        String commitText = getCommitText();
-        boolean wasDirty = isDirty;
-        isDirty = false;
-        
-        activeSearchWorker = new SwingWorker<Integer, Integer>() {
-            int foundIdx = -1;
-            int foundLen = 0;
-            
-            @Override
-            protected Integer doInBackground() throws Exception {
-                if (wasDirty && !isCurrentlyPreview) {
-                    fileManager.commitCurrentChunk(commitText);
-                }
-                
-                int chunksToScan = loadedChunkIndex;
-                int chunksScanned = 0;
-                
-                for (int i = loadedChunkIndex - 1; i >= 0; i--) {
-                    if (isCancelled()) return -1; // ABORT check
-
-                    String content = fileManager.getChunkContent(i);
-                    Matcher mc = p.matcher(content);
-                    int tempIdx = -1;
-                    int tempLen = 0;
-                    while (mc.find()) {
-                        if (isCancelled()) return -1; // Inner ABORT check
-                        tempIdx = mc.start();
-                        tempLen = mc.end() - mc.start();
-                    }
-                    if (tempIdx != -1) {
-                        foundIdx = tempIdx;
-                        foundLen = tempLen;
-                        return i;
-                    }
+                    if (isCancelled()) return;
+                    MatchResult result = get();
                     
-                    chunksScanned++;
-                    int pct = (int) ((chunksScanned / (double) Math.max(1, chunksToScan)) * 100);
-                    publish(pct);
-                }
-                return -1;
-            }
-            
-            @Override
-            protected void process(java.util.List<Integer> chunks) {
-                if (!chunks.isEmpty()) {
-                    int pct = chunks.get(chunks.size() - 1);
-                    lblLoadingStatus.setText("Scanning file for previous match... " + pct + "%");
-                }
-            }
-            
-            @Override
-            protected void done() {
-                try {
-                    if (isCancelled()) return; // Don't prompt wrap-around if aborted
-                    int targetChunk = get();
-                    lblLoadingStatus.setText("");
-                    if (targetChunk != -1) {
-                        triggerAsyncLoad(targetChunk, 0, -1, false, () -> {
-                            int visualStart = Math.min(rawToVisualIndex(foundIdx), textArea.getDocument().getLength());
-                            int visualEnd = Math.min(rawToVisualIndex(foundIdx + foundLen), textArea.getDocument().getLength());
-                            textArea.setCaretPosition(visualStart);
-                            textArea.moveCaretPosition(visualEnd);
+                    if (result != null ) {
+                        activateEditorTab(result.editor);
+                        result.editor.triggerAsyncLoad(result.chunkIdx, 0, -1, false, () -> {
+                            int visualStart = Math.min(result.editor.rawToVisualIndex(result.foundIdx), result.editor.textArea.getDocument().getLength());
+                            int visualEnd = Math.min(result.editor.rawToVisualIndex(result.foundIdx + result.foundLen), result.editor.textArea.getDocument().getLength());
+                            result.editor.textArea.setCaretPosition(visualStart);
+                            result.editor.textArea.moveCaretPosition(visualEnd);
+                            result.editor.textArea.requestFocusInWindow();
                         });
                     } else {
-                        //int response = JOptionPane.showConfirmDialog(getDialogParent(), "Reached beginning of file. Search again from the bottom?", "Search Wrap Around", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
-                        int response = DialogUtil.showConfirmDialog(getDialogParent(), "Reached beginning of file. Search again from the bottom?", "Search Wrap Around", JOptionPane.YES_NO_OPTION);  
+                        String msg = (chkAllTabs != null && chkAllTabs.isSelected()) 
+                            ? (fForward ? "Scanned all open files. No further matches found. Start again from the top of the first file?" 
+                                        : "Scanned all open files. No further matches found. Search again from the bottom of the last file?") 
+                            : (fForward ? "Reached end of file. Start again from the top?" 
+                                        : "Reached beginning of file. Search again from the bottom?");
+                        
+                        int response = DialogUtil.showConfirmDialog(getDialogParent(), msg, "Search Wrap Around", JOptionPane.YES_NO_OPTION);
                         if (response == JOptionPane.YES_OPTION) {
-                            int lastChunk = Math.max(0, fileManager.getTotalChunks() - 1);
-                            triggerAsyncLoad(lastChunk, -1, -1, false, () -> {
-                                textArea.setCaretPosition(textArea.getDocument().getLength());
-                                performFindPrevious(target);
+                            
+                            // Get the absolute first tab (0) or absolute last tab (size - 1)
+                            AdvancedTextEditorPanel targetEditor = fForward ? fTargets.get(0) : fTargets.get(fTargets.size() - 1);
+                            activateEditorTab(targetEditor);
+                            
+                            int targetChunk = fForward ? 0 : Math.max(0, targetEditor.fileManager.getTotalChunks() - 1);
+                            
+                            targetEditor.triggerAsyncLoad(targetChunk, (fForward ? 1 : -1), -1, false, () -> {
+                                targetEditor.textArea.setCaretPosition(fForward ? 0 : targetEditor.textArea.getDocument().getLength());
+                                // Recursively execute the search again now that we are positioned!
+                                performFind(fTarget, fForward); 
                             });
                         }
                     }
                 } catch (Exception e) {
+                    e.printStackTrace();
                 } finally {
                     lblLoadingStatus.setText("");
                     setSearchDialogEnabled(true);
@@ -2733,7 +2743,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                 textArea.replaceSelection(m.replaceFirst(rep));
             }
         }
-        performFindNext(target);
+        performFind(target, true);
     }
     
     private void jumpToLocalLine(long absoluteTargetLine) {
@@ -2764,8 +2774,6 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     // --- Text Case Conversion Methods ---
-// --- Text Case Conversion Methods ---
-
     public void convertSelectionCase(String mode) {
         if (isCurrentlyPreview) return; // Don't allow edits in preview mode
         
@@ -3211,6 +3219,82 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
         }
         return sb.toString();
+    }
+
+    /** Crawls up to the main window and extracts every open Text Editor instance, ordering the active one first */
+    private java.util.List<AdvancedTextEditorPanel> getAllOpenEditors() {
+        java.util.List<AdvancedTextEditorPanel> editors = new java.util.ArrayList<>();
+        Window window = SwingUtilities.getWindowAncestor(this);
+        if (window != null) {
+            findEditors(window, editors);
+            
+            // Find the "this" active editor to put it at the front of the list
+            if (editors.contains(this)) {
+                // Rotate the list so "this" active editor is at index 0, maintaining the wrap-around order
+                int activeIndex = editors.indexOf(this);
+                java.util.Collections.rotate(editors, -activeIndex);
+            }
+        }
+        return editors;
+    }
+
+    private void findEditors(Container container, java.util.List<AdvancedTextEditorPanel> editors) {
+        if (container instanceof JTabbedPane) {
+            JTabbedPane tp = (JTabbedPane) container;
+            for (int i = 0; i < tp.getTabCount(); i++) {
+                Component comp = tp.getComponentAt(i);
+                if (comp instanceof AdvancedTextEditorPanel) {
+                    editors.add((AdvancedTextEditorPanel) comp);
+                } else if (comp instanceof Container) {
+                    findEditors((Container) comp, editors);
+                }
+            }
+        } else {
+            for (Component comp : container.getComponents()) {
+                if (comp instanceof AdvancedTextEditorPanel) {
+                    editors.add((AdvancedTextEditorPanel) comp);
+                } else if (comp instanceof Container) {
+                    findEditors((Container) comp, editors);
+                }
+            }
+        }
+    }
+
+    /** Recursively searches the UI tree to find the specifically selected JTabbedPane tab */
+    private AdvancedTextEditorPanel getCurrentlyActiveEditor(Container container) {
+        if (container == null) return null;
+        
+        if (container instanceof JTabbedPane) {
+            Component selected = ((JTabbedPane) container).getSelectedComponent();
+            if (selected instanceof AdvancedTextEditorPanel) {
+                return (AdvancedTextEditorPanel) selected;
+            } else if (selected instanceof Container) {
+                return getCurrentlyActiveEditor((Container) selected);
+            }
+        }
+        
+        for (Component comp : container.getComponents()) {
+            if (comp instanceof AdvancedTextEditorPanel) {
+                return (AdvancedTextEditorPanel) comp;
+            } else if (comp instanceof Container) {
+                AdvancedTextEditorPanel found = getCurrentlyActiveEditor((Container) comp);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    /** Forces the JTabbedPane to visually switch to the tab containing the match */
+    private void activateEditorTab(AdvancedTextEditorPanel targetEditor) {
+        Component current = targetEditor;
+        while (current != null) {
+            Container parent = current.getParent();
+            if (parent instanceof JTabbedPane) {
+                ((JTabbedPane) parent).setSelectedComponent(current);
+            }
+            current = parent;
+        }
+        targetEditor.focusEditor();
     }
     
 }
