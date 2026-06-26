@@ -60,6 +60,7 @@ public class BearitApp {
             BearitFrame editor = new BearitFrame();
             // Process the startup args through the exact same logic pipeline!
             editor.processRemoteCommands(args);
+            editor.executeStartupCommand(); // --- Trigger the startup command ---
             editor.setVisible(true);
         });
     }

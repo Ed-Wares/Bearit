@@ -862,6 +862,64 @@ public class BearitFrame extends JFrame {
         }
     }
 
+    /**
+     * Executes an optional startup command, replacing variables like %rp and %acp.
+     */
+    public void executeStartupCommand() {
+        // Fetch the property. Check System Properties first (e.g. -Dstartup-cmd="..."), 
+        // then fallback to the BearitProperties singleton.
+        String cmd = System.getProperty("startup-cmd");
+        if (cmd == null || cmd.trim().isEmpty()) {
+            cmd = BearitProperties.getInstance().getProperty("startup-cmd", "");
+        }
+
+        if (cmd == null || cmd.trim().isEmpty()) {
+            return; // Nothing to execute
+        }
+
+        // Apply the variable replacements using the existing helper methods
+        cmd = resolveRunningPath(cmd);  // Resolves %rp
+        cmd = resolveAppContentPath(cmd); // Resolves %acp
+        
+        final String finalCmd = cmd;
+
+        // Execute safely in the background using a SwingWorker
+        SwingWorker<Void, Void> worker = new SwingWorker<>() {
+            @Override
+            protected Void doInBackground() {
+                try {
+                    System.out.println("Executing Startup Command: " + finalCmd);
+                    
+                    ProcessBuilder pb;
+                    // Route to the correct OS shell so standard commands (like echo, dir, ls) work natively
+                    if (System.getProperty("os.name").toLowerCase().contains("win")) {
+                        pb = new ProcessBuilder("cmd.exe", "/c", finalCmd);
+                    } else {
+                        pb = new ProcessBuilder("bash", "-c", finalCmd);
+                    }
+                    
+                    // Merge errors and output into one stream
+                    pb.redirectErrorStream(true); 
+                    Process process = pb.start();
+                    
+                    // Read the output so the external process doesn't hang waiting for buffer clearance
+                    try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                            new java.io.InputStreamReader(process.getInputStream()))) {
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            System.out.println("[StartupCmd] " + line);
+                        }
+                    }
+                    process.waitFor();
+                } catch (Exception e) {
+                    System.err.println("Startup Command Failed: " + e.getMessage());
+                }
+                return null;
+            }
+        };
+        worker.execute();
+    }
+
     // --- Tool Execution Output Redirection ---
     private void executeCustomTool(String rawCommand) {
         // --- Resolve the %f (Current File) variable ---
