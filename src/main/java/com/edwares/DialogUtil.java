@@ -414,10 +414,13 @@ public class DialogUtil {
                 c.setForeground(fg);
                 ((JTextField) c).setUI(new javax.swing.plaf.basic.BasicTextFieldUI());
                 ((JTextField) c).setCaretColor(fg);
-                ((JTextField) c).setBorder(BorderFactory.createCompoundBorder(
-                        BorderFactory.createLineBorder(borderColor, 1),
-                        BorderFactory.createEmptyBorder(2, 5, 2, 5) 
-                ));
+                Boolean isFlatLabel = (Boolean) ((JTextField) c).getClientProperty("isFlatLabel");
+                if (!Boolean.TRUE.equals(isFlatLabel)) {
+                    ((JTextField) c).setBorder(BorderFactory.createCompoundBorder(
+                            BorderFactory.createLineBorder(borderColor, 1),
+                            BorderFactory.createEmptyBorder(2, 5, 2, 5) 
+                    ));
+                }
             } 
             // --- Buttons ---
             else if (c instanceof JButton) {

@@ -44,11 +44,11 @@ public class AdvancedTextEditorPanel extends JPanel {
     private final LineNumberPanel lineNumberPanel;
     private final JScrollPane scrollPane;
     
-    private final JLabel lblStatus;
-    private final JLabel lblLoadingStatus;
-    private final JLabel lblCursorInfo;
-    private final JLabel lblFontInfo;
-    private final JLabel lblIndexingStatus; // Background tracking label
+    private final JTextField lblStatus;
+    private final JTextField lblLoadingStatus;
+    private final JTextField lblCursorInfo;
+    private final JTextField lblFontInfo;
+    private final JTextField lblIndexingStatus; // Background tracking label
     private final JProgressBar chunkLoadProgressBar; 
     private final JScrollBar globalScrollBar;
     private JPopupMenu editorContextMenu;
@@ -499,8 +499,8 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
         });
 
-        lblStatus = new JLabel("No file active.");
-        lblLoadingStatus = new JLabel("");
+        lblStatus = newLabelTextField("No file active.");
+        lblLoadingStatus = newLabelTextField("");
         lblLoadingStatus.setFont(lblLoadingStatus.getFont().deriveFont(Font.BOLD));
         lblLoadingStatus.setForeground(new Color(220, 100, 0)); 
         
@@ -509,10 +509,10 @@ public class AdvancedTextEditorPanel extends JPanel {
         chunkLoadProgressBar.setPreferredSize(new Dimension(100, 14));
         chunkLoadProgressBar.setVisible(false);
         
-        lblIndexingStatus = new JLabel(""); 
+        lblIndexingStatus = newLabelTextField(""); 
         lblIndexingStatus.setForeground(new Color(120, 120, 120));
-        lblFontInfo = new JLabel("Font: 14pt"); 
-        lblCursorInfo = new JLabel("Line: 1 | Pos: 0");
+        lblFontInfo = newLabelTextField("Font: 14pt"); 
+        lblCursorInfo = newLabelTextField("Line: 1 | Pos: 0");
 
         lineNumberPanel = new LineNumberPanel(this, textArea);
 
@@ -608,6 +608,53 @@ public class AdvancedTextEditorPanel extends JPanel {
         statusBar.add(leftStatusPanel, BorderLayout.WEST);
         statusBar.add(rightStatusPanel, BorderLayout.EAST);
         add(statusBar, BorderLayout.SOUTH);
+    }
+
+    // Creates a JTextField that you can highlight and copy text to the clipboard
+    private JTextField newLabelTextField(String text) {
+        JTextField newLbl = new JTextField(text) {
+            @Override
+            public void setText(String t) {
+                super.setText(t);
+                // Force layout recalculation when text changes
+                revalidate(); 
+                repaint();
+                if (getParent() != null) {
+                    getParent().revalidate();
+                    getParent().repaint();
+                }                
+            }
+
+            @Override
+            public Dimension getPreferredSize() {
+                Dimension size = super.getPreferredSize();
+                String currentText = getText();
+                
+                if (currentText != null) {
+                    // Manually calculate the exact pixel width of the current string
+                    java.awt.FontMetrics fm = getFontMetrics(getFont());
+                    java.awt.Insets insets = getInsets();
+                    
+                    // Add the text width + left/right padding + a 4-pixel buffer
+                    size.width = fm.stringWidth(currentText) + insets.left + insets.right + 4;
+                }
+                return size;
+            }
+        };
+
+        //FLAG to prevent theme from adding borders
+        newLbl.putClientProperty("isFlatLabel", true);
+        // Make it read-only so the user can highlight and copy, but not type
+        newLbl.setEditable(false);
+        
+        // Strip away the text box styling so it looks exactly like a flat label
+        newLbl.setBorder(javax.swing.BorderFactory.createEmptyBorder(2, 5, 2, 5)); // Adds slight padding
+        newLbl.setOpaque(false); // Makes the background transparent
+        
+        // Force it to use the exact same font and color as a standard JLabel
+        newLbl.setFont(javax.swing.UIManager.getFont("Label.font"));
+        newLbl.setForeground(javax.swing.UIManager.getColor("Label.foreground"));
+        return newLbl;
     }
     
     // --- Safe Property Reader ---

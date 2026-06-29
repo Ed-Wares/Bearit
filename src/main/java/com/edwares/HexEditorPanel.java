@@ -38,8 +38,8 @@ public class HexEditorPanel extends JPanel {
     private JComboBox<Integer> comboBytesPerRow;
 
     // --- Status Bar UI ---
-    private JLabel lblStatus;
-    private JLabel lblChunkFileStatus;
+    private JTextField lblStatus;
+    private JTextField lblChunkFileStatus;
     private String chunkStatus = "";
     private JProgressBar chunkLoadProgressBar; 
     private String fileSizeDateStatus = "";
@@ -259,10 +259,10 @@ public class HexEditorPanel extends JPanel {
         // Group the labels into a left-aligned container
         JPanel leftPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         
-        lblChunkFileStatus = new JLabel(" Chunk 1 of 1 ");
+        lblChunkFileStatus = newLabelTextField(" Chunk 1 of 1 ");
         lblChunkFileStatus.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 15)); // Add spacing on the right
         
-        lblStatus = new JLabel("Ready");
+        lblStatus = newLabelTextField("Ready");
 
         chunkLoadProgressBar = new JProgressBar();
         chunkLoadProgressBar.setIndeterminate(true);
@@ -813,5 +813,52 @@ public class HexEditorPanel extends JPanel {
         }
         
         return new String(Character.toChars(codePoint));
+    }
+
+    // Creates a JTextField that you can highlight and copy text to the clipboard
+    private JTextField newLabelTextField(String text) {
+        JTextField newLbl = new JTextField(text) {
+            @Override
+            public void setText(String t) {
+                super.setText(t);
+                // Force layout recalculation when text changes
+                revalidate(); 
+                repaint();
+                if (getParent() != null) {
+                    getParent().revalidate();
+                    getParent().repaint();
+                }                
+            }
+
+            @Override
+            public Dimension getPreferredSize() {
+                Dimension size = super.getPreferredSize();
+                String currentText = getText();
+                
+                if (currentText != null) {
+                    // Manually calculate the exact pixel width of the current string
+                    java.awt.FontMetrics fm = getFontMetrics(getFont());
+                    java.awt.Insets insets = getInsets();
+                    
+                    // Add the text width + left/right padding + a 4-pixel buffer
+                    size.width = fm.stringWidth(currentText) + insets.left + insets.right + 4;
+                }
+                return size;
+            }
+        };
+
+        //FLAG to prevent theme from adding borders
+        newLbl.putClientProperty("isFlatLabel", true);
+        // Make it read-only so the user can highlight and copy, but not type
+        newLbl.setEditable(false);
+        
+        // Strip away the text box styling so it looks exactly like a flat label
+        newLbl.setBorder(javax.swing.BorderFactory.createEmptyBorder(2, 5, 2, 5)); // Adds slight padding
+        newLbl.setOpaque(false); // Makes the background transparent
+        
+        // Force it to use the exact same font and color as a standard JLabel
+        newLbl.setFont(javax.swing.UIManager.getFont("Label.font"));
+        newLbl.setForeground(javax.swing.UIManager.getColor("Label.foreground"));
+        return newLbl;
     }
 }
