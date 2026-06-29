@@ -881,14 +881,43 @@ public class BearitFrame extends JFrame {
         cmd = resolveRunningPath(cmd);  // Resolves %rp
         cmd = resolveAppContentPath(cmd); // Resolves %acp
         
-        final String finalCmd = cmd;
+        executeBackgroundProcess("startup-cmd", cmd);
+    }
 
-        // Execute safely in the background using a SwingWorker
+    /**
+     * Executes an optional startup command, replacing variables like %rp and %acp.
+     */
+    public void executeInstallCommand() {
+        // Fetch the property. Check System Properties first (e.g. -Dstartup-cmd="..."), 
+        // then fallback to the BearitProperties singleton.
+        String cmd = System.getProperty("install-cmd");
+        if (cmd == null || cmd.trim().isEmpty()) {
+            cmd = BearitProperties.getInstance().getProperty("install-cmd", "");
+        }
+
+        if (cmd == null || cmd.trim().isEmpty()) {
+            return; // Nothing to execute
+        }
+
+        // remove it from the properties file so it only runs one time
+        BearitProperties.getInstance().removeProperty("install-cmd");
+
+        // Apply the variable replacements using the existing helper methods
+        cmd = resolveRunningPath(cmd);  // Resolves %rp
+        cmd = resolveAppContentPath(cmd); // Resolves %acp
+        
+        executeBackgroundProcess("install-cmd", cmd);
+    }
+
+    /**
+     * Shared SwingWorker logic to execute shell commands safely in the background.
+     */
+    public void executeBackgroundProcess(String logPrefix, String finalCmd) {
         SwingWorker<Void, Void> worker = new SwingWorker<>() {
             @Override
             protected Void doInBackground() {
                 try {
-                    System.out.println("Executing Startup Command: " + finalCmd);
+                    System.out.println("Executing " + logPrefix + ": " + finalCmd);
                     
                     ProcessBuilder pb;
                     // Route to the correct OS shell so standard commands (like echo, dir, ls) work natively
@@ -907,12 +936,12 @@ public class BearitFrame extends JFrame {
                             new java.io.InputStreamReader(process.getInputStream()))) {
                         String line;
                         while ((line = reader.readLine()) != null) {
-                            System.out.println("[StartupCmd] " + line);
+                            System.out.println("[" + logPrefix + "] " + line);
                         }
                     }
                     process.waitFor();
                 } catch (Exception e) {
-                    System.err.println("Startup Command Failed: " + e.getMessage());
+                    System.err.println(logPrefix + " Failed: " + e.getMessage());
                 }
                 return null;
             }

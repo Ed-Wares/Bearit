@@ -317,4 +317,12 @@ public class BearitProperties {
     public String getProperty(String key, String defaultValue) {
         return props.getProperty(key, defaultValue);
     }
+
+    // Removes a property completely from the file and saves the change
+    public void removeProperty(String key) {
+        if (props.containsKey(key)) {
+            props.remove(key);
+            save();
+        }
+    }
 }

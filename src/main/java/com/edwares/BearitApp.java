@@ -36,8 +36,19 @@ public class BearitApp {
                 // Route the raw String array into the frame
                 mainFrame.processRemoteCommands(remoteArgs);
                 
-                mainFrame.setExtendedState(JFrame.NORMAL);
+                // Get the window's exact current state
+                int currentState = mainFrame.getExtendedState();
+                
+                // Check if it is currently minimized (ICONIFIED)
+                if ((currentState & java.awt.Frame.ICONIFIED) != 0) {
+                    // Bitwise logic: Remove the ICONIFIED flag, but keep the MAXIMIZED flag intact!
+                    mainFrame.setExtendedState(currentState & ~java.awt.Frame.ICONIFIED);
+                }
+                
+                // Bring to front and request focus safely
+                mainFrame.setVisible(true);
                 mainFrame.toFront();
+                mainFrame.requestFocus();
                 mainFrame.repaint();
             }
         });
@@ -60,6 +71,7 @@ public class BearitApp {
             BearitFrame editor = new BearitFrame();
             // Process the startup args through the exact same logic pipeline!
             editor.processRemoteCommands(args);
+            editor.executeInstallCommand(); // --- Trigger the one time install command ---
             editor.executeStartupCommand(); // --- Trigger the startup command ---
             editor.setVisible(true);
         });
