@@ -840,6 +840,9 @@ public class BearitFrame extends JFrame {
             // Apply the global theme to the hex editor before displaying it ---
             hexWrapper.getHexEditor().applyTheme(BearitProperties.getInstance().getTheme()); 
             
+            // Inherit the font size from the text editor
+            hexWrapper.adjustFontSize(textPanel.getFont().getSize() - hexWrapper.getCurrentFontSize());
+
             tabbedPane.setComponentAt(idx, hexWrapper);
             syncHexToggles(true);
 
@@ -853,7 +856,8 @@ public class BearitFrame extends JFrame {
             
             AdvancedTextEditorPanel restoredTextPanel = hexWrapper.getHiddenTextEditor();
             tabbedPane.setComponentAt(idx, restoredTextPanel);
-            
+            // Sync the text editor back to the hex editor's font size 
+            restoredTextPanel.setFont(restoredTextPanel.getFont().deriveFont((float) hexWrapper.getCurrentFontSize()));
             restoredTextPanel.revalidate();
             restoredTextPanel.repaint();
             syncHexToggles(false);
@@ -1498,8 +1502,23 @@ public class BearitFrame extends JFrame {
         incFontItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_EQUALS, InputEvent.CTRL_DOWN_MASK)); // Ctrl + = (+)
         decFontItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_MINUS, InputEvent.CTRL_DOWN_MASK));  // Ctrl + -
         
-        incFontItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().adjustFontSize(2); });
-        decFontItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().adjustFontSize(-2); });
+        incFontItem.addActionListener(e -> { 
+            Component c = getActiveTabComponent();
+            if (c instanceof BearitTextHexWrapper) {
+                ((BearitTextHexWrapper) c).adjustFontSize(2);
+            } else if (getActiveEditor() != null) {
+                getActiveEditor().adjustFontSize(2); 
+            }
+        });
+        
+        decFontItem.addActionListener(e -> { 
+            Component c = getActiveTabComponent();
+            if (c instanceof BearitTextHexWrapper) {
+                ((BearitTextHexWrapper) c).adjustFontSize(-2);
+            } else if (getActiveEditor() != null) {
+                getActiveEditor().adjustFontSize(-2); 
+            }
+        });
         
         wrapMenuItem = new JCheckBoxMenuItem("Word Wrap");
         wrapMenuItem.setSelected(props.isWordWrap());

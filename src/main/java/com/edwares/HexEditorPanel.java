@@ -4,8 +4,10 @@ import javax.swing.*;
 import javax.swing.border.Border;
 import javax.swing.table.*;
 import java.awt.*;
+import java.awt.event.ActionEvent;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
+import java.awt.event.InputEvent;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.Charset;
@@ -21,6 +23,7 @@ public class HexEditorPanel extends JPanel {
     private byte[] dataBytes;
     private long baseAddressOffset;
     private boolean isDark = false;
+    private int currentFontSize = 14; // Default starting size
     
     // --- Global Scrolling UI ---
     private JScrollPane scrollPane;
@@ -56,11 +59,12 @@ public class HexEditorPanel extends JPanel {
         // --- Table Setup ---
         tableModel = new HexTableModel(16);
         hexTable = new JTable(tableModel);
-        hexTable.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 14));
+        hexTable.setFont(new Font(Font.MONOSPACED, Font.PLAIN, currentFontSize));
         hexTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
         hexTable.setCellSelectionEnabled(true);
         hexTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         hexTable.getTableHeader().setReorderingAllowed(false);
+        hexTable.setRowHeight(hexTable.getFontMetrics(hexTable.getFont()).getHeight() + 2);
 
         hexTable.setDefaultRenderer(String.class, new HexCellRenderer());
 
@@ -210,6 +214,14 @@ public class HexEditorPanel extends JPanel {
         scrollPane.addMouseWheelListener(e -> {
             if (!hexTable.isEnabled()) return; 
             
+            // --- NEW: Handle Font Zooming ---
+            if (e.isControlDown()) {
+                if (e.getWheelRotation() < 0) adjustFontSize(2);
+                else adjustFontSize(-2);
+                e.consume(); // Consume to stop native scrolling
+                return;
+            }
+
             JViewport vp = scrollPane.getViewport();
             int maxScroll = hexTable.getPreferredSize().height - vp.getHeight();
             int currentY = vp.getViewPosition().y;
@@ -220,6 +232,20 @@ public class HexEditorPanel extends JPanel {
                 if (onPrevChunk != null) onPrevChunk.accept(true); 
             }
         });
+
+        // --- NEW: Font Zoom Keyboard Shortcuts ---
+        InputMap im = hexTable.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
+        ActionMap am = hexTable.getActionMap();
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_EQUALS, InputEvent.CTRL_DOWN_MASK), "zoomIn");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_ADD, InputEvent.CTRL_DOWN_MASK), "zoomInNumPad");
+        am.put("zoomIn", new AbstractAction() { public void actionPerformed(ActionEvent e) { adjustFontSize(2); }});
+        am.put("zoomInNumPad", new AbstractAction() { public void actionPerformed(ActionEvent e) { adjustFontSize(2); }});
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_MINUS, InputEvent.CTRL_DOWN_MASK), "zoomOut");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_SUBTRACT, InputEvent.CTRL_DOWN_MASK), "zoomOutNumPad");
+        am.put("zoomOut", new AbstractAction() { public void actionPerformed(ActionEvent e) { adjustFontSize(-2); }});
+        am.put("zoomOutNumPad", new AbstractAction() { public void actionPerformed(ActionEvent e) { adjustFontSize(-2); }});
 
         // --- Seamless Keyboard Arrow Navigation ---
         hexTable.addKeyListener(new KeyAdapter() {
@@ -250,6 +276,31 @@ public class HexEditorPanel extends JPanel {
         add(createInspectorPanel(), BorderLayout.EAST);
         add(createStatusBar(), BorderLayout.SOUTH);
         updateColumnWidths();
+    }
+
+    // --- FONT METHODS ---
+    public int getCurrentFontSize() {
+        return currentFontSize;
+    }
+
+    public void adjustFontSize(int delta) {
+        int newSize = Math.max(6, Math.min(80, currentFontSize + delta));
+        if (newSize == currentFontSize) return;
+        
+        currentFontSize = newSize;
+        Font newFont = hexTable.getFont().deriveFont((float) newSize);
+        hexTable.setFont(newFont);
+        
+        // Dynamically adjust row heights for the new font
+        FontMetrics fm = hexTable.getFontMetrics(newFont);
+        hexTable.setRowHeight(fm.getHeight() + 2);
+        
+        // Keep global properties in perfect sync
+        BearitProperties.getInstance().setFontSize(newSize);
+        
+        revalidate();
+        repaint();
+        updateColumnWidths(); 
     }
 
     private JPanel createStatusBar() {
@@ -288,9 +339,9 @@ public class HexEditorPanel extends JPanel {
         chunkLoadProgressBar.setVisible(visibleFlag);
     }
 
-    public void setOnPrevChunk(java.util.function.Consumer<Boolean> listener) { this.onPrevChunk = listener; }
-    public void setOnNextChunk(java.util.function.Consumer<Boolean> listener) { this.onNextChunk = listener; }
-    public void setOnJumpToChunk(java.util.function.Consumer<Integer> listener) { this.onJumpToChunk = listener; }
+    public void setOnPrevChunk(Consumer<Boolean> listener) { this.onPrevChunk = listener; }
+    public void setOnNextChunk(Consumer<Boolean> listener) { this.onNextChunk = listener; }
+    public void setOnJumpToChunk(Consumer<Integer> listener) { this.onJumpToChunk = listener; }
 
     public void updateChunkStatus(int currentIdx, int totalChunks) {
         updateChunkFileStatusLabel(String.format(" Chunk %d of %d ", currentIdx, totalChunks), fileSizeDateStatus);
@@ -422,7 +473,7 @@ public class HexEditorPanel extends JPanel {
         lblUtf16 = addInspectorRow("UTF-16:", panel, ++gbc.gridy);
         lblEbcdic = addInspectorRow("EBCDIC:", panel, ++gbc.gridy);
         
-
+        
         gbc.gridy++; gbc.weighty = 1.0;
         panel.add(Box.createVerticalGlue(), gbc);
 
@@ -446,10 +497,16 @@ public class HexEditorPanel extends JPanel {
 
     private void updateColumnWidths() {
         if (hexTable.getColumnCount() == 0) return;
-        hexTable.getColumnModel().getColumn(0).setPreferredWidth(100); 
+        
+        // --- DYNAMIC WIDTH MATH ---
+        // Measures the physical pixel dimensions of the current font to perfectly bound the cells
+        FontMetrics fm = hexTable.getFontMetrics(hexTable.getFont());
+        int charW = fm.charWidth('W'); // Uses a wide character as a safe bounding box
+        
+        hexTable.getColumnModel().getColumn(0).setPreferredWidth((charW * 8) + 20); 
         int bpr = tableModel.getBytesPerRow();
-        for (int i = 1; i <= bpr; i++) hexTable.getColumnModel().getColumn(i).setPreferredWidth(30); 
-        for (int i = bpr + 1; i <= bpr * 2; i++) hexTable.getColumnModel().getColumn(i).setPreferredWidth(15); 
+        for (int i = 1; i <= bpr; i++) hexTable.getColumnModel().getColumn(i).setPreferredWidth((charW * 2) + 12); 
+        for (int i = bpr + 1; i <= bpr * 2; i++) hexTable.getColumnModel().getColumn(i).setPreferredWidth(charW + 8); 
     }
 
     public void jumpToHexAddress(String hexAddress) {

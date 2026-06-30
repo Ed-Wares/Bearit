@@ -47,6 +47,10 @@ public class BearitTextHexWrapper extends JPanel {
 
         add(hexEditor, BorderLayout.CENTER);
         
+        // --- INITIALIZE FONT SIZE: Match the hidden text editor immediately! ---
+        int initialSize = hiddenTextEditor.getFont().getSize();
+        hexEditor.adjustFontSize(initialSize - hexEditor.getCurrentFontSize());
+
         // --- Global Syncing Initialization (Replaces loadCurrentChunkFromBearit) ---
         long globalCaret = hiddenTextEditor.getGlobalCaretByteOffset();
         LargeFileManager fm = hiddenTextEditor.getFileManager();
@@ -72,10 +76,18 @@ public class BearitTextHexWrapper extends JPanel {
         }
     }
 
+    // --- FONT PASS-THROUGH METHODS ---
+    public void adjustFontSize(int delta) {
+        hexEditor.adjustFontSize(delta);
+    }
+
+    public int getCurrentFontSize() {
+        return hexEditor.getCurrentFontSize();
+    }
+
     public AdvancedTextEditorPanel getHiddenTextEditor() {
         return hiddenTextEditor;
     }
-
 
     public boolean isDirty() {
         return isDirty;
@@ -102,7 +114,6 @@ public class BearitTextHexWrapper extends JPanel {
         // --- RE-ENTRANCY LOCK: ---
         if (isSyncing) return; 
         isSyncing = true;
-        //hexEditor.setUIEnabled(false);
         hexEditor.showChunkLoadProgressBar(true);
         try {
             if (isDirty) {
@@ -117,7 +128,6 @@ public class BearitTextHexWrapper extends JPanel {
         } finally {
             // Unlock when finished so future saves/closes work correctly
             isSyncing = false; 
-            //hexEditor.setUIEnabled(true);
             hexEditor.showChunkLoadProgressBar(false);
         }
     }
@@ -221,7 +231,6 @@ public class BearitTextHexWrapper extends JPanel {
         worker.execute();
     }
 
-
     public int getHexSelectedByteOffset() {
         return hexEditor.getSelectedByteOffset();
     }
@@ -230,8 +239,6 @@ public class BearitTextHexWrapper extends JPanel {
         return currentLoadedChunk;
     }
 
-    // Add the boolean parameter to the method signature
-    // --- Added 'exactGlobalOffset' to the parameters ---
     private void navigateToChunk(int newIndex, boolean cursorAtBottom, Long exactGlobalOffset) {
         LargeFileManager fm = hiddenTextEditor.getFileManager();
         if (newIndex < 0 || newIndex >= fm.getTotalChunks()) return;
@@ -262,7 +269,7 @@ public class BearitTextHexWrapper extends JPanel {
                     hexEditor.updateChunkStatus(currentLoadedChunk + 1, fm.getTotalChunks());
                     hexEditor.setStatus("Ready");
                     
-                    // --- NEW: Handle exact offset targeting ---
+                    // ---  Handle exact offset targeting ---
                     if (exactGlobalOffset != null) {
                         hexEditor.setSelectedByteOffset((int)(exactGlobalOffset - offset));
                     } else if (cursorAtBottom && rawBytes.length > 0) {
