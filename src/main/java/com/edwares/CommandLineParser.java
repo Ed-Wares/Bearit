@@ -2,6 +2,8 @@ package com.edwares;
 
 import java.io.File;
 
+import javax.swing.JOptionPane;
+
 public class CommandLineParser {
     private boolean showHelp = false;
     private Double generateSizeGb = null;
@@ -10,6 +12,7 @@ public class CommandLineParser {
     private boolean hexModeOn = false;
     private boolean textModeOn = false;
     private String selectRange = null;
+    private String searchTerm = null;
 
     public CommandLineParser(String[] args) {
         for (int i = 0; i < args.length; i++) {
@@ -29,7 +32,15 @@ public class CommandLineParser {
                     System.err.println("Error: -s requires a range argument (start;end).");
                     showHelp = true;
                 }
-                // --- Text file generation ---
+            }
+            else if ("-f".equalsIgnoreCase(arg)) {
+                if(i + 1 < args.length) {
+                    searchTerm = args[++i];
+                } else {
+                    System.err.println("Error: -f requires argument (search_term).");
+                    showHelp = true;
+                }
+            // --- Text file generation ---
             } else if ("-g".equals(arg)) {
                 if (i + 1 < args.length) {
                     try {
@@ -71,22 +82,30 @@ public class CommandLineParser {
     public boolean isHexModeOn() { return hexModeOn; }
     public boolean isTextModeOn() { return textModeOn; }
     public String getSelectRange() { return selectRange; }
+    public String getSearchTerm() { return searchTerm; }
 
     public void printHelp() {
-        System.out.println("Bearit Text Editor");
-        System.out.println("Usage: java -jar bearit-1.0-SNAPSHOT.jar [OPTIONS] [FILE]");
-        System.out.println("");
-        System.out.println("Options:");
-        System.out.println("  -?                        Show this help message and exit.");
-        System.out.println("  -h                        Activate Hex Editor Mode for the active tab.");
-        System.out.println("  -t                        Activate Text Editor Mode for the active tab.");
-        System.out.println("  -s <start,end>            Select text/bytes in the active tab (e.g., -s 1024,2048).");
-        System.out.println("  -g <GENERATE_SIZE_GB>     Generates a test text file.");
-        System.out.println("  -gb <GENERATE_SIZE_GB>    Generates a test binary file.");
-        System.out.println("");
-        System.out.println("Examples:");
-        System.out.println("  java -jar bearit-1.0-SNAPSHOT.jar");
-        System.out.println("  java -jar bearit-1.0-SNAPSHOT.jar large_application.log");
-        System.out.println("  java -jar bearit-1.0-SNAPSHOT.jar -g 50");        
+    
+        String helpText = "Bearit Text Editor\n" +
+            "Usage: bearit [OPTIONS] [FILE]\n\n" +
+            "Options:\n" +
+            "  -?               Show this help message and exit.\n" +
+            "  -h               Activate Hex Editor Mode.\n" +
+            "  -t               Activate Text Editor Mode.\n" +
+            "  -s <start,end>   Select text/bytes (e.g., -s 1024,2048).\n" +
+            "  -f <search_term> Find search term.\n" +
+            "  -g <SIZE_GB>     Generates a test text file.\n" +
+            "  -gb <SIZE_GB>    Generates a test binary file.\n\n" +
+            "Examples:\n" +
+            "  bearit\n" +
+            "  bearit large_application.log\n" +
+            "  bearit -g 50\n";
+        
+        String os = System.getProperty("os.name").toLowerCase();
+        if (os.contains("win")) { //jpackage exe doesn't print output in windows for desktop applications
+            DialogUtil.showMessageDialog(null, helpText, "Command line help", JOptionPane.INFORMATION_MESSAGE);
+        } else {
+            System.out.print(helpText);
+        }
     }
 }

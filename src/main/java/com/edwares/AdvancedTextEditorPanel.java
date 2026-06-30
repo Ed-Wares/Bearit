@@ -926,7 +926,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                 lineNumberPanel.adjustMetricSizing();
             }
             if (lblFontInfo != null) {
-                lblFontInfo.setText("Font: " + font.getSize() + "pt");
+                lblFontInfo.setText(" | Font: " + font.getSize() + "pt | ");
             }
         }
     }
@@ -2091,7 +2091,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         return item != null ? item.toString() : "";
     }
 
-    private void updateSearchHistory(String target) {
+    public void updateSearchHistory(String target) {
         if (target == null || target.isEmpty()) return;
         try {
             BearitProperties.getInstance().addSearchHistory(target);

@@ -64,7 +64,7 @@ public class SingleInstanceManager {
             String arg = args[i];
             
             // If it doesn't start with a hyphen, and isn't the value part of a command flag (-g, -s, etc.)
-            boolean isValueArg = (i > 0 && (args[i-1].equals("-g") || args[i-1].equals("-gb") || args[i-1].equals("-s")));
+            boolean isValueArg = (i > 0 && (args[i-1].equals("-g") || args[i-1].equals("-gb") || args[i-1].equals("-s") || args[i-1].equals("-f")));
             
             if (!arg.startsWith("-") && !isValueArg) {
                 processedArgs[i] = new File(arg).getAbsolutePath();

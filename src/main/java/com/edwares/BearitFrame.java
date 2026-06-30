@@ -1869,7 +1869,7 @@ public class BearitFrame extends JFrame {
         }
 
         //get active tab's editor component
-        Component editorComponent = getActiveTabComponent();
+        final Component editorComponent = getActiveTabComponent();
         AdvancedTextEditorPanel textEditor = null;
         BearitTextHexWrapper hexWrapper = null;
         if (editorComponent instanceof AdvancedTextEditorPanel) {
@@ -1900,6 +1900,15 @@ public class BearitFrame extends JFrame {
                     System.err.println("Invalid selection format. Expected -s start;end");
                 }
             }
+        }
+
+        // Handle Find Search term
+        if (cli.getSearchTerm() != null && textEditor != null) {
+            SwingUtilities.invokeLater(() -> {
+                ((AdvancedTextEditorPanel) editorComponent).updateSearchHistory(cli.getSearchTerm());
+                ((AdvancedTextEditorPanel) editorComponent).performFind(cli.getSearchTerm(), true);
+                ((AdvancedTextEditorPanel) editorComponent).showSearchDialog();
+            });
         }
     }
 }
