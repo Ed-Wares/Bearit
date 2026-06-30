@@ -663,7 +663,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         try {
             return BearitProperties.getInstance().getMaxLineLength();
         } catch (Exception e) {
-            return 20000; 
+            return 15000; 
         }
     }
 

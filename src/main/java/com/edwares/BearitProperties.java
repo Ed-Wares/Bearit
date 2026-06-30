@@ -249,9 +249,9 @@ public class BearitProperties {
 
     public int getMaxLineLength() {
         try {
-            return Integer.parseInt(props.getProperty("max.line.length", "20000"));
+            return Integer.parseInt(props.getProperty("max.line.length", "15000"));
         } catch (NumberFormatException e) {
-            return 20000;
+            return 15000;
         }
     }
 
