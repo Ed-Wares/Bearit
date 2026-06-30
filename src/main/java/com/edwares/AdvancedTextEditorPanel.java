@@ -607,6 +607,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         
         statusBar.add(leftStatusPanel, BorderLayout.WEST);
         statusBar.add(rightStatusPanel, BorderLayout.EAST);
+        DialogUtil.applyFontToContainer(statusBar, (float) DialogUtil.DEFAULT_STATUSLBL_FONT_SIZE);
         add(statusBar, BorderLayout.SOUTH);
     }
 

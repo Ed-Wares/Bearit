@@ -2,6 +2,7 @@ package com.edwares;
 
 import javax.swing.*;
 import javax.swing.border.Border;
+import javax.swing.border.TitledBorder;
 import javax.swing.table.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
@@ -32,6 +33,10 @@ public class HexEditorPanel extends JPanel {
     private int currentChunkIdx = 0;
     private boolean isUpdatingScroll = false;
     
+    // Inspector & Status Panels (Stored for dynamic font scaling)
+    private JPanel pnlInspector;
+    private JPanel pnlStatusBar;
+
     // Inspector UI
     private JTextField lblAddress, lblChunkAddress, lblPosition, lbl8Bit, lbl16Bit, lbl32Bit, lbl64Bit;
     private JTextField lblFloat, lblBinary, lblUnix32, lblUnix64;
@@ -43,6 +48,7 @@ public class HexEditorPanel extends JPanel {
     // --- Status Bar UI ---
     private JTextField lblStatus;
     private JTextField lblChunkFileStatus;
+    private JTextField lblFontInfo;
     private String chunkStatus = "";
     private JProgressBar chunkLoadProgressBar; 
     private String fileSizeDateStatus = "";
@@ -197,7 +203,7 @@ public class HexEditorPanel extends JPanel {
             }
         });
 
-        // Syncing the Global Scrollbar to the local viewport (Arrow keys / Mouse wheel)
+        // Syncing the Global Scrollbar to the local viewport
         scrollPane.getViewport().addChangeListener(e -> {
             if (isUpdatingScroll || !hexTable.isEnabled()) return;
             JViewport vp = scrollPane.getViewport();
@@ -214,7 +220,7 @@ public class HexEditorPanel extends JPanel {
         scrollPane.addMouseWheelListener(e -> {
             if (!hexTable.isEnabled()) return; 
             
-            // --- NEW: Handle Font Zooming ---
+            // --- Handle Font Zooming ---
             if (e.isControlDown()) {
                 if (e.getWheelRotation() < 0) adjustFontSize(2);
                 else adjustFontSize(-2);
@@ -233,7 +239,7 @@ public class HexEditorPanel extends JPanel {
             }
         });
 
-        // --- NEW: Font Zoom Keyboard Shortcuts ---
+        // --- Font Zoom Keyboard Shortcuts ---
         InputMap im = hexTable.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
         ActionMap am = hexTable.getActionMap();
 
@@ -295,6 +301,15 @@ public class HexEditorPanel extends JPanel {
         FontMetrics fm = hexTable.getFontMetrics(newFont);
         hexTable.setRowHeight(fm.getHeight() + 2);
         
+        // Update the Font Status Label
+        if (lblFontInfo != null) {
+            lblFontInfo.setText(" | Font: " + newSize + "pt | ");
+        }
+
+        // Apply new font sizes directly to the inspector and status bar UI components
+        DialogUtil.applyFontToContainer(pnlInspector, (float) newSize);
+        DialogUtil.applyFontToContainer(pnlStatusBar, (float) DialogUtil.DEFAULT_STATUSLBL_FONT_SIZE);
+
         // Keep global properties in perfect sync
         BearitProperties.getInstance().setFontSize(newSize);
         
@@ -304,8 +319,8 @@ public class HexEditorPanel extends JPanel {
     }
 
     private JPanel createStatusBar() {
-        JPanel panel = new JPanel(new BorderLayout());
-        panel.setBorder(BorderFactory.createEmptyBorder(3, 5, 3, 5));
+        pnlStatusBar = new JPanel(new BorderLayout());
+        pnlStatusBar.setBorder(BorderFactory.createEmptyBorder(3, 5, 3, 5));
         
         // Group the labels into a left-aligned container
         JPanel leftPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
@@ -325,10 +340,16 @@ public class HexEditorPanel extends JPanel {
         leftPanel.add(lblStatus);
         leftPanel.add(chunkLoadProgressBar);
         
-        // Anchor the entire group to the left side of the bottom panel
-        panel.add(leftPanel, BorderLayout.WEST);
+        pnlStatusBar.add(leftPanel, BorderLayout.WEST);
+
+        // --- Add the Font Info Label to the Right Side ---
+        JPanel rightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        lblFontInfo = newLabelTextField(" | Font: " + currentFontSize + "pt | ");
+        rightPanel.add(lblFontInfo);
         
-        return panel;
+        pnlStatusBar.add(rightPanel, BorderLayout.EAST);
+        
+        return pnlStatusBar;
     }
 
     public void setStatus(String message) {
@@ -408,14 +429,13 @@ public class HexEditorPanel extends JPanel {
     }
 
     private JPanel createInspectorPanel() {
-        JPanel panel = new JPanel(new GridBagLayout());
-        panel.setBorder(BorderFactory.createTitledBorder("Data Inspector"));
-        panel.setPreferredSize(new Dimension(320, 0));
+        pnlInspector = new JPanel(new GridBagLayout());
+        pnlInspector.setBorder(BorderFactory.createTitledBorder("Data Inspector"));
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.gridx = 0; gbc.gridy = 0; gbc.anchor = GridBagConstraints.WEST; gbc.insets = new Insets(4, 5, 4, 5);
 
         // View Config
-        panel.add(new JLabel("Bytes Per Row:"), gbc);
+        pnlInspector.add(new JLabel("Bytes Per Row:"), gbc);
         gbc.gridx = 1;
         comboBytesPerRow = new JComboBox<>(new Integer[]{16, 32, 48});
         comboBytesPerRow.setPreferredSize(new Dimension(75, 26)); 
@@ -424,11 +444,11 @@ public class HexEditorPanel extends JPanel {
             tableModel.fireTableStructureChanged();
             updateColumnWidths();
         });
-        panel.add(comboBytesPerRow, gbc);
+        pnlInspector.add(comboBytesPerRow, gbc);
 
         // Goto
         gbc.gridx = 0; gbc.gridy++;
-        panel.add(new JLabel("Go to (Hex):"), gbc);
+        pnlInspector.add(new JLabel("Go to (Hex):"), gbc);
         gbc.gridx = 1;
         // --- Force Linux to stretch the text box horizontally ---
         gbc.fill = GridBagConstraints.HORIZONTAL;
@@ -445,39 +465,38 @@ public class HexEditorPanel extends JPanel {
         btnGo.addActionListener(goAction);
         gotoPanel.add(txtGoto, BorderLayout.CENTER);
         gotoPanel.add(btnGo, BorderLayout.EAST);
-        panel.add(new JLabel("  "), gbc);
-        panel.add(gotoPanel, gbc);
+        pnlInspector.add(new JLabel("  "), gbc);
+        pnlInspector.add(gotoPanel, gbc);
         // --- Reset the constraints so the rest of the UI doesn't warp ---
         gbc.fill = GridBagConstraints.NONE;
         gbc.weightx = 0.0;
 
         gbc.gridx = 0; gbc.gridy++; gbc.gridwidth = 2;
-        panel.add(new JSeparator(), gbc);
+        pnlInspector.add(new JSeparator(), gbc);
         gbc.gridwidth = 1;
 
         // Translations
-        lblAddress = addInspectorRow("Global Address:", panel, ++gbc.gridy);
-        lblChunkAddress = addInspectorRow("Chunk Address:", panel, ++gbc.gridy);
-        lblPosition = addInspectorRow("Position:", panel, ++gbc.gridy);
-        lbl8Bit = addInspectorRow("Int8:", panel, ++gbc.gridy);
-        lbl16Bit = addInspectorRow("Int16 (LE):", panel, ++gbc.gridy);
-        lbl32Bit = addInspectorRow("Int32 (LE):", panel, ++gbc.gridy);
-        lbl64Bit = addInspectorRow("Int64 (LE):", panel, ++gbc.gridy);
-        lblFloat = addInspectorRow("Float:", panel, ++gbc.gridy);
-        lblBinary = addInspectorRow("Binary:", panel, ++gbc.gridy);
-        lblUnix32 = addInspectorRow("Unix 32:", panel, ++gbc.gridy);
-        lblUnix64 = addInspectorRow("Unix 64:", panel, ++gbc.gridy);
-        lblWin32Time = addInspectorRow("Win32 Time:", panel, ++gbc.gridy);
-        lblDosTime = addInspectorRow("MS-DOS Time:", panel, ++gbc.gridy);
-        lblUtf8 = addInspectorRow("UTF-8:", panel, ++gbc.gridy);
-        lblUtf16 = addInspectorRow("UTF-16:", panel, ++gbc.gridy);
-        lblEbcdic = addInspectorRow("EBCDIC:", panel, ++gbc.gridy);
-        
+        lblAddress = addInspectorRow("Global Address:", pnlInspector, ++gbc.gridy);
+        lblChunkAddress = addInspectorRow("Chunk Address:", pnlInspector, ++gbc.gridy);
+        lblPosition = addInspectorRow("Position:", pnlInspector, ++gbc.gridy);
+        lbl8Bit = addInspectorRow("Int8:", pnlInspector, ++gbc.gridy);
+        lbl16Bit = addInspectorRow("Int16 (LE):", pnlInspector, ++gbc.gridy);
+        lbl32Bit = addInspectorRow("Int32 (LE):", pnlInspector, ++gbc.gridy);
+        lbl64Bit = addInspectorRow("Int64 (LE):", pnlInspector, ++gbc.gridy);
+        lblFloat = addInspectorRow("Float:", pnlInspector, ++gbc.gridy);
+        lblBinary = addInspectorRow("Binary:", pnlInspector, ++gbc.gridy);
+        lblUnix32 = addInspectorRow("Unix 32:", pnlInspector, ++gbc.gridy);
+        lblUnix64 = addInspectorRow("Unix 64:", pnlInspector, ++gbc.gridy);
+        lblWin32Time = addInspectorRow("Win32 Time:", pnlInspector, ++gbc.gridy);
+        lblDosTime = addInspectorRow("MS-DOS Time:", pnlInspector, ++gbc.gridy);
+        lblUtf8 = addInspectorRow("UTF-8:", pnlInspector, ++gbc.gridy);
+        lblUtf16 = addInspectorRow("UTF-16:", pnlInspector, ++gbc.gridy);
+        lblEbcdic = addInspectorRow("EBCDIC:", pnlInspector, ++gbc.gridy);
         
         gbc.gridy++; gbc.weighty = 1.0;
-        panel.add(Box.createVerticalGlue(), gbc);
+        pnlInspector.add(Box.createVerticalGlue(), gbc);
 
-        return panel;
+        return pnlInspector;
     }
 
     private JTextField addInspectorRow(String title, JPanel panel, int row) {

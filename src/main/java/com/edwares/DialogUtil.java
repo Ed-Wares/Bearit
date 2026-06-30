@@ -15,7 +15,7 @@ public class DialogUtil {
     // ==========================================
 
     private static volatile String theme = "Light";
-
+    public static int DEFAULT_STATUSLBL_FONT_SIZE = 14;
     /**
      * Shared theme color palette
      */
@@ -668,4 +668,38 @@ public class DialogUtil {
             themeBorder(cb.getInsideBorder(), fgColor);
         }
     }    
+
+    /**
+     * Recursively updates the font size for all components within a container.
+     */
+    public static void applyFontToContainer(Container container, float size) {
+        if (container == null) return;
+
+        // If the container has a titled border, update its font as well
+        if (container instanceof JComponent) {
+            Border border = ((JComponent) container).getBorder();
+            if (border instanceof TitledBorder) {
+                TitledBorder tb = (TitledBorder) border;
+                Font currentBorderFont = tb.getTitleFont();
+                if (currentBorderFont == null) {
+                    currentBorderFont = UIManager.getFont("TitledBorder.font");
+                }
+                if (currentBorderFont != null) {
+                    tb.setTitleFont(currentBorderFont.deriveFont(size));
+                }
+            }
+        }
+
+        for (Component c : container.getComponents()) {
+            if (c instanceof JComponent) {
+                Font f = c.getFont();
+                if (f != null) {
+                    c.setFont(f.deriveFont(size));
+                }
+            }
+            if (c instanceof Container) {
+                applyFontToContainer((Container) c, size);
+            }
+        }
+    }
 }
