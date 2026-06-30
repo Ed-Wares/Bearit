@@ -2,7 +2,6 @@ package com.edwares;
 
 import javax.swing.*;
 import javax.swing.border.Border;
-import javax.swing.border.TitledBorder;
 import javax.swing.table.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
@@ -34,6 +33,8 @@ public class HexEditorPanel extends JPanel {
     private boolean isUpdatingScroll = false;
     
     // Inspector & Status Panels (Stored for dynamic font scaling)
+    private JPanel pnlInspectorWrapper;
+    private JScrollPane inspectorScrollPane;
     private JPanel pnlInspector;
     private JPanel pnlStatusBar;
 
@@ -306,8 +307,8 @@ public class HexEditorPanel extends JPanel {
             lblFontInfo.setText(" | Font: " + newSize + "pt | ");
         }
 
-        // Apply new font sizes directly to the inspector and status bar UI components
-        DialogUtil.applyFontToContainer(pnlInspector, (float) newSize);
+        // Apply new font sizes directly to the inspector wrapper UI components
+        DialogUtil.applyFontToContainer(pnlInspectorWrapper, (float) newSize);
         DialogUtil.applyFontToContainer(pnlStatusBar, (float) DialogUtil.DEFAULT_STATUSLBL_FONT_SIZE);
 
         // Keep global properties in perfect sync
@@ -429,8 +430,16 @@ public class HexEditorPanel extends JPanel {
     }
 
     private JPanel createInspectorPanel() {
+        // --- Create a wrapper to hold the Titled Border so it doesn't scroll away ---
+        pnlInspectorWrapper = new JPanel(new BorderLayout());
+        pnlInspectorWrapper.setBorder(BorderFactory.createTitledBorder("Data Inspector"));
+
+        // --- Create the inner content panel with GridBagLayout ---
         pnlInspector = new JPanel(new GridBagLayout());
-        pnlInspector.setBorder(BorderFactory.createTitledBorder("Data Inspector"));
+        
+        // ---> Add a 16px transparent right border to act as a buffer for the scrollbar! <---
+        pnlInspector.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 16));
+        
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.gridx = 0; gbc.gridy = 0; gbc.anchor = GridBagConstraints.WEST; gbc.insets = new Insets(4, 5, 4, 5);
 
@@ -496,7 +505,20 @@ public class HexEditorPanel extends JPanel {
         gbc.gridy++; gbc.weighty = 1.0;
         pnlInspector.add(Box.createVerticalGlue(), gbc);
 
-        return pnlInspector;
+        // --- Wrap the inner panel in a JScrollPane ---
+        inspectorScrollPane = new JScrollPane(pnlInspector);
+        inspectorScrollPane.setBorder(null); // Eliminate borders inside the wrapper
+        inspectorScrollPane.getVerticalScrollBar().setUnitIncrement(16); // Smooth scrolling
+        inspectorScrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        inspectorScrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
+        
+        // Prevent gray background boxes
+        inspectorScrollPane.setOpaque(false);
+        inspectorScrollPane.getViewport().setOpaque(false);
+        
+        pnlInspectorWrapper.add(inspectorScrollPane, BorderLayout.CENTER);
+
+        return pnlInspectorWrapper;
     }
 
     private JTextField addInspectorRow(String title, JPanel panel, int row) {
@@ -869,6 +891,10 @@ public class HexEditorPanel extends JPanel {
         if (globalVBar != null) {
             globalVBar.setUI(new ThemedScrollBarUI(theme));
         }        
+        if (inspectorScrollPane != null) {
+            inspectorScrollPane.getVerticalScrollBar().setUI(new ThemedScrollBarUI(theme));
+            inspectorScrollPane.getHorizontalScrollBar().setUI(new ThemedScrollBarUI(theme));
+        }
         hexTable.repaint();
     }
 
