@@ -1481,9 +1481,9 @@ public class AdvancedTextEditorPanel extends JPanel {
                 if (exactLine != -1 && exactLine != lineNumberPanel.getStartLine()) {
                     lineNumberPanel.setStartLine(exactLine);
                     updateCursorStatus();
-                    lineNumberPanel.repaint(); 
                 }
             }
+            lineNumberPanel.repaint(); 
         }); 
     }
 
@@ -1597,9 +1597,9 @@ public class AdvancedTextEditorPanel extends JPanel {
                     pendingTargetChunk = -1;
                     applyStateUpdates(get(), 0, -1, null);
                     updateStatusLabel(chunkStatus, getFileInfoString(activeFile));
-                    restartBackgroundIndexer();
                     isDirty = false;
                     setUnsavedChanges(false);
+                    restartBackgroundIndexer();
                 } catch (Exception ex) {
                     showError("Streaming save operation failure: " + ex.getMessage());
                 } finally {
