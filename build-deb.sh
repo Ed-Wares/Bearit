@@ -1,4 +1,7 @@
 #!/bin/bash
+# This script builds the Linux DEB package for the Bearit application using jpackage.
+
+mvn clean package
 
 jar_file=$(find target/ -maxdepth 1 -name "bearit*.jar" -printf "%T@ %p\n" | sort -n | tail -n 1 | cut -d' ' -f2-)
 inputs_app_version=$(echo "$jar_file" | sed -E 's/.*-([0-9]+\.[0-9]+\.[0-9]+)\.jar/\1/')
