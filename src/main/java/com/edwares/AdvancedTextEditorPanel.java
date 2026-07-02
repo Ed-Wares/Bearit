@@ -1594,12 +1594,12 @@ public class AdvancedTextEditorPanel extends JPanel {
             @Override
             protected void done() {
                 try {
-                    isDirty = false;
-                    setUnsavedChanges(false);
                     pendingTargetChunk = -1;
                     applyStateUpdates(get(), 0, -1, null);
                     updateStatusLabel(chunkStatus, getFileInfoString(activeFile));
                     restartBackgroundIndexer();
+                    isDirty = false;
+                    setUnsavedChanges(false);
                 } catch (Exception ex) {
                     showError("Streaming save operation failure: " + ex.getMessage());
                 } finally {
@@ -3221,16 +3221,21 @@ public class AdvancedTextEditorPanel extends JPanel {
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
         return sdf.format(new Date(millis));
     }
+
+    public String getReadOnlyStatus() {
+        return fileManager.getCurrentFile() != null && fileManager.isReadOnly() ? "  |  ***READ-ONLY*** " : "";
+    }
     
     /**
      * Generates the combined status string for the UI.
      */
     public String getFileInfoString(File file) {
         if (file != null && file.exists()) {
+
             String sizeStr = humanReadableByteCount(file.length());
             String dateStr = formatLastModified(file.lastModified());
             String isBinary = this.isBinaryMode() ? "  |  Binary" : "";
-            return "Size: " + sizeStr + "  |  Modified: " + dateStr + isBinary;
+            return "Size: " + sizeStr + "  |  Modified: " + dateStr + isBinary + getReadOnlyStatus();
         }
         return "Unsaved/New File";
     }
