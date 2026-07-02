@@ -24,6 +24,8 @@ public class HexEditorPanel extends JPanel {
     private long baseAddressOffset;
     private boolean isDark = false;
     private int currentFontSize = 14; // Default starting size
+    private Consumer<Font> fontChangeListener;
+
     
     // --- Global Scrolling UI ---
     private JScrollPane scrollPane;
@@ -67,6 +69,7 @@ public class HexEditorPanel extends JPanel {
         tableModel = new HexTableModel(16);
         hexTable = new JTable(tableModel);
         hexTable.setFont(new Font(Font.MONOSPACED, Font.PLAIN, currentFontSize));
+        // Load the font name and size straight from properties!
         hexTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
         hexTable.setCellSelectionEnabled(true);
         hexTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
@@ -75,6 +78,7 @@ public class HexEditorPanel extends JPanel {
 
         hexTable.setDefaultRenderer(String.class, new HexCellRenderer());
 
+        
         // --- Custom Cell Editor for instant overwrite & auto-advance ---
         JTextField editField = new JTextField();
         editField.setHorizontalAlignment(JTextField.CENTER);
@@ -290,33 +294,45 @@ public class HexEditorPanel extends JPanel {
         return currentFontSize;
     }
 
-    public void adjustFontSize(int delta) {
-        int newSize = Math.max(6, Math.min(80, currentFontSize + delta));
-        if (newSize == currentFontSize) return;
+    @Override
+    public void setFont(Font font) {
+        super.setFont(font);
+        // Guard against the super constructor calling this before the UI is built
+        if (hexTable == null) return; 
         
-        currentFontSize = newSize;
-        Font newFont = hexTable.getFont().deriveFont((float) newSize);
-        hexTable.setFont(newFont);
+        currentFontSize = font.getSize();
+        hexTable.setFont(font);
         
         // Dynamically adjust row heights for the new font
-        FontMetrics fm = hexTable.getFontMetrics(newFont);
+        FontMetrics fm = hexTable.getFontMetrics(font);
         hexTable.setRowHeight(fm.getHeight() + 2);
         
         // Update the Font Status Label
         if (lblFontInfo != null) {
-            lblFontInfo.setText(" | Font: " + newSize + "pt | ");
+            lblFontInfo.setText(" | Font: " + font.getName() + " " + currentFontSize + "pt | ");
         }
 
         // Apply new font sizes directly to the inspector wrapper UI components
-        DialogUtil.applyFontToContainer(pnlInspectorWrapper, (float) newSize);
-        DialogUtil.applyFontToContainer(pnlStatusBar, (float) DialogUtil.DEFAULT_STATUSLBL_FONT_SIZE);
+        if (pnlInspectorWrapper != null) DialogUtil.applyFontToContainer(pnlInspectorWrapper, font);
+        if (pnlStatusBar != null) DialogUtil.applyFontToContainer(pnlStatusBar, DialogUtil.DEFAULT_STATUSLBL_FONT);
 
-        // Keep global properties in perfect sync
-        BearitProperties.getInstance().setFontSize(newSize);
-        
         revalidate();
         repaint();
         updateColumnWidths(); 
+    }
+
+    public void setOnFontChangeListener(Consumer<Font> listener) {
+        this.fontChangeListener = listener;
+    }
+
+    public void adjustFontSize(int delta) {
+        int newSize = Math.max(6, Math.min(80, currentFontSize + delta));
+        if (newSize == currentFontSize) return;
+        
+        // Broadcast the event to whoever is listening
+        if (fontChangeListener != null) {
+            fontChangeListener.accept(new Font(hexTable.getFont().getFamily(), Font.PLAIN, newSize));
+        }
     }
 
     private JPanel createStatusBar() {
@@ -345,7 +361,7 @@ public class HexEditorPanel extends JPanel {
 
         // --- Add the Font Info Label to the Right Side ---
         JPanel rightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
-        lblFontInfo = newLabelTextField(" | Font: " + currentFontSize + "pt | ");
+        lblFontInfo = newLabelTextField(" | Font: " + this.getFont().getName() + " " + currentFontSize + "pt | ");
         rightPanel.add(lblFontInfo);
         
         pnlStatusBar.add(rightPanel, BorderLayout.EAST);

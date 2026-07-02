@@ -166,7 +166,6 @@ public class BearitProperties {
         if (recentFiles.size() > 10) {
             recentFiles = new ArrayList<>(recentFiles.subList(0, 10));
         }
-        save();
     }
 
     public void clearRecentFiles() {
@@ -206,45 +205,45 @@ public class BearitProperties {
 
     public List<String> getRecentFiles() { return new ArrayList<>(recentFiles); }
     public int getFrameWidth() { return frameWidth; }
-    public void setFrameWidth(int frameWidth) { this.frameWidth = frameWidth; save(); }
+    public void setFrameWidth(int frameWidth) { this.frameWidth = frameWidth;  }
     public int getFrameHeight() { return frameHeight; }
-    public void setFrameHeight(int frameHeight) { this.frameHeight = frameHeight; save(); }
+    public void setFrameHeight(int frameHeight) { this.frameHeight = frameHeight; }
     public boolean isCheckForUpdates() { return checkForUpdates; }
-    public void setCheckForUpdates(boolean checkForUpdates) { this.checkForUpdates = checkForUpdates; save(); }
+    public void setCheckForUpdates(boolean checkForUpdates) { this.checkForUpdates = checkForUpdates; }
     public String getFontName() { return fontName; }
-    public void setFontName(String fontName) { this.fontName = fontName; save(); }
+    public void setFontName(String fontName) { this.fontName = fontName; }
     public int getFontSize() { return fontSize; }
-    public void setFontSize(int fontSize) { this.fontSize = fontSize; save(); }
+    public void setFontSize(int fontSize) { this.fontSize = fontSize; }
     public boolean isWordWrap() { return wordWrap; }
-    public void setWordWrap(boolean wordWrap) { this.wordWrap = wordWrap; save(); }
+    public void setWordWrap(boolean wordWrap) { this.wordWrap = wordWrap; }
     
     public String getTheme() { return theme; }
-    public void setTheme(String theme) { this.theme = theme; save(); }
+    public void setTheme(String theme) { this.theme = theme; }
     public boolean isShowWhitespace() { return showWhitespace; }
-    public void setShowWhitespace(boolean showWhitespace) { this.showWhitespace = showWhitespace; save(); }
+    public void setShowWhitespace(boolean showWhitespace) { this.showWhitespace = showWhitespace; }
     public boolean isShowEol() { return showEol; }
-    public void setShowEol(boolean showEol) { this.showEol = showEol; save(); }
+    public void setShowEol(boolean showEol) { this.showEol = showEol; }
 
     public String getCustomToolCommand(int index) {
         if (index >= 0 && index < 8) return customToolCommands[index];
         return "";
     }
     public void setCustomToolCommand(int index, String command) {
-        if (index >= 0 && index < 8) { customToolCommands[index] = command; save(); }
+        if (index >= 0 && index < 8) { customToolCommands[index] = command; }
     }
     public String getCustomToolIcon(int index) {
         if (index >= 0 && index < 8) return customToolIcons[index];
         return "";
     }
     public void setCustomToolIcon(int index, String iconPath) {
-        if (index >= 0 && index < 8) { customToolIcons[index] = iconPath; save(); }
+        if (index >= 0 && index < 8) { customToolIcons[index] = iconPath; }
     }
     public String getCustomToolName(int index) {
         if (index >= 0 && index < 8) return customToolNames[index];
         return "";
     }
     public void setCustomToolName(int index, String name) {
-        if (index >= 0 && index < 8) { customToolNames[index] = name; save(); }
+        if (index >= 0 && index < 8) { customToolNames[index] = name; }
     }
 
     public int getMaxLineLength() {

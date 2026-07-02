@@ -30,6 +30,7 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -52,7 +53,8 @@ public class AdvancedTextEditorPanel extends JPanel {
     private final JProgressBar chunkLoadProgressBar; 
     private final JScrollBar globalScrollBar;
     private JPopupMenu editorContextMenu;
-    
+    private Consumer<Font> fontChangeListener;
+        
     private final LargeFileManager fileManager;
     private File activeFile = null;
     private String chunkStatus = "";
@@ -607,7 +609,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         
         statusBar.add(leftStatusPanel, BorderLayout.WEST);
         statusBar.add(rightStatusPanel, BorderLayout.EAST);
-        DialogUtil.applyFontToContainer(statusBar, (float) DialogUtil.DEFAULT_STATUSLBL_FONT_SIZE);
+        DialogUtil.applyFontToContainer(statusBar, DialogUtil.DEFAULT_STATUSLBL_FONT);
         add(statusBar, BorderLayout.SOUTH);
     }
 
@@ -911,15 +913,24 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     // --- Existing Utility Methods ---
+    public void setOnFontChangeListener(Consumer<Font> listener) {
+        this.fontChangeListener = listener;
+    }
 
     public void adjustFontSize(int delta) {
         Font current = textArea.getFont();
         int newSize = Math.max(6, Math.min(80, current.getSize() + delta)); 
-        setFont(current.deriveFont((float) newSize));
-        BearitProperties.getInstance().setFontSize(newSize);
+        if (newSize == current.getSize()) return;
+        
+        // Broadcast the event
+        if (fontChangeListener != null) {
+            fontChangeListener.accept(new Font(current.getFamily(), Font.PLAIN, newSize));
+        }
     }
 
+    @Override
     public void setFont(Font font) {
+        super.setFont(font);
         if (textArea != null) {
             textArea.setFont(font);
             if (lineNumberPanel != null) {
@@ -927,7 +938,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                 lineNumberPanel.adjustMetricSizing();
             }
             if (lblFontInfo != null) {
-                lblFontInfo.setText(" | Font: " + font.getSize() + "pt | ");
+                lblFontInfo.setText(" | Font: " + font.getName() + " " + font.getSize() + "pt | ");
             }
         }
     }

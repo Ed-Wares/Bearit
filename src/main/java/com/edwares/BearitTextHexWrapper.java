@@ -49,6 +49,7 @@ public class BearitTextHexWrapper extends JPanel {
         
         // --- INITIALIZE FONT SIZE: Match the hidden text editor immediately! ---
         int initialSize = hiddenTextEditor.getFont().getSize();
+        hexEditor.setFont(getFont());
         hexEditor.adjustFontSize(initialSize - hexEditor.getCurrentFontSize());
 
         // --- Global Syncing Initialization (Replaces loadCurrentChunkFromBearit) ---
@@ -74,6 +75,22 @@ public class BearitTextHexWrapper extends JPanel {
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    public void setOnFontChangeListener(java.util.function.Consumer<Font> listener) {
+        if (hiddenTextEditor != null) {
+            hiddenTextEditor.setOnFontChangeListener(listener);
+        }
+        if (hexEditor != null) {
+            hexEditor.setOnFontChangeListener(listener);
+        }
+    }
+
+    @Override
+    public void setFont(Font font) {
+        super.setFont(font);
+        if (hiddenTextEditor != null) hiddenTextEditor.setFont(font);
+        if (hexEditor != null) hexEditor.setFont(font);
     }
 
     // --- FONT PASS-THROUGH METHODS ---
