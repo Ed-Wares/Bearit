@@ -550,7 +550,7 @@ public class LargeFileManager {
     public ChunkState saveAll(String currentText, BiConsumer<Integer, Integer> progressCallback) throws IOException {
         File destFile = (pendingSaveAsFile != null) ? pendingSaveAsFile : currentFile;
         if (destFile == null) throw new IllegalStateException("No valid target file to apply save operation.");
-        if (!destFile.canWrite()) throw new IOException("Failed to write the file: " + destFile.getAbsolutePath());
+        if (destFile.exists() && !destFile.canWrite()) throw new IOException("Failed to write the file: " + destFile.getAbsolutePath());
         
         commitCurrentChunk(currentText);
 
