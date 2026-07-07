@@ -7,6 +7,8 @@ import java.util.Properties;
 
 public class BearitProperties {
     public static final String PROPERTIES_FILENAME = "bearit.properties";
+    public static final int MAX_CUSTOM_TOOLS = 20;
+    public static final int MAX_RECENT_FILES = 15;
     private static BearitProperties instance;
     private final File propertiesFile;
     private final Properties props;
@@ -25,15 +27,15 @@ public class BearitProperties {
     private boolean showWhitespace = false;
     private boolean showEol = false;
     
-    private final String[] customToolCommands = new String[8];
-    private final String[] customToolIcons = new String[8];
-    private final String[] customToolNames = new String[8]; 
+    private final String[] customToolCommands = new String[MAX_CUSTOM_TOOLS];
+    private final String[] customToolIcons = new String[MAX_CUSTOM_TOOLS];
+    private final String[] customToolNames = new String[MAX_CUSTOM_TOOLS]; 
 
     private BearitProperties() {
         props = new Properties();
         propertiesFile = getPropertiesFile();
         
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < MAX_CUSTOM_TOOLS; i++) {
             customToolCommands[i] = "";
             customToolIcons[i] = "";
             customToolNames[i] = "Tool " + (i + 1);
@@ -100,14 +102,14 @@ public class BearitProperties {
             showEol = Boolean.parseBoolean(props.getProperty("show.eol", "false"));
 
             recentFiles.clear();
-            for (int i = 1; i <= 10; i++) {
+            for (int i = 1; i <= MAX_RECENT_FILES; i++) {
                 String file = props.getProperty("recent." + i);
                 if (file != null && !file.trim().isEmpty()) {
                     recentFiles.add(file.trim());
                 }
             }
 
-            for (int i = 0; i < 8; i++) {
+            for (int i = 0; i < MAX_CUSTOM_TOOLS; i++) {
                 customToolCommands[i] = props.getProperty("tool." + (i + 1) + ".command", "");
                 customToolIcons[i] = props.getProperty("tool." + (i + 1) + ".icon", "");
                 customToolNames[i] = props.getProperty("tool." + (i + 1) + ".name", "Tool " + (i + 1));
@@ -133,14 +135,14 @@ public class BearitProperties {
         props.setProperty("show.eol", String.valueOf(showEol));
 
         // Clear out old recent file keys
-        for (int i = 1; i <= 10; i++) {
+        for (int i = 1; i <= MAX_RECENT_FILES; i++) {
             props.remove("recent." + i);
         }
         for (int i = 0; i < recentFiles.size(); i++) {
             props.setProperty("recent." + (i + 1), recentFiles.get(i));
         }
 
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < MAX_CUSTOM_TOOLS; i++) {
             props.setProperty("tool." + (i + 1) + ".command", customToolCommands[i] != null ? customToolCommands[i] : "");
             props.setProperty("tool." + (i + 1) + ".icon", customToolIcons[i] != null ? customToolIcons[i].replace("\\", "/") : "");
             props.setProperty("tool." + (i + 1) + ".name", customToolNames[i] != null ? customToolNames[i] : "Tool " + (i + 1));
@@ -162,9 +164,9 @@ public class BearitProperties {
         recentFiles.remove(filePath);
         recentFiles.add(0, filePath);
         
-        // Trim to 10 items
-        if (recentFiles.size() > 10) {
-            recentFiles = new ArrayList<>(recentFiles.subList(0, 10));
+        // Trim to 15 items
+        if (recentFiles.size() > MAX_RECENT_FILES) {
+            recentFiles = new ArrayList<>(recentFiles.subList(0, MAX_RECENT_FILES));
         }
     }
 
@@ -225,25 +227,25 @@ public class BearitProperties {
     public void setShowEol(boolean showEol) { this.showEol = showEol; }
 
     public String getCustomToolCommand(int index) {
-        if (index >= 0 && index < 8) return customToolCommands[index];
+        if (index >= 0 && index < MAX_CUSTOM_TOOLS) return customToolCommands[index];
         return "";
     }
     public void setCustomToolCommand(int index, String command) {
-        if (index >= 0 && index < 8) { customToolCommands[index] = command; }
+        if (index >= 0 && index < MAX_CUSTOM_TOOLS) { customToolCommands[index] = command; }
     }
     public String getCustomToolIcon(int index) {
-        if (index >= 0 && index < 8) return customToolIcons[index];
+        if (index >= 0 && index < MAX_CUSTOM_TOOLS) return customToolIcons[index];
         return "";
     }
     public void setCustomToolIcon(int index, String iconPath) {
-        if (index >= 0 && index < 8) { customToolIcons[index] = iconPath; }
+        if (index >= 0 && index < MAX_CUSTOM_TOOLS) { customToolIcons[index] = iconPath; }
     }
     public String getCustomToolName(int index) {
-        if (index >= 0 && index < 8) return customToolNames[index];
+        if (index >= 0 && index < MAX_CUSTOM_TOOLS) return customToolNames[index];
         return "";
     }
     public void setCustomToolName(int index, String name) {
-        if (index >= 0 && index < 8) { customToolNames[index] = name; }
+        if (index >= 0 && index < MAX_CUSTOM_TOOLS) { customToolNames[index] = name; }
     }
 
     public int getMaxLineLength() {

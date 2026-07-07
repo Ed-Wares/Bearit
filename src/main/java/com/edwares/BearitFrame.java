@@ -1169,7 +1169,7 @@ public class BearitFrame extends JFrame {
         BearitProperties props = BearitProperties.getInstance();
         boolean hasCustomTools = false;
         
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < BearitProperties.MAX_CUSTOM_TOOLS; i++) {
             String command = props.getCustomToolCommand(i);
             if (command != null && !command.trim().isEmpty()) {
                 if (!hasCustomTools) {
@@ -1582,7 +1582,7 @@ public class BearitFrame extends JFrame {
 
         boolean hasMenuTools = false;
         
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < BearitProperties.MAX_CUSTOM_TOOLS; i++) {
             String command = props.getCustomToolCommand(i);
             if (command != null && !command.trim().isEmpty()) {
                 //String icon = props.getCustomToolIcon(i);
