@@ -253,6 +253,12 @@ public class BearitFrame extends JFrame {
             AdvancedTextEditorPanel editor = new AdvancedTextEditorPanel();
             BearitProperties props = BearitProperties.getInstance();
             editor.setFont(new Font(props.getFontName(), Font.PLAIN, props.getFontSize()));
+            // --- Push global view settings into the decoupled editor panel ---
+            editor.setFont(new Font(props.getFontName(), Font.PLAIN, props.getFontSize()));
+            editor.setWordWrap(props.isWordWrap());
+            editor.setShowWhitespace(props.isShowWhitespace());
+            editor.setShowEol(props.isShowEol());
+            editor.setEditorMaxLineLength(props.getMaxLineLength());
             JLabel lblTitle = new JLabel("Untitled");
             JPanel tabHeader = ThemedTabbedPaneUI.insertNewTabWithClose(tabbedPane, lblTitle, editor, e -> closeTab(editor));
             // --- Component-Level Tab Right-Click Listener & Left-Click Selector ---
@@ -303,6 +309,26 @@ public class BearitFrame extends JFrame {
             // Listen for scroll-wheel font changes from the text editor
             editor.setOnFontChangeListener(newFont -> {
                 updateGlobalFont(newFont.getFamily(), newFont.getSize());
+            });
+
+            // --- Hook up the search history and settings to the global properties ---
+            editor.setSearchPropertiesListener(new AdvancedTextEditorPanel.SearchPropertiesListener() {
+                BearitProperties props = BearitProperties.getInstance();
+                
+                @Override public java.util.List<String> getSearchHistory() { return props.getSearchHistory(); }
+                @Override public void addSearchHistory(String term) { props.addSearchHistory(term); }
+                
+                @Override public java.util.List<String> getReplaceHistory() { return props.getReplaceHistory(); }
+                @Override public void addReplaceHistory(String term) { props.addReplaceHistory(term); }
+                
+                @Override public boolean isSearchCaseInsensitive() { return props.isSearchCaseInsensitive(); }
+                @Override public void setSearchCaseInsensitive(boolean val) { props.setSearchCaseInsensitive(val); props.save(); }
+                
+                @Override public boolean isSearchRegex() { return props.isSearchRegex(); }
+                @Override public void setSearchRegex(boolean val) { props.setSearchRegex(val); props.save(); }
+                
+                @Override public boolean isSearchAllTabs() { return props.isSearchAllTabs(); }
+                @Override public void setSearchAllTabs(boolean val) { props.setSearchAllTabs(val); props.save(); }
             });
 
             if (file != null) {

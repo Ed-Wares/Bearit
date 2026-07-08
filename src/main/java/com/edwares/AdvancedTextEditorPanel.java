@@ -60,6 +60,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     private String chunkStatus = "";
     private String fileSizeDateStatus = "";
     private String hiddenBoundaryNewline = "";
+    private int editorMaxLineLength = 15000;
 
     // Tracks the active load task so we can kill it if the user scrolls past it
     private SwingWorker<LargeFileManager.ChunkState, Void> activeChunkWorker = null;
@@ -132,7 +133,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     private JButton btnReplaceAll;
     private JButton btnSwap;
     private SwingWorker<?, ?> activeSearchWorker = null; // Tracks the currently running search/replace background thread
-
+    private SearchPropertiesListener searchPropertiesListener;
     private boolean lastGotoLineFlag = true;
     private String lastGotoValue = "";
 
@@ -543,16 +544,16 @@ public class AdvancedTextEditorPanel extends JPanel {
         scrollPane = new JScrollPane(textArea);
         scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_NEVER);
         scrollPane.setRowHeaderView(lineNumberPanel);
-        
+
+        // Initialize with local defaults. The parent frame will push saved user preferences 
+        // immediately after instantiating the panel, ensuring perfect decoupling.
+        setWordWrap(false);
+        setShowWhitespace(this.showWhitespace);
+        setShowEol(this.showEol);
+        applyTheme(this.currentTheme);
+
         // Prevent Swing from hijacking the scroll wheel for horizontal movement ---
         scrollPane.setWheelScrollingEnabled(false); 
-        
-        BearitProperties props = BearitProperties.getInstance();
-        setWordWrap(props.isWordWrap());
-        setShowWhitespace(props.isShowWhitespace());
-        setShowEol(props.isShowEol());
-        applyTheme(props.getTheme());
-        
         scrollPane.getVerticalScrollBar().addAdjustmentListener(e -> {
             if (!isSyncingScroll && !isNavigating && !isLoadingChunk) {
                 syncLocalToGlobalScroll();
@@ -660,13 +661,12 @@ public class AdvancedTextEditorPanel extends JPanel {
         return newLbl;
     }
     
-    // --- Safe Property Reader ---
-    private int getEditorMaxLineLength() {
-        try {
-            return BearitProperties.getInstance().getMaxLineLength();
-        } catch (Exception e) {
-            return 15000; 
-        }
+    public int getEditorMaxLineLength() {
+        return editorMaxLineLength;
+    }
+
+    public void setEditorMaxLineLength(int maxLineLength) {
+        this.editorMaxLineLength = maxLineLength;
     }
 
     private Document createWrappedDocument() {
@@ -2106,7 +2106,9 @@ public class AdvancedTextEditorPanel extends JPanel {
     public void updateSearchHistory(String target) {
         if (target == null || target.isEmpty()) return;
         try {
-            BearitProperties.getInstance().addSearchHistory(target);
+            if (searchPropertiesListener != null) {
+                searchPropertiesListener.addSearchHistory(target);
+            }
             updateComboModel(comboSearch, target);
         } catch (Exception e) {}
     }
@@ -2114,7 +2116,9 @@ public class AdvancedTextEditorPanel extends JPanel {
     private void updateReplaceHistory(String target) {
         if (target == null || target.isEmpty()) return;
         try {
-            BearitProperties.getInstance().addReplaceHistory(target);
+            if (searchPropertiesListener != null) {
+                searchPropertiesListener.addReplaceHistory(target);
+            }
             updateComboModel(comboReplace, target);
         } catch (Exception e) {}
     }
@@ -2128,6 +2132,29 @@ public class AdvancedTextEditorPanel extends JPanel {
             model.removeElementAt(model.getSize() - 1);
         }
     }
+
+    // --- Added Search Properties Listener ---
+    public interface SearchPropertiesListener {
+        java.util.List<String> getSearchHistory();
+        void addSearchHistory(String term);
+        
+        java.util.List<String> getReplaceHistory();
+        void addReplaceHistory(String term);
+        
+        boolean isSearchCaseInsensitive();
+        void setSearchCaseInsensitive(boolean caseInsensitive);
+        
+        boolean isSearchRegex();
+        void setSearchRegex(boolean regex);
+        
+        boolean isSearchAllTabs();
+        void setSearchAllTabs(boolean allTabs);
+    }
+
+
+    public void setSearchPropertiesListener(SearchPropertiesListener listener) {
+        this.searchPropertiesListener = listener;
+    }    
 
     public void showSearchDialog() {
         boolean isFirstOpen = (searchDialog == null);
@@ -2201,6 +2228,24 @@ public class AdvancedTextEditorPanel extends JPanel {
             chkCaseInsensitive = new JCheckBox("Case Insensitive");
             chkRegex = new JCheckBox("Regular Expression");
             chkAllTabs = new JCheckBox("All Open Tabs");
+
+            // Load saved states
+            if (searchPropertiesListener != null) {
+                chkCaseInsensitive.setSelected(searchPropertiesListener.isSearchCaseInsensitive());
+                chkRegex.setSelected(searchPropertiesListener.isSearchRegex());
+                chkAllTabs.setSelected(searchPropertiesListener.isSearchAllTabs());
+            }
+            // Save states dynamically when toggled
+            chkCaseInsensitive.addActionListener(e -> {
+                if (searchPropertiesListener != null) searchPropertiesListener.setSearchCaseInsensitive(chkCaseInsensitive.isSelected());
+            });
+            chkRegex.addActionListener(e -> {
+                if (searchPropertiesListener != null) searchPropertiesListener.setSearchRegex(chkRegex.isSelected());
+            });
+            chkAllTabs.addActionListener(e -> {
+                if (searchPropertiesListener != null) searchPropertiesListener.setSearchAllTabs(chkAllTabs.isSelected());
+            });            
+
             optionsPanel.add(chkCaseInsensitive);
             optionsPanel.add(Box.createHorizontalStrut(15)); // Spacer
             optionsPanel.add(chkRegex);
@@ -2261,8 +2306,13 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
         
         try {
+            // Load the search and replace history from the properties listener if available
             DefaultComboBoxModel<String> sModel = new DefaultComboBoxModel<>();
-            for (String s : BearitProperties.getInstance().getSearchHistory()) sModel.addElement(s);
+            java.util.List<String> searchHist = (searchPropertiesListener != null) 
+                    ? searchPropertiesListener.getSearchHistory() 
+                    : new java.util.ArrayList<>();
+            for (String s : searchHist) sModel.addElement(s);
+            
             Object currentSearch = comboSearch.getEditor().getItem();
             comboSearch.setModel(sModel);
             if (currentSearch != null && !currentSearch.toString().isEmpty()) {
@@ -2270,7 +2320,11 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
 
             DefaultComboBoxModel<String> rModel = new DefaultComboBoxModel<>();
-            for (String s : BearitProperties.getInstance().getReplaceHistory()) rModel.addElement(s);
+            java.util.List<String> replaceHist = (searchPropertiesListener != null) 
+                    ? searchPropertiesListener.getReplaceHistory() 
+                    : new java.util.ArrayList<>();
+            for (String s : replaceHist) rModel.addElement(s);
+            
             Object currentReplace = comboReplace.getEditor().getItem();
             comboReplace.setModel(rModel);
             if (currentReplace != null && !currentReplace.toString().isEmpty()) {

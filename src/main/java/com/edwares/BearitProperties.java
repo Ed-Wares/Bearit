@@ -9,6 +9,7 @@ public class BearitProperties {
     public static final String PROPERTIES_FILENAME = "bearit.properties";
     public static final int MAX_CUSTOM_TOOLS = 20;
     public static final int MAX_RECENT_FILES = 15;
+    public static final int MAX_SEARCH_HISTORY = 15;
     private static BearitProperties instance;
     private final File propertiesFile;
     private final Properties props;
@@ -22,11 +23,16 @@ public class BearitProperties {
     private int fontSize = 14;
     private boolean wordWrap = false; 
     
-    // --- NEW: View Settings ---
+    // --- View Settings ---
     private String theme = "Light"; // "Light" or "Dark"
     private boolean showWhitespace = false;
     private boolean showEol = false;
-    
+
+    // --- Search Settings ---
+    private boolean searchCaseInsensitive = false;
+    private boolean searchRegex = false;
+    private boolean searchAllTabs = false;
+
     private final String[] customToolCommands = new String[MAX_CUSTOM_TOOLS];
     private final String[] customToolIcons = new String[MAX_CUSTOM_TOOLS];
     private final String[] customToolNames = new String[MAX_CUSTOM_TOOLS]; 
@@ -100,6 +106,9 @@ public class BearitProperties {
             theme = props.getProperty("theme", "Light");
             showWhitespace = Boolean.parseBoolean(props.getProperty("show.whitespace", "false"));
             showEol = Boolean.parseBoolean(props.getProperty("show.eol", "false"));
+            searchCaseInsensitive = Boolean.parseBoolean(props.getProperty("search.caseInsensitive", "false"));
+            searchRegex = Boolean.parseBoolean(props.getProperty("search.regex", "false"));
+            searchAllTabs = Boolean.parseBoolean(props.getProperty("search.all.tabs", "false"));
 
             recentFiles.clear();
             for (int i = 1; i <= MAX_RECENT_FILES; i++) {
@@ -133,6 +142,9 @@ public class BearitProperties {
         props.setProperty("theme", theme);
         props.setProperty("show.whitespace", String.valueOf(showWhitespace));
         props.setProperty("show.eol", String.valueOf(showEol));
+        props.setProperty("search.caseInsensitive", String.valueOf(searchCaseInsensitive));
+        props.setProperty("search.regex", String.valueOf(searchRegex));
+        props.setProperty("search.all.tabs", String.valueOf(searchAllTabs));
 
         // Clear out old recent file keys
         for (int i = 1; i <= MAX_RECENT_FILES; i++) {
@@ -265,7 +277,7 @@ public class BearitProperties {
     }
 
     public void addSearchHistory(String term) {
-        addHistoryItem("search.history", term, 15);
+        addHistoryItem("search.history", term, MAX_SEARCH_HISTORY);
     }
 
     public java.util.List<String> getReplaceHistory() {
@@ -273,7 +285,7 @@ public class BearitProperties {
     }
 
     public void addReplaceHistory(String term) {
-        addHistoryItem("replace.history", term, 15);
+        addHistoryItem("replace.history", term, MAX_SEARCH_HISTORY);
     }
 
     private java.util.List<String> getHistoryList(String key) {
@@ -326,4 +338,29 @@ public class BearitProperties {
             save();
         }
     }
+
+    public boolean isSearchCaseInsensitive() {
+        return searchCaseInsensitive;
+    }
+
+    public void setSearchCaseInsensitive(boolean searchCaseInsensitive) {
+        this.searchCaseInsensitive = searchCaseInsensitive;
+    }
+
+    public boolean isSearchRegex() {
+        return searchRegex;
+    }
+
+    public void setSearchRegex(boolean searchRegex) {
+        this.searchRegex = searchRegex;
+    }
+
+    public boolean isSearchAllTabs() {
+        return searchAllTabs;
+    }
+
+    public void setSearchAllTabs(boolean searchAllTabs) {
+        this.searchAllTabs = searchAllTabs;
+    }
+    
 }
