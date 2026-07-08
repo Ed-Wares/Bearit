@@ -48,9 +48,7 @@ public class BearitTextHexWrapper extends JPanel {
         add(hexEditor, BorderLayout.CENTER);
         
         // --- INITIALIZE FONT SIZE: Match the hidden text editor immediately! ---
-        int initialSize = hiddenTextEditor.getFont().getSize();
-        hexEditor.setFont(getFont());
-        hexEditor.adjustFontSize(initialSize - hexEditor.getCurrentFontSize());
+        hexEditor.setFont(hiddenTextEditor.getFont()); // Grab the exact font, not the generic UI font
 
         // --- Global Syncing Initialization (Replaces loadCurrentChunkFromBearit) ---
         long globalCaret = hiddenTextEditor.getGlobalCaretByteOffset();
@@ -71,7 +69,11 @@ public class BearitTextHexWrapper extends JPanel {
             hexEditor.setFileSizeDateStatus(hiddenTextEditor.getFileInfoString(hiddenTextEditor.getActiveFile()));
             hexEditor.updateChunkStatus(currentLoadedChunk + 1, fm.getTotalChunks());
             hexEditor.loadData(rawBytes, offset);
-            hexEditor.setSelectedByteOffset((int)(globalCaret - offset));
+            
+            // Queue the selection to happen AFTER the frame finishes applying themes and adding the tab
+            SwingUtilities.invokeLater(() -> {
+                hexEditor.setSelectedByteOffset((int)(globalCaret - offset));
+            });
         } catch (Exception e) {
             e.printStackTrace();
         }
