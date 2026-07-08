@@ -59,8 +59,9 @@ public class HexEditorPanel extends JPanel {
     private Consumer<Boolean> onNextChunk;  
     private Consumer<Integer> onJumpToChunk;
     private Consumer<Long> onJumpToGlobalAddress;    
-
     private Runnable onDataChanged;
+    private Runnable onExitHexMode;
+    public void setOnExitHexMode(Runnable listener) { this.onExitHexMode = listener; }
 
     public HexEditorPanel() {
         setLayout(new BorderLayout());
@@ -83,6 +84,15 @@ public class HexEditorPanel extends JPanel {
         JTextField editField = new JTextField();
         editField.setHorizontalAlignment(JTextField.CENTER);
         editField.setBorder(BorderFactory.createEmptyBorder());
+        
+        // Prevent CTRL+H from acting as a backspace while actively typing a byte
+        editField.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_H, InputEvent.CTRL_DOWN_MASK), "exitHexMode");
+        editField.getActionMap().put("exitHexMode", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                if (hexTable.isEditing()) hexTable.getCellEditor().stopCellEditing();
+                if (onExitHexMode != null) onExitHexMode.run();
+            }
+        });        
 
         DefaultCellEditor overwriteEditor = new DefaultCellEditor(editField) {
             private int currentRow;
@@ -257,6 +267,14 @@ public class HexEditorPanel extends JPanel {
         im.put(KeyStroke.getKeyStroke(KeyEvent.VK_SUBTRACT, InputEvent.CTRL_DOWN_MASK), "zoomOutNumPad");
         am.put("zoomOut", new AbstractAction() { public void actionPerformed(ActionEvent e) { adjustFontSize(-2); }});
         am.put("zoomOutNumPad", new AbstractAction() { public void actionPerformed(ActionEvent e) { adjustFontSize(-2); }});
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_H, InputEvent.CTRL_DOWN_MASK), "exitHexMode"); // Disable default backspace behavior
+        am.put("exitHexMode", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                if (hexTable.isEditing()) hexTable.getCellEditor().stopCellEditing();
+                if (onExitHexMode != null) onExitHexMode.run();
+            }
+        });
 
         // --- Seamless Keyboard Arrow Navigation ---
         hexTable.addKeyListener(new KeyAdapter() {

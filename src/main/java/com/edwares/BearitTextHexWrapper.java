@@ -319,4 +319,10 @@ public class BearitTextHexWrapper extends JPanel {
     public HexEditorPanel getHexEditor() {
         return hexEditor;
     }
+
+    public void setOnExitHexMode(Runnable listener) {
+        if (hexEditor != null) {
+            hexEditor.setOnExitHexMode(listener);
+        }
+    }
 }

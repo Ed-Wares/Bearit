@@ -923,6 +923,8 @@ public class BearitFrame extends JFrame {
             }
 
             BearitTextHexWrapper hexWrapper = new BearitTextHexWrapper(textPanel);
+            // --- Wire up the hotkey to disable Hex Mode ---
+            hexWrapper.setOnExitHexMode(() -> toggleHexModeForCurrentTab(false));            
             // Apply the global theme to the hex editor before displaying it ---
             hexWrapper.getHexEditor().applyTheme(BearitProperties.getInstance().getTheme()); 
             // Inherit the font from the text editor
@@ -1622,6 +1624,7 @@ public class BearitFrame extends JFrame {
         });
 
         hexMenuItem = new JCheckBoxMenuItem("Hex Editor");
+        hexMenuItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_H, InputEvent.CTRL_DOWN_MASK));
         hexMenuItem.addActionListener(e -> toggleHexModeForCurrentTab(hexMenuItem.isSelected()));
         
         whitespaceMenuItem = new JCheckBoxMenuItem("Show White Space Symbols");

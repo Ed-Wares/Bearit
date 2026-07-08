@@ -1710,6 +1710,8 @@ public class AdvancedTextEditorPanel extends JPanel {
             public void actionPerformed(ActionEvent e) { showSearchDialog(); }
         });
 
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_H, InputEvent.CTRL_DOWN_MASK), "none"); // Disable default backspace behavior
+
         im.put(KeyStroke.getKeyStroke(KeyEvent.VK_G, InputEvent.CTRL_DOWN_MASK), "showGotoLine");
         am.put("showGotoLine", new AbstractAction() {
             public void actionPerformed(ActionEvent e) { showGotoDialog(); }
