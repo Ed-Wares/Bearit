@@ -27,7 +27,7 @@ public class BearitFrame extends JFrame {
     
 
     private final JTabbedPane tabbedPane;
-    private final JFileChooser fileChooser;
+    private MouseAdapter tabMouseAdapter;
     
     // Safety lock to prevent infinite recursion during tab creation/deletion
     private boolean isUpdatingTabs = false; 
@@ -134,7 +134,6 @@ public class BearitFrame extends JFrame {
             }
         } catch (Exception e) {}
 
-        fileChooser = new JFileChooser();
         // --- Force a spacious default size for Linux file dialogs ---
         //fileChooser.setPreferredSize(new Dimension(800, 550));
 
@@ -146,22 +145,104 @@ public class BearitFrame extends JFrame {
         // Add the permanent "+" dummy tab
         tabbedPane.addTab("+", new JPanel());
 
-        //  Global Tab Right-Click Listener ---
-        tabbedPane.addMouseListener(new MouseAdapter() {
-            public void mousePressed(MouseEvent e) { showPopup(e); }
-            public void mouseReleased(MouseEvent e) { showPopup(e); }
-            private void showPopup(MouseEvent e) {
+        // --- Global Tab Right-Click & Drag-and-Drop Listener ---
+        tabMouseAdapter = new MouseAdapter() {
+            private int draggedTabIndex = -1;
+
+            // Helper to translate coordinates from custom child labels up to the parent JTabbedPane
+            private Point getConvertedPoint(MouseEvent e) {
+                if (e.getSource() == tabbedPane) return e.getPoint();
+                return SwingUtilities.convertPoint((Component) e.getSource(), e.getPoint(), tabbedPane);
+            }
+
+            @Override
+            public void mousePressed(MouseEvent e) {
+                Point p = getConvertedPoint(e);
+                showPopup(e, p);
+                
+                if (SwingUtilities.isLeftMouseButton(e)) {
+                    draggedTabIndex = tabbedPane.indexAtLocation(p.x, p.y);
+                    
+                    // Handle left-click to physically switch the tab if they clicked a custom header
+                    if (draggedTabIndex >= 0 && tabbedPane.getSelectedIndex() != draggedTabIndex) {
+                        tabbedPane.setSelectedIndex(draggedTabIndex);
+                    }
+                    
+                    // Prevent dragging the permanent "+" dummy tab
+                    if (draggedTabIndex == tabbedPane.getTabCount() - 1) {
+                        draggedTabIndex = -1;
+                    }
+                }
+            }
+
+            @Override
+            public void mouseDragged(MouseEvent e) {
+                if (draggedTabIndex == -1 || !SwingUtilities.isLeftMouseButton(e)) return;
+
+                // --- Change cursor to indicate dragging ---
+                Component source = (Component) e.getSource();
+                if (source.getCursor().getType() != Cursor.HAND_CURSOR) {
+                    source.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+                    tabbedPane.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+                }
+
+                Point p = getConvertedPoint(e);
+                int targetIndex = tabbedPane.indexAtLocation(p.x, p.y);
+
+                // Valid target? (Must exist, must not be itself, must not be the "+" tab)
+                if (targetIndex >= 0 && targetIndex != draggedTabIndex && targetIndex < tabbedPane.getTabCount() - 1) {
+                    isUpdatingTabs = true; 
+                    try {
+                        Component comp = tabbedPane.getComponentAt(draggedTabIndex);
+                        String title = tabbedPane.getTitleAt(draggedTabIndex);
+                        Icon icon = tabbedPane.getIconAt(draggedTabIndex);
+                        String tip = tabbedPane.getToolTipTextAt(draggedTabIndex);
+                        Component tabHeader = tabbedPane.getTabComponentAt(draggedTabIndex);
+
+                        tabbedPane.remove(draggedTabIndex);
+                        tabbedPane.insertTab(title, icon, comp, tip, targetIndex);
+                        
+                        if (tabHeader != null) {
+                            tabbedPane.setTabComponentAt(targetIndex, tabHeader);
+                        }
+                        
+                        tabbedPane.setSelectedIndex(targetIndex);
+                        draggedTabIndex = targetIndex; 
+                    } finally {
+                        isUpdatingTabs = false;
+                    }
+                }
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                Point p = getConvertedPoint(e);
+                showPopup(e, p);
+                draggedTabIndex = -1;
+                
+                // --- Restore standard cursor ---
+                Component source = (Component) e.getSource();
+                source.setCursor(Cursor.getDefaultCursor());
+                tabbedPane.setCursor(Cursor.getDefaultCursor());
+            }
+
+            private void showPopup(MouseEvent e, Point p) {
                 if (e.isPopupTrigger()) {
-                    int index = tabbedPane.indexAtLocation(e.getX(), e.getY());
-                    if (index >= 0 && index < tabbedPane.getTabCount() - 1) { // exclude '+' tab
+                    int index = tabbedPane.indexAtLocation(p.x, p.y);
+                    if (index >= 0 && index < tabbedPane.getTabCount() - 1) { 
                         Component comp = tabbedPane.getComponentAt(index);
                         if (comp instanceof AdvancedTextEditorPanel) {
-                            createAndShowTabMenu(tabbedPane, e.getX(), e.getY(), index, (AdvancedTextEditorPanel) comp);
+                            createAndShowTabMenu(tabbedPane, p.x, p.y, index, (AdvancedTextEditorPanel) comp);
+                        } else if (comp instanceof BearitTextHexWrapper) {
+                            createAndShowTabMenu(tabbedPane, p.x, p.y, index, ((BearitTextHexWrapper) comp).getHiddenTextEditor());
                         }
                     }
                 }
             }
-        });
+        };
+        // We must apply it to both listeners to catch the clicks AND the physical drag motion
+        tabbedPane.addMouseListener(tabMouseAdapter);
+        tabbedPane.addMouseMotionListener(tabMouseAdapter);
 
         tabbedPane.addChangeListener(e -> {
             // Use your existing lock variable if you have one to prevent loops
@@ -262,37 +343,13 @@ public class BearitFrame extends JFrame {
             JLabel lblTitle = new JLabel("Untitled");
             JPanel tabHeader = ThemedTabbedPaneUI.insertNewTabWithClose(tabbedPane, lblTitle, editor, e -> closeTab(editor));
             // --- Component-Level Tab Right-Click Listener & Left-Click Selector ---
-            MouseAdapter tabMouseListener = new MouseAdapter() {
-                public void mousePressed(MouseEvent e) { handleMouse(e); }
-                public void mouseReleased(MouseEvent e) { handleMouse(e); }
-                
-                private void handleMouse(MouseEvent e) {
-                    // --- Safely find the tab index even if it is wrapped in Hex Mode ---
-                    int tabIdx = -1;
-                    for (int i = 0; i < tabbedPane.getTabCount(); i++) {
-                        Component c = tabbedPane.getComponentAt(i);
-                        if (c == editor || (c instanceof BearitTextHexWrapper && ((BearitTextHexWrapper) c).getHiddenTextEditor() == editor)) {
-                            tabIdx = i;
-                            break;
-                        }
-                    }
-
-                    if (tabIdx == -1) return;
-
-                    if (e.isPopupTrigger()) {
-                        // Handle right-click context menu
-                        createAndShowTabMenu(e.getComponent(), e.getX(), e.getY(), tabIdx, editor);
-                    } else if (SwingUtilities.isLeftMouseButton(e) && e.getID() == MouseEvent.MOUSE_PRESSED) {
-                        // Handle left-click to physically switch the tab
-                        if (tabbedPane.getSelectedIndex() != tabIdx) {
-                            tabbedPane.setSelectedIndex(tabIdx);
-                        }
-                    }
-                }
-            };
             
-            tabHeader.addMouseListener(tabMouseListener);
-            //lblTitle.addMouseListener(tabMouseListener);
+            // --- Attach the global drag-and-drop & context menu listener ---
+            // We attach it to both the panel and the title label so drags and clicks work flawlessly anywhere
+            tabHeader.addMouseListener(tabMouseAdapter);
+            tabHeader.addMouseMotionListener(tabMouseAdapter);
+            lblTitle.addMouseListener(tabMouseAdapter);
+            lblTitle.addMouseMotionListener(tabMouseAdapter);
 
             editor.addPropertyChangeListener("editorTitle", evt -> updateTabHeader(editor, lblTitle));
             editor.addPropertyChangeListener("unsavedChanges", evt -> updateTabHeader(editor, lblTitle));            
