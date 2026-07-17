@@ -1171,14 +1171,21 @@ public class AdvancedTextEditorPanel extends JPanel {
                         while (originalStringIdx < rawChunkText.length() && currentByteCount < localEndByte) {
                             char c = rawChunkText.charAt(originalStringIdx);
                             
-                            if (c <= 0x7F) currentByteCount += 1;
-                            else if (c <= 0x7FF) currentByteCount += 2;
-                            else if (Character.isHighSurrogate(c)) { currentByteCount += 4; originalStringIdx++; } 
-                            else currentByteCount += 3;
+                            if (c <= 0x7F) {
+                                currentByteCount += 1;
+                            } else if (c <= 0x7FF) {
+                                currentByteCount += 2;
+                            } else if (Character.isHighSurrogate(c)) { 
+                                currentByteCount += 4; 
+                                strippedIndex++; // Increment an extra time for the skipped low surrogate
+                                originalStringIdx++; 
+                            } else {
+                                currentByteCount += 3;
+                            }
                             
-                            if (c != '\r') {
-                                if (c == '\n' || c == '\t') strippedIndex++;
-                                else if (Character.getType(c) != Character.CONTROL && Character.getType(c) != Character.FORMAT) strippedIndex++;
+                            // Count the \r natively, ignoring only stripped controls
+                            if (c == '\r' || c == '\n' || c == '\t' || (Character.getType(c) != Character.CONTROL && Character.getType(c) != Character.FORMAT)) {
+                                strippedIndex++;
                             }
                             
                             if (currentByteCount == localStartByte || (currentByteCount > localStartByte && visualStart == 0 && localStartByte > 0)) {
@@ -1974,9 +1981,9 @@ public class AdvancedTextEditorPanel extends JPanel {
                 // --- handle binary encoding logic ---
                 if (isBinaryMode()) {
                     content = encodeBinaryForView(content);
-                //  } else {
-                //      // Fallback to prevent crashes in minified UTF-8 text files
-                //      content = content.replaceAll("[\\p{Cc}\\p{Cf}&&[^\\r\\n\\t]]", "");
+                } else {
+                    // Fallback to prevent crashes in minified UTF-8 text files
+                    content = content.replaceAll("[\\p{Cc}\\p{Cf}&&[^\\r\\n\\t]]", "");
                 }
                 
                 newDoc.insertString(0, content, null);
@@ -3185,12 +3192,14 @@ public class AdvancedTextEditorPanel extends JPanel {
                 return chunkStartOffset + rawCaret;
             }
             
-            // Standard Text Mode - Account for missing \r bytes and UTF-8 multi-byte characters
+            // Standard Text Mode - Account for UTF-8 multi-byte characters and stripped controls
             String rawChunkText = fileManager.getChunkContent(loadedChunkIndex);
             int jTextAreaIdx = 0;
             int originalStringIdx = 0;
             while (jTextAreaIdx < rawCaret && originalStringIdx < rawChunkText.length()) {
-                if (rawChunkText.charAt(originalStringIdx) != '\r') {
+                char c = rawChunkText.charAt(originalStringIdx);
+                // JTextArea preserves \r\n naturally. We only skip the hidden controls we explicitly stripped on load.
+                if (c == '\r' || c == '\n' || c == '\t' || (Character.getType(c) != Character.CONTROL && Character.getType(c) != Character.FORMAT)) {
                     jTextAreaIdx++;
                 }
                 originalStringIdx++;
