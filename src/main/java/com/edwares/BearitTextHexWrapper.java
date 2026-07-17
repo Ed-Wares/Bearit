@@ -9,6 +9,7 @@ public class BearitTextHexWrapper extends JPanel {
     private boolean isDirty = false;
     private int currentLoadedChunk = 0;
     private boolean isSyncing = false;
+    private SwingWorker<Void, Void> activeHexWorker = null;
 
     public BearitTextHexWrapper(AdvancedTextEditorPanel textEditor) {
         this.hiddenTextEditor = textEditor;
@@ -262,6 +263,11 @@ public class BearitTextHexWrapper extends JPanel {
         LargeFileManager fm = hiddenTextEditor.getFileManager();
         if (newIndex < 0 || newIndex >= fm.getTotalChunks()) return;
 
+        // --- Abort the previous load instantly if the user keeps scrolling! ---
+        if (activeHexWorker != null && !activeHexWorker.isDone()) {
+            activeHexWorker.cancel(true);
+        }
+
         if (isDirty) {
             applyHexEdits(); 
         }
@@ -269,13 +275,17 @@ public class BearitTextHexWrapper extends JPanel {
         hexEditor.setStatus("Loading chunk " + (newIndex + 1) + "...");
         hexEditor.setUIEnabled(false);
 
-        SwingWorker<Void, Void> worker = new SwingWorker<>() {
+        activeHexWorker = new SwingWorker<Void, Void>() {
             byte[] rawBytes;
             long offset;
             
             @Override
             protected Void doInBackground() throws Exception {
                 rawBytes = fm.getChunkBytes(newIndex);
+                
+                // Throw cancellation BEFORE committing to any UI updates
+                if (isCancelled()) throw new java.util.concurrent.CancellationException(); 
+                
                 offset = fm.getChunkBoundaries(newIndex)[0];
                 return null;
             }
@@ -283,12 +293,15 @@ public class BearitTextHexWrapper extends JPanel {
             @Override
             protected void done() {
                 try {
+                    // Safely ignore updates if a newer scroll event cancelled this one
+                    if (isCancelled()) return; 
+                    
                     currentLoadedChunk = newIndex;
                     hexEditor.loadData(rawBytes, offset);
                     hexEditor.updateChunkStatus(currentLoadedChunk + 1, fm.getTotalChunks());
                     hexEditor.setStatus("Ready");
                     
-                    // ---  Handle exact offset targeting ---
+                    // Handle exact offset targeting
                     if (exactGlobalOffset != null) {
                         hexEditor.setSelectedByteOffset((int)(exactGlobalOffset - offset));
                     } else if (cursorAtBottom && rawBytes.length > 0) {
@@ -297,14 +310,16 @@ public class BearitTextHexWrapper extends JPanel {
                         hexEditor.setSelectedByteOffset(0); 
                     }
                     
+                } catch (java.util.concurrent.CancellationException e) {
+                    // Expected when fast-scrolling, silently exit.
                 } catch (Exception e) {
-                    hexEditor.setStatus("Error loading chunk");
+                    if (!isCancelled()) hexEditor.setStatus("Error loading chunk");
                 } finally {
-                    hexEditor.setUIEnabled(true);
+                    if (!isCancelled()) hexEditor.setUIEnabled(true);
                 }
             }
         };
-        worker.execute();
+        activeHexWorker.execute();
     }
 
     public void setGlobalSelection(long globalStart) {

@@ -25,7 +25,9 @@ public class HexEditorPanel extends JPanel {
     private boolean isDark = false;
     private int currentFontSize = 14; // Default starting size
     private Consumer<Font> fontChangeListener;
-
+    private static final int SCROLL_RESOLUTION = 10000;
+    private Timer scrollDebounceTimer;
+    private int pendingJumpChunk = -1;    
     
     // --- Global Scrolling UI ---
     private JScrollPane scrollPane;
@@ -186,71 +188,73 @@ public class HexEditorPanel extends JPanel {
         // Shrink the native scrollbar to 0x0. It remains active for mouse-wheels, but is invisible!
         scrollPane.getVerticalScrollBar().setPreferredSize(new Dimension(0, 0));
 
-        globalVBar = new JScrollBar(JScrollBar.VERTICAL);
+        globalVBar = new JScrollBar(JScrollBar.VERTICAL, 0, 1, 0, SCROLL_RESOLUTION);
         globalVBar.setMinimum(0);
+        scrollDebounceTimer = new Timer(150, e -> {
+            if (pendingJumpChunk != -1 && pendingJumpChunk != currentChunkIdx && onJumpToChunk != null) {
+                onJumpToChunk.accept(pendingJumpChunk);
+                pendingJumpChunk = -1;
+            }
+        });
+        scrollDebounceTimer.setRepeats(false);
+
+        // Dragging the Global Scrollbar
+        globalVBar.addAdjustmentListener(e -> {
+            // Remove the hexTable.isEnabled() lock so dragging works during loads!
+            if (!isUpdatingScroll) {
+                syncGlobalToLocalScroll(e.getValueIsAdjusting());
+            }
+        });        
 
         JPanel centerContainer = new JPanel(new BorderLayout());
         centerContainer.add(scrollPane, BorderLayout.CENTER);
         centerContainer.add(globalVBar, BorderLayout.EAST);
         add(centerContainer, BorderLayout.CENTER);
 
-        // Dragging the Global Scrollbar
-        globalVBar.addAdjustmentListener(e -> {
-            if (isUpdatingScroll || !hexTable.isEnabled()) return;
-
-            int val = e.getValue();
-            int targetChunk = val / 100000;
-            targetChunk = Math.min(Math.max(targetChunk, 0), totalChunks - 1); 
-
-            if (targetChunk != currentChunkIdx) {
-                // ONLY load the new chunk when the user lets go of the mouse to prevent lag spam
-                if (!e.getValueIsAdjusting() && onJumpToChunk != null) {
-                    onJumpToChunk.accept(targetChunk);
-                }
-            } else {
-                // Live scroll within the current chunk
-                double localPercent = (val % 100000) / 100000.0;
-                JViewport vp = scrollPane.getViewport();
-                int maxScroll = hexTable.getPreferredSize().height - vp.getHeight();
-                if (maxScroll > 0) {
-                    vp.setViewPosition(new Point(0, (int)(localPercent * maxScroll)));
-                }
+        // --- THE FIX: Prevent Swing from fighting our vertical boundary logic ---
+        scrollPane.setWheelScrollingEnabled(false); 
+        
+        // Sync local viewport changes back to the global scrollbar
+        scrollPane.getVerticalScrollBar().addAdjustmentListener(e -> {
+            if (!isUpdatingScroll && hexTable.isEnabled()) {
+                syncLocalToGlobalScroll();
             }
         });
 
-        // Syncing the Global Scrollbar to the local viewport
-        scrollPane.getViewport().addChangeListener(e -> {
-            if (isUpdatingScroll || !hexTable.isEnabled()) return;
-            JViewport vp = scrollPane.getViewport();
-            int maxScroll = hexTable.getPreferredSize().height - vp.getHeight();
-            double localPercent = maxScroll > 0 ? (double) vp.getViewPosition().y / maxScroll : 0;
-            int newVal = (currentChunkIdx * 100000) + (int)(localPercent * 100000);
-
-            isUpdatingScroll = true;
-            globalVBar.setValue(newVal);
-            isUpdatingScroll = false;
+        // Dragging the Global Scrollbar
+        globalVBar.addAdjustmentListener(e -> {
+            if (!isUpdatingScroll && hexTable.isEnabled()) {
+                syncGlobalToLocalScroll(e.getValueIsAdjusting());
+            }
         });
 
-        // Crossing chunk boundaries with the mouse wheel
+        // Crossing chunk boundaries with the explicit mouse wheel override
         scrollPane.addMouseWheelListener(e -> {
             if (!hexTable.isEnabled()) return; 
             
-            // --- Handle Font Zooming ---
+            // Handle Font Zooming
             if (e.isControlDown()) {
                 if (e.getWheelRotation() < 0) adjustFontSize(2);
                 else adjustFontSize(-2);
-                e.consume(); // Consume to stop native scrolling
                 return;
             }
 
-            JViewport vp = scrollPane.getViewport();
-            int maxScroll = hexTable.getPreferredSize().height - vp.getHeight();
-            int currentY = vp.getViewPosition().y;
-
-            if (e.getWheelRotation() > 0 && currentY >= maxScroll - 2) {
-                if (onNextChunk != null) onNextChunk.accept(false); 
-            } else if (e.getWheelRotation() < 0 && currentY <= 2) {
-                if (onPrevChunk != null) onPrevChunk.accept(true); 
+            if (e.isShiftDown()) {
+                // Manual Horizontal Scroll
+                JScrollBar hBar = scrollPane.getHorizontalScrollBar();
+                hBar.setValue(hBar.getValue() + (e.getUnitsToScroll() * hexTable.getFontMetrics(hexTable.getFont()).charWidth('W')));
+            } else {
+                // Manual Vertical Scroll Override
+                JScrollBar vBar = scrollPane.getVerticalScrollBar();
+                int scrollAmount = e.getUnitsToScroll() * hexTable.getRowHeight();
+                
+                if (e.getWheelRotation() > 0 && vBar.getValue() + vBar.getVisibleAmount() >= vBar.getMaximum()) {
+                    if (onNextChunk != null) onNextChunk.accept(false); 
+                } else if (e.getWheelRotation() < 0 && vBar.getValue() <= 0) {
+                    if (onPrevChunk != null) onPrevChunk.accept(true); 
+                } else {
+                    vBar.setValue(vBar.getValue() + scrollAmount);
+                }
             }
         });
 
@@ -353,6 +357,68 @@ public class HexEditorPanel extends JPanel {
         }
     }
 
+    private void syncLocalToGlobalScroll() {
+        if (isUpdatingScroll || !hexTable.isEnabled()) return;
+        isUpdatingScroll = true;
+        try {
+            int total = Math.max(1, this.totalChunks);
+            int maxScrollRange = total * SCROLL_RESOLUTION;
+            globalVBar.setMaximum(maxScrollRange + globalVBar.getVisibleAmount());
+
+            // THE FIX: Pull values from the local scrollbar, not the viewport!
+            JScrollBar localBar = scrollPane.getVerticalScrollBar();
+            double localMax = localBar.getMaximum() - localBar.getVisibleAmount();
+            double localPercent = localMax <= 0 ? 0 : localBar.getValue() / localMax;
+
+            int globalValue = (currentChunkIdx * SCROLL_RESOLUTION) + (int)(localPercent * SCROLL_RESOLUTION);
+            globalVBar.setValue(globalValue);
+        } catch (Exception ex) {
+        } finally {
+            isUpdatingScroll = false;
+        }
+    }
+
+    private void syncGlobalToLocalScroll(boolean isAdjusting) {
+        if (isUpdatingScroll) return;
+        isUpdatingScroll = true;
+        try {
+            int globalValue = globalVBar.getValue();
+            int targetChunk = globalValue / SCROLL_RESOLUTION;
+            double localPercent = (globalValue % SCROLL_RESOLUTION) / (double) SCROLL_RESOLUTION;
+
+            int total = Math.max(1, totalChunks);
+            
+            // Clamp the max math so it doesn't wrap back to 0%
+            if (targetChunk >= total) {
+                targetChunk = total - 1;
+                localPercent = 1.0;
+            }
+
+            if (targetChunk != currentChunkIdx) {
+                if (!isAdjusting) {
+                    // 1. Fire instantly when the user lets go of the mouse
+                    scrollDebounceTimer.stop();
+                    pendingJumpChunk = -1;
+                    if (onJumpToChunk != null) onJumpToChunk.accept(targetChunk);
+                } else {
+                    // 2. Debounce while actively dragging to prevent disk I/O spam
+                    pendingJumpChunk = targetChunk;
+                    scrollDebounceTimer.restart();
+                }
+            } else {
+                if (hexTable.isEnabled()) {
+                    // Push the target value to the local scrollbar, bypassing JTable's snapping logic
+                    JScrollBar localBar = scrollPane.getVerticalScrollBar();
+                    int targetLocalValue = (int)(localPercent * (localBar.getMaximum() - localBar.getVisibleAmount()));
+                    localBar.setValue(targetLocalValue);
+                }
+            }
+        } catch (Exception ex) {
+        } finally {
+            isUpdatingScroll = false;
+        }
+    }
+
     private JPanel createStatusBar() {
         pnlStatusBar = new JPanel(new BorderLayout());
         pnlStatusBar.setBorder(BorderFactory.createEmptyBorder(3, 5, 3, 5));
@@ -406,17 +472,17 @@ public class HexEditorPanel extends JPanel {
 
         // Configure the global scrollbar mathematically
         isUpdatingScroll = true;
-        globalVBar.setMaximum(totalChunks * 100000 + 10000);
-        globalVBar.setVisibleAmount(10000);
-        globalVBar.setBlockIncrement(100000);
-        globalVBar.setUnitIncrement(2000);
-
-        // Sync the thumb perfectly to where the local viewport is sitting
-        JViewport vp = scrollPane.getViewport();
-        int maxScroll = hexTable.getPreferredSize().height - vp.getHeight();
-        double localPercent = maxScroll > 0 ? (double) vp.getViewPosition().y / maxScroll : 0;
-        globalVBar.setValue((currentChunkIdx * 100000) + (int)(localPercent * 100000));
+        int maxScrollRange = totalChunks * SCROLL_RESOLUTION;
+        globalVBar.setMaximum(maxScrollRange + globalVBar.getVisibleAmount());
+        
+        // Dynamically calculate block limits so clicking the empty track scales properly
+        int visibleRows = Math.max(1, scrollPane.getViewport().getHeight() / Math.max(1, hexTable.getRowHeight()));
+        int totalRows = Math.max(1, hexTable.getRowCount());
+        globalVBar.setBlockIncrement(Math.max(1, (int)(((double)visibleRows / totalRows) * SCROLL_RESOLUTION)));
+        globalVBar.setUnitIncrement(Math.max(1, (int)((3.0 / totalRows) * SCROLL_RESOLUTION)));
+        
         isUpdatingScroll = false;
+        syncLocalToGlobalScroll();
     }
 
     public void setChunkStatus(String chunkStatus) {
