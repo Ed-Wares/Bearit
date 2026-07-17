@@ -86,7 +86,9 @@ public class AdvancedTextEditorPanel extends JPanel {
     private boolean isDirty = false;
     private boolean hasUnsavedChanges = false; // Tracks global file edits
     private boolean isNavigating = false; 
-    
+    private Timer fileWatcherTimer;
+    private long lastKnownModifiedTime = 0;
+
     // Tracks intelligent focus state to survive chained background loads
     private boolean wasEditorFocused = false; 
     private boolean isTransient = false; // --- Tracks if this is a temporary tab (like Tool Output)
@@ -165,6 +167,17 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
         });
         settleTimer.setRepeats(false);
+        // --- External File Modification Watcher ---
+        fileWatcherTimer = new Timer(2000, e -> checkExternalModification());
+        fileWatcherTimer.start();
+        // --- Instant Tab-Switch Validation ---
+        addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentShown(ComponentEvent e) {
+                // Immediately check for external modifications the moment the tab becomes active!
+                checkExternalModification();
+            }
+        });
 
         textArea = new JTextArea() {
             
@@ -1439,6 +1452,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     public void createNewDocument() {
         fileManager.setNewFile();
         activeFile = null;
+        lastKnownModifiedTime = 0;
         fileSizeDateStatus = "";
         isDirty = false;
         setUnsavedChanges(false); 
@@ -1495,8 +1509,13 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     public void loadFile(File file) {
+        // --- Capture global position if reloading the same file ---
+        boolean isReload = (this.activeFile != null && this.activeFile.getAbsolutePath().equals(file.getAbsolutePath()));
+        final long savedPosition = isReload ? getGlobalCaretByteOffset() : 0;
+
         this.activeFile = file;
         fileManager.setFile(file);
+        this.lastKnownModifiedTime = file.lastModified(); 
         restartBackgroundIndexer();
         isDirty = false;
         setUnsavedChanges(false);
@@ -1507,8 +1526,22 @@ public class AdvancedTextEditorPanel extends JPanel {
         documentCache.clear();
         globalUndoManager.discardAllEdits();
         
+        // --- Create a callback to restore the position after the initial chunk loads ---
+        Runnable postLoadAction = null;
+        if (isReload) {
+            postLoadAction = () -> {
+                long fileLen = activeFile.length();
+                // Ensure we don't try to place the cursor past the end if the file was truncated by the external program
+                long safePosition = Math.min(savedPosition, fileLen);
+                
+                // setGlobalSelection automatically handles chunk-switching if the saved position is deep in the file!
+                setGlobalSelection(safePosition, safePosition);
+            };
+        }
+
         try {
-            applyStateUpdates(fileManager.loadCurrentChunk(false), 1, -1, null);
+            // Pass the callback to applyStateUpdates
+            applyStateUpdates(fileManager.loadCurrentChunk(false), 1, -1, postLoadAction);
         } catch (IOException ex) {
             showError("Failed to open file: " + ex.getMessage());
         }
@@ -1544,6 +1577,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             isDirty = false;
             setUnsavedChanges(false);
             restartBackgroundIndexer();
+            lastKnownModifiedTime = activeFile.lastModified();
             return true;
         } catch (Exception e) {
             showError("Failed to save file: " + e.getMessage());
@@ -1564,6 +1598,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             isDirty = false;
             setUnsavedChanges(false);
             restartBackgroundIndexer();
+            lastKnownModifiedTime = activeFile.lastModified();
             return true;
         } catch (Exception e) {
             showError("Failed to save file: " + e.getMessage());
@@ -1607,6 +1642,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                     isDirty = false;
                     setUnsavedChanges(false);
                     restartBackgroundIndexer();
+                    if (activeFile != null) lastKnownModifiedTime = activeFile.lastModified();
                 } catch (Exception ex) {
                     showError("Streaming save operation failure: " + ex.getMessage());
                 } finally {
@@ -1884,6 +1920,48 @@ public class AdvancedTextEditorPanel extends JPanel {
         };
         
         activeChunkWorker.execute();
+    }
+
+    /** Safely terminates background threads when this tab is permanently closed. */
+    public void dispose() {
+        if (fileWatcherTimer != null) {
+            fileWatcherTimer.stop();
+        }
+    }
+
+    private void checkExternalModification() {
+        // Do not interrupt the user if the editor is actively busy loading or saving
+        if (activeFile == null || !activeFile.exists() || isNavigating || isLoadingChunk) return;
+
+        // --- Only prompt if the user is actively viewing this specific tab! ---
+        if (!this.isShowing()) return;
+
+        long currentMod = activeFile.lastModified();
+        
+        // Use a 1000ms buffer to avoid false positives from file system rounding quirks
+        if (lastKnownModifiedTime > 0 && currentMod > lastKnownModifiedTime + 1000) {
+            fileWatcherTimer.stop(); // Pause the timer so we don't spam the user with dialogs
+            
+            String msg = "The file '" + activeFile.getName() + "' has been modified by another program.\n\nWould you like to reload it from disk?";
+            
+            // Append the warning if Bearit has unsaved changes
+            if (hasUnsavedChanges()) {
+                msg += "\n\nWARNING: You have unsaved changes in Bearit.\nReloading will DISCARD your changes!";
+            }
+            
+            int result = DialogUtil.showConfirmDialog(SwingUtilities.getWindowAncestor(this), msg, "File Modified Externally", JOptionPane.YES_NO_OPTION);
+            
+            if (result == JOptionPane.YES_OPTION) {
+                // The user chose to reload. loadFile() will handle wiping the document and resetting the UI.
+                loadFile(activeFile);
+            } else {
+                // The user chose to ignore the external changes.
+                // Update our tracker to the new time so we don't ask again unless it changes a SECOND time.
+                lastKnownModifiedTime = currentMod;
+            }
+            
+            fileWatcherTimer.start(); // Resume watching
+        }
     }
 
     private void syncLocalToGlobalScroll() {

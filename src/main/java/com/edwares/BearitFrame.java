@@ -524,6 +524,8 @@ public class BearitFrame extends JFrame {
         try {
             // Remove by index to guarantee the wrapper OR the editor gets completely removed
             tabbedPane.remove(targetIdx);
+            // --- Kill the background file watcher so it doesn't leak memory! ---
+            editor.dispose();
             
             // If all functional tabs are closed (only the "+" remains), open a fresh one
             if (tabbedPane.getTabCount() == 1) {
