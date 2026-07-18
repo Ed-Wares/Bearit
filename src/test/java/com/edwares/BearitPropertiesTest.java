@@ -23,17 +23,18 @@ public class BearitPropertiesTest {
     @Test
     void testRecentFilesLruCapping() {
         // Act: Add 12 distinct file paths
-        for (int i = 1; i <= 12; i++) {
+        int testMaxFiles = BearitProperties.MAX_RECENT_FILES + 2; // Add 2 more than the max to test capping
+        for (int i = 1; i <= testMaxFiles; i++) {
             properties.addRecentFile("C:\\logs\\server_" + i + ".log");
         }
 
         List<String> recentFiles = properties.getRecentFiles();
 
         // Assert
-        assertEquals(10, recentFiles.size(), "Recent files list should never exceed 10 items");
+        assertEquals(BearitProperties.MAX_RECENT_FILES, recentFiles.size(), "Recent files list should never exceed " + BearitProperties.MAX_RECENT_FILES + " items");
         
         // The most recently added file (12) should be at index 0
-        assertEquals("C:\\logs\\server_12.log", recentFiles.get(0), "Most recent file must be at the top of the list");
+        assertEquals("C:\\logs\\server_" + testMaxFiles + ".log", recentFiles.get(0), "Most recent file must be at the top of the list");
         
         // The oldest files (1 and 2) should have been pushed out
         assertFalse(recentFiles.contains("C:\\logs\\server_1.log"), "Oldest file should be evicted");
