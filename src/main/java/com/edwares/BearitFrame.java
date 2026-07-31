@@ -1053,17 +1053,20 @@ public class BearitFrame extends JFrame {
         AdvancedTextEditorPanel activeEditor = getActiveEditor();
         File activeFile = activeEditor != null ? activeEditor.getActiveFile() : null;
 
-        if (rawCommand.contains("%f") && activeFile == null) {
-            //JOptionPane.showMessageDialog(this, "This tool requires a saved file to use '%f'. Please save the current tab to disk first.", "Tool Error", JOptionPane.ERROR_MESSAGE);
-            DialogUtil.showMessageDialog(this, "This tool requires a saved file to use '%f'. Please save the current tab to disk first.", "Tool Error", JOptionPane.ERROR_MESSAGE);
-            return;
+        String command = rawCommand;
+        // If the command contains %f or %F but there is no active file, remove it to avoid errors
+        if (command.toLowerCase().contains("%f") && activeFile == null) {
+            command = command.replaceAll("(?i)%f", ""); 
         }
 
-        String command = rawCommand;
         if (command.contains("%f") && activeFile != null) {
             command = command.replace("%f", activeFile.getAbsolutePath());
         }
 
+        // get active file path always return forward slashes
+        if (command.contains("%F") && activeFile != null) {
+            command = command.replace("%F", activeFile.getAbsolutePath().replace('\\', '/'));
+        }
         command = resolveRunningPath(command);  //Resolve the %rp (Running Path) 
         command = resolveAppContentPath(command); // resolve %acp
         final String finalCommand = command;
