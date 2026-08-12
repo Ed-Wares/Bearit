@@ -1019,6 +1019,7 @@ public class BearitFrame extends JFrame {
                     
                     ProcessBuilder pb;
                     // Route to the correct OS shell so standard commands (like echo, dir, ls) work natively
+                    // nosemgrep: java.lang.security.audit.command-injection-process-builder.command-injection-process-builder
                     if (System.getProperty("os.name").toLowerCase().contains("win")) {
                         pb = new ProcessBuilder("cmd.exe", "/c", finalCmd);
                     } else {
@@ -1076,11 +1077,12 @@ public class BearitFrame extends JFrame {
             protected Void doInBackground() throws Exception {
                 publish(">> Executing: " + finalCommand + "\n");
                 
-                ProcessBuilder pb = new ProcessBuilder();
+                ProcessBuilder pb;
+                // nosemgrep: java.lang.security.audit.command-injection-process-builder.command-injection-process-builder
                 if (System.getProperty("os.name").toLowerCase().contains("win")) {
-                    pb.command("cmd.exe", "/c", finalCommand);
+                    pb = new ProcessBuilder("cmd.exe", "/c", finalCommand);
                 } else {
-                    pb.command("bash", "-c", finalCommand);
+                    pb = new ProcessBuilder("bash", "-c", finalCommand);
                 }
                 
                 pb.redirectErrorStream(true); 

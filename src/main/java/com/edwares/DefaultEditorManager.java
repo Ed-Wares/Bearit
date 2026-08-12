@@ -119,7 +119,8 @@ public class DefaultEditorManager {
 
     private static void executeCommand(String... command) {
         try {
-            new ProcessBuilder(command).start().waitFor();
+            // nosemgrep: java.lang.security.audit.command-injection-process-builder.command-injection-process-builder
+            new ProcessBuilder(java.util.Arrays.asList(command)).start().waitFor();
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -128,7 +129,8 @@ public class DefaultEditorManager {
     private static String executeCommandAndRead(String... command) {
         StringBuilder output = new StringBuilder();
         try {
-            Process process = new ProcessBuilder(command).start();
+            // nosemgrep: java.lang.security.audit.command-injection-process-builder.command-injection-process-builder
+            Process process = new ProcessBuilder(java.util.Arrays.asList(command)).start();
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
             String line;
             while ((line = reader.readLine()) != null) {

@@ -331,8 +331,6 @@ public class ContextMenuInstaller {
         perms.add(PosixFilePermission.OWNER_EXECUTE);
         perms.add(PosixFilePermission.GROUP_READ);
         perms.add(PosixFilePermission.GROUP_EXECUTE);
-        perms.add(PosixFilePermission.OTHERS_READ);
-        perms.add(PosixFilePermission.OTHERS_EXECUTE);
         Files.setPosixFilePermissions(scriptPath, perms);
     }
 

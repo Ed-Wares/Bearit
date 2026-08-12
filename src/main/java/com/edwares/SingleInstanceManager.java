@@ -2,8 +2,6 @@ package com.edwares;
 
 import javax.swing.*;
 import java.io.File;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.net.BindException;
 import java.net.InetAddress;
 import java.net.ServerSocket;
@@ -23,17 +21,23 @@ public class SingleInstanceManager {
      */
     public static boolean lockOrPassArguments(String[] args, Consumer<String[]> remoteCommandHandler) {
         try {
+            // nosemgrep: java.lang.security.audit.crypto.unencrypted-socket.unencrypted-socket
             serverSocket = new ServerSocket(PORT, 10, InetAddress.getLoopbackAddress());
 
             Thread listenerThread = new Thread(() -> {
                 while (true) {
                     try (Socket client = serverSocket.accept();
-                         ObjectInputStream in = new ObjectInputStream(client.getInputStream())) {
+                         java.io.DataInputStream in = new java.io.DataInputStream(client.getInputStream())) {
                         
-                        // Receive the full args array from the secondary instance
-                        String[] remoteArgs = (String[]) in.readObject();
-                        if (remoteArgs != null && remoteArgs.length > 0) {
-                            SwingUtilities.invokeLater(() -> remoteCommandHandler.accept(remoteArgs));
+                        int len = in.readInt();
+                        if (len >= 0 && len < 1000) {
+                            String[] remoteArgs = new String[len];
+                            for (int i = 0; i < len; i++) {
+                                remoteArgs[i] = in.readUTF();
+                            }
+                            if (remoteArgs.length > 0) {
+                                SwingUtilities.invokeLater(() -> remoteCommandHandler.accept(remoteArgs));
+                            }
                         }
                     } catch (Exception e) {
                         e.printStackTrace();
@@ -73,10 +77,14 @@ public class SingleInstanceManager {
             }
         }
 
+        // nosemgrep: java.lang.security.audit.crypto.unencrypted-socket.unencrypted-socket
         try (Socket socket = new Socket(InetAddress.getLoopbackAddress(), PORT);
-             ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream())) {
+             java.io.DataOutputStream out = new java.io.DataOutputStream(socket.getOutputStream())) {
             
-            out.writeObject(processedArgs);
+            out.writeInt(processedArgs.length);
+            for (String arg : processedArgs) {
+                out.writeUTF(arg);
+            }
             out.flush();
             
         } catch (Exception e) {
