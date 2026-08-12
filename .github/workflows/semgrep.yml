@@ -1,0 +1,31 @@
+name: Semgrep
+
+# Semgrep is a static analysis tool that scans for security vulnerabilities and bugs
+# This workflow runs on pull requests and pushes to main and master branches
+
+on:
+  pull_request: {}
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  semgrep:
+    name: Scan
+    runs-on: ubuntu-latest
+    
+    # Skip any PR created by dependabot to avoid unnecessary runs
+    if: (github.actor != 'dependabot[bot]')
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Semgrep CI
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/java
+            p/security-audit
+            p/secrets
+            p/ci
