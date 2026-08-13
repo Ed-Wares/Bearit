@@ -51,6 +51,12 @@ public class AppContentExtractor {
                     // Check if the entry lives inside our target folder
                     if (entryName.startsWith(RESOURCE_FOLDER)) {
                         File destFile = new File(targetDirectory, entryName);
+                        
+                        // Safety check against Zip Slip Path Traversal
+                        if (!destFile.getCanonicalPath().startsWith(targetDirectory.getCanonicalPath() + File.separator)) {
+                            System.err.println("Skipping entry outside of target directory: " + entryName);
+                            continue;
+                        }
 
                         if (entry.isDirectory()) {
                             // Recreate the directory structure

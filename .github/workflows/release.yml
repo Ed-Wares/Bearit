@@ -4,6 +4,9 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write
+
 jobs:
   # Trigger the reusable multi-platform Maven builder matrix
   build_release_binary:
