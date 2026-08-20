@@ -55,7 +55,7 @@ public class LargeFileManagerTest {
         fileManager.replaceAllGlobal(searchPattern, "Warning 200", pct -> {}, () -> false);
 
         // Assert
-        String updatedContent = Files.readString(testFile.toPath());
+        String updatedContent = fileManager.getChunkContent(0);
         assertFalse(updatedContent.contains("Error 404"), "Target string should be completely removed");
         assertTrue(updatedContent.contains("Warning 200: Not Found."), "Replacement string should be present");
     }

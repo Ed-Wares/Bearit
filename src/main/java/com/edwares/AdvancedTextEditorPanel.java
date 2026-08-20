@@ -1128,6 +1128,61 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
     }
 
+    public void formatDocument(String type) {
+        if (!fileManager.hasFile()) return;
+        if (isCurrentlyPreview) return;
+
+        try {
+            fileManager.commitCurrentChunk(getCommitText());
+        } catch (Exception e) {}
+
+        chunkLoadProgressBar.setVisible(true);
+        chunkLoadProgressBar.setStringPainted(true);
+        chunkLoadProgressBar.setString("Formatting...");
+        chunkLoadProgressBar.setIndeterminate(false);
+
+        SwingWorker<Boolean, Integer> worker = new SwingWorker<Boolean, Integer>() {
+            @Override
+            protected Boolean doInBackground() throws Exception {
+                return fileManager.formatGlobal(type, this::publish, () -> false);
+            }
+
+            @Override
+            protected void process(java.util.List<Integer> chunks) {
+                if (chunks.isEmpty()) return;
+                int latestProgress = chunks.get(chunks.size() - 1);
+                chunkLoadProgressBar.setValue(latestProgress);
+                chunkLoadProgressBar.setString("Formatting " + latestProgress + "%");
+            }
+
+            @Override
+            protected void done() {
+                chunkLoadProgressBar.setVisible(false);
+                chunkLoadProgressBar.setStringPainted(false);
+                try {
+                    boolean changed = get();
+                    if (changed) {
+                        // Clear undo manager to prevent inconsistent state
+                        globalUndoManager.discardAllEdits();
+                        setUnsavedChanges(true);
+                        
+                        documentCache.clear();
+                        int currentChunk = loadedChunkIndex;
+                        loadedChunkIndex = -1; // Force a complete visual reload of the current chunk
+                        
+                        // IMPORTANT: Clear the dirty flag BEFORE triggering the load. 
+                        // Otherwise, triggerAsyncLoad will see the editor is dirty, read the OLD unformatted
+                        // text currently sitting in the editor, and commit it, overwriting the freshly formatted chunk!
+                        isDirty = false;
+                        
+                        triggerAsyncLoad(currentChunk, 0, -1, false, null);
+                    }
+                } catch (Exception e) {}
+            }
+        };
+        worker.execute();
+    }
+
     /**
      * Helper to safely append the hidden boundary newline before committing
      * edits to the File Manager, ensuring chunks don't accidentally merge.
@@ -1539,6 +1594,26 @@ public class AdvancedTextEditorPanel extends JPanel {
                                     publish((int) (((currentBase + localContrib) / totalGlobalChunks) * 100));
                             },
                             () -> isCancelled());
+                    
+                    if (replacedInEditor > 0) {
+                        SwingUtilities.invokeLater(() -> {
+                            editor.documentCache.clear();
+                            editor.globalUndoManager.discardAllEdits();
+                            editor.setUnsavedChanges(true);
+
+                            int currentChunk = editor.loadedChunkIndex;
+                            editor.loadedChunkIndex = -1; // Force a complete visual reload of the current chunk
+
+                            if (editor == AdvancedTextEditorPanel.this) {
+                                editor.triggerAsyncLoad(currentChunk, 0, -1, false,
+                                        () -> editor.restartBackgroundIndexer());
+                            } else {
+                                editor.triggerAsyncLoad(currentChunk, 0, -1,
+                                        false, () -> editor.restartBackgroundIndexer());
+                            }
+                        });
+                    }
+                    
                     totalReplaced += replacedInEditor;
                     chunksProcessed[0] += editor.fileManager.getTotalChunks();
                 }
@@ -1561,20 +1636,6 @@ public class AdvancedTextEditorPanel extends JPanel {
                     if (isCancelled())
                         return;
                     int count = get();
-
-                    for (AdvancedTextEditorPanel editor : targets) {
-                        editor.documentCache.clear();
-                        editor.globalUndoManager.discardAllEdits();
-                        editor.setUnsavedChanges(true);
-
-                        if (editor == AdvancedTextEditorPanel.this) {
-                            editor.triggerAsyncLoad(editor.loadedChunkIndex, 0, -1, false,
-                                    () -> editor.restartBackgroundIndexer());
-                        } else {
-                            SwingUtilities.invokeLater(() -> editor.triggerAsyncLoad(editor.loadedChunkIndex, 0, -1,
-                                    false, () -> editor.restartBackgroundIndexer()));
-                        }
-                    }
 
                     lblLoadingStatus.setText("");
                     DialogUtil.showMessageDialog(getDialogParent(),
@@ -3499,6 +3560,17 @@ public class AdvancedTextEditorPanel extends JPanel {
         JMenuItem gotoItem = new JMenuItem("Go To Line or Position...");
         gotoItem.addActionListener(e -> showGotoDialog());
 
+        JMenu formatMenu = new JMenu("Format Document");
+        JMenuItem mnuFormatJson = new JMenuItem("JSON");
+        mnuFormatJson.addActionListener(e -> formatDocument("json"));
+        JMenuItem mnuFormatXml = new JMenuItem("XML");
+        mnuFormatXml.addActionListener(e -> formatDocument("xml"));
+        JMenuItem mnuFormatHtml = new JMenuItem("HTML");
+        mnuFormatHtml.addActionListener(e -> formatDocument("html"));
+        formatMenu.add(mnuFormatJson);
+        formatMenu.add(mnuFormatXml);
+        formatMenu.add(mnuFormatHtml);
+
         // Convert Case Sub-Menu
         JMenu convertCaseMenu = new JMenu("Convert Case");
         JMenuItem mnuLower = new JMenuItem("lower case");
@@ -3525,6 +3597,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         contextMenu.addSeparator();
         contextMenu.add(searchItem);
         contextMenu.add(gotoItem);
+        contextMenu.addSeparator();
+        contextMenu.add(formatMenu);
         contextMenu.addSeparator();
         contextMenu.add(convertCaseMenu);
 

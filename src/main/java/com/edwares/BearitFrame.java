@@ -1545,6 +1545,19 @@ public class BearitFrame extends JFrame {
         searchItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().showSearchDialog(); });
         gotoItem.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().showGotoDialog(); });
 
+        // --- Format Document Sub-Menu ---
+        JMenu formatMenu = new JMenu("Format Document");
+        JMenuItem mnuFormatJson = new JMenuItem("JSON");
+        mnuFormatJson.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().formatDocument("json"); });
+        JMenuItem mnuFormatXml = new JMenuItem("XML");
+        mnuFormatXml.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().formatDocument("xml"); });
+        JMenuItem mnuFormatHtml = new JMenuItem("HTML");
+        mnuFormatHtml.addActionListener(e -> { if (getActiveEditor() != null) getActiveEditor().formatDocument("html"); });
+        
+        formatMenu.add(mnuFormatJson);
+        formatMenu.add(mnuFormatXml);
+        formatMenu.add(mnuFormatHtml);
+
         // --- Convert Case Sub-Menu ---
         JMenu convertCaseMenu = new JMenu("Convert Case");
         JMenuItem mnuLowerCase = new JMenuItem("lower case");
@@ -1574,6 +1587,8 @@ public class BearitFrame extends JFrame {
         editMenu.addSeparator();
         editMenu.add(searchItem);
         editMenu.add(gotoItem);
+        editMenu.addSeparator();
+        editMenu.add(formatMenu);
         editMenu.addSeparator();
         editMenu.add(convertCaseMenu);
 

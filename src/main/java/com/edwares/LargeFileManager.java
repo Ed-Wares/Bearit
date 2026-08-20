@@ -338,66 +338,86 @@ public class LargeFileManager {
 
     public int replaceAllGlobal(Pattern pattern, String replacement, Consumer<Integer> progressPublisher, Supplier<Boolean> isCancelled) throws IOException {
         int totalMatches = 0;
-        if (currentFile == null) return totalMatches;
-        
-        Path path = currentFile.toPath();
-        Path tempPath = path.resolveSibling(path.getFileName() + ".tmp");
         int virtualTotalChunks = getTotalChunks();
 
-        try (FileChannel destChannel = FileChannel.open(tempPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
-            for (int i = 0; i < virtualTotalChunks; i++) {
-                
-                // Check if the user closed the dialog before processing the chunk
+        for (int i = 0; i < virtualTotalChunks; i++) {
+            if (isCancelled != null && isCancelled.get()) {
+                return totalMatches;
+            }
+
+            String chunkContent = getChunkContent(i);
+            Matcher m = pattern.matcher(chunkContent);
+            
+            StringBuffer sb = new StringBuffer(); 
+            int chunkMatches = 0;
+            
+            while (m.find()) {
                 if (isCancelled != null && isCancelled.get()) {
-                    destChannel.close();
-                    Files.deleteIfExists(tempPath); // Clean up the aborted temp file
-                    return 0; 
+                    return totalMatches;
                 }
-
-                String chunkContent = getChunkContent(i);
-                Matcher m = pattern.matcher(chunkContent);
-                
-                // StringBuffer is required here for broad Java version compatibility with Matcher
-                StringBuffer sb = new StringBuffer(); 
-                int chunkMatches = 0;
-                
-                // Perform Regex Replacement safely while checking for cancellation mid-chunk
-                while (m.find()) {
-                    if (isCancelled != null && isCancelled.get()) {
-                        destChannel.close();
-                        Files.deleteIfExists(tempPath);
-                        return 0;
-                    }
-                    m.appendReplacement(sb, replacement);
-                    chunkMatches++;
-                }
-                m.appendTail(sb);
-                
+                m.appendReplacement(sb, replacement);
+                chunkMatches++;
+            }
+            m.appendTail(sb);
+            
+            if (chunkMatches > 0) {
                 totalMatches += chunkMatches;
-
-                // Write the replaced text chunk to the temporary file
-                destChannel.write(ByteBuffer.wrap(sb.toString().getBytes(getActiveCharset())));
-                
-                // Publish Progress back to the UI
-                if (progressPublisher != null) {
-                    int percent = (int) (((i + 1) * 100.0) / virtualTotalChunks);
-                    progressPublisher.accept(percent);
-                }
+                File tempFile = File.createTempFile("bearit_chunk_" + i + "_", ".tmp");
+                tempFile.deleteOnExit();
+                Files.writeString(tempFile.toPath(), sb.toString(), getActiveCharset());
+                dirtyChunks.put(i, tempFile);
+            }
+            
+            if (progressPublisher != null) {
+                int percent = (int) (((i + 1) * 100.0) / virtualTotalChunks);
+                progressPublisher.accept(percent);
             }
         }
 
-        // If we reach here, the job finished completely without cancellation. Commit the changes to disk.
-        try {
-            Files.move(tempPath, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        } catch (IOException ioEx) {
-            Files.move(tempPath, path, StandardCopyOption.REPLACE_EXISTING);
-        }
-
-        clearDirtyChunks();
-        clearIndexCaches();
         updateFileMetrics();
         return totalMatches;
     }
+
+    public boolean formatGlobal(String formatType, java.util.function.Consumer<Integer> progressPublisher, java.util.function.Supplier<Boolean> isCancelled) throws IOException {
+        int virtualTotalChunks = getTotalChunks();
+        StreamFormatter.FormatState state = new StreamFormatter.FormatState();
+        boolean changed = false;
+
+        for (int i = 0; i < virtualTotalChunks; i++) {
+            if (isCancelled != null && isCancelled.get()) {
+                return changed; 
+            }
+
+            String chunkContent = getChunkContent(i);
+            String formattedChunk;
+            if ("json".equalsIgnoreCase(formatType)) {
+                formattedChunk = StreamFormatter.formatJsonChunk(chunkContent, state);
+            } else if ("xml".equalsIgnoreCase(formatType) || "html".equalsIgnoreCase(formatType)) {
+                formattedChunk = StreamFormatter.formatXmlChunk(chunkContent, state);
+            } else {
+                formattedChunk = chunkContent;
+            }
+
+            if (!formattedChunk.equals(chunkContent)) {
+                File tempFile = File.createTempFile("bearit_chunk_" + i + "_", ".tmp");
+                tempFile.deleteOnExit();
+                Files.writeString(tempFile.toPath(), formattedChunk, getActiveCharset());
+                dirtyChunks.put(i, tempFile);
+                changed = true;
+            }
+            
+            if (progressPublisher != null) {
+                int percent = (int) (((i + 1) * 100.0) / virtualTotalChunks);
+                progressPublisher.accept(percent);
+            }
+        }
+
+        if (changed) {
+            updateFileMetrics();
+        }
+        return changed;
+    }
+
 
     public int getChunkForLine(long targetLine) throws IOException {
         if (targetLine <= 1) return 0;
