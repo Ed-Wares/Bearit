@@ -16,6 +16,8 @@ import javax.swing.undo.CannotRedoException;
 import javax.swing.undo.CannotUndoException;
 import javax.swing.undo.UndoManager;
 import javax.swing.undo.UndoableEdit;
+import javax.swing.text.Highlighter.HighlightPainter;
+import javax.swing.text.DefaultHighlighter;
 import java.awt.*;
 import java.awt.datatransfer.Clipboard;
 import java.awt.datatransfer.DataFlavor;
@@ -123,6 +125,11 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     private String currentTitle = "Untitled";
 
+    private String currentHighlightText = null;
+    private final HighlightPainter matchHighlightPainter = new DefaultHighlighter.DefaultHighlightPainter(
+            new Color(150, 150, 150, 100));
+    private final Timer highlightDebounceTimer;
+
     // --- Search Dialog Components ---
     private JDialog searchDialog;
     private JComboBox<String> comboSearch;
@@ -173,6 +180,9 @@ public class AdvancedTextEditorPanel extends JPanel {
         this.fileManager = new LargeFileManager();
 
         globalUndoManager.setLimit(2500);
+
+        highlightDebounceTimer = new Timer(300, e -> applyMatchingHighlights());
+        highlightDebounceTimer.setRepeats(false);
 
         settleTimer = new Timer(350, e -> {
             if (isCurrentlyPreview && !isLoadingChunk && !isNavigating) {
@@ -605,6 +615,21 @@ public class AdvancedTextEditorPanel extends JPanel {
             lastKnownCaretPos = e.getDot();
 
             updateCursorStatus();
+
+            // --- Highlight selection ---
+            String selected = textArea.getSelectedText();
+            if (selected != null && !selected.isEmpty()) {
+                if (!selected.equals(currentHighlightText)) {
+                    currentHighlightText = selected;
+                    highlightDebounceTimer.restart();
+                }
+            } else {
+                if (currentHighlightText != null) {
+                    currentHighlightText = null;
+                    applyMatchingHighlights();
+                }
+            }
+
             try {
                 int line = textArea.getLineOfOffset(textArea.getCaretPosition());
                 lineNumberPanel.setCurrentLine(line);
@@ -617,6 +642,12 @@ public class AdvancedTextEditorPanel extends JPanel {
         scrollPane = new JScrollPane(textArea);
         scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_NEVER);
         scrollPane.setRowHeaderView(lineNumberPanel);
+
+        scrollPane.getViewport().addChangeListener(e -> {
+            if (currentHighlightText != null) {
+                highlightDebounceTimer.restart();
+            }
+        });
 
         // Initialize with local defaults. The parent frame will push saved user
         // preferences
@@ -2393,8 +2424,48 @@ public class AdvancedTextEditorPanel extends JPanel {
 
                 if (postLoadAction != null)
                     postLoadAction.run();
+
+                applyMatchingHighlights();
             }
         });
+    }
+
+    private void applyMatchingHighlights() {
+        javax.swing.text.Highlighter highlighter = textArea.getHighlighter();
+        javax.swing.text.Highlighter.Highlight[] highlights = highlighter.getHighlights();
+        for (javax.swing.text.Highlighter.Highlight h : highlights) {
+            if (h.getPainter() == matchHighlightPainter) {
+                highlighter.removeHighlight(h);
+            }
+        }
+
+        if (currentHighlightText != null && !currentHighlightText.isEmpty()) {
+            try {
+                // Determine visible range to improve performance
+                Rectangle viewRect = scrollPane.getViewport().getViewRect();
+                int startOffset = textArea.viewToModel(viewRect.getLocation());
+                int endOffset = textArea
+                        .viewToModel(new Point(viewRect.x + viewRect.width, viewRect.y + viewRect.height));
+
+                if (startOffset < 0)
+                    startOffset = 0;
+                if (endOffset < 0 || endOffset > textArea.getDocument().getLength()) {
+                    endOffset = textArea.getDocument().getLength();
+                }
+
+                if (startOffset >= endOffset)
+                    return;
+
+                String text = textArea.getText(startOffset, endOffset - startOffset);
+                int index = 0;
+                while ((index = text.indexOf(currentHighlightText, index)) >= 0) {
+                    highlighter.addHighlight(startOffset + index, startOffset + index + currentHighlightText.length(),
+                            matchHighlightPainter);
+                    index += currentHighlightText.length();
+                }
+            } catch (Exception ex) {
+            }
+        }
     }
 
     private void triggerAutoNavigate(int direction) {
