@@ -352,7 +352,8 @@ public class BearitFrame extends JFrame {
             lblTitle.addMouseMotionListener(tabMouseAdapter);
 
             editor.addPropertyChangeListener("editorTitle", evt -> updateTabHeader(editor, lblTitle));
-            editor.addPropertyChangeListener("unsavedChanges", evt -> updateTabHeader(editor, lblTitle));            
+            editor.addPropertyChangeListener("unsavedChanges", evt -> updateTabHeader(editor, lblTitle));
+            editor.addPropertyChangeListener("requestClose", evt -> closeTab(editor));
             // --- Hook up the custom drop event from the inner text editor ---
             editor.addPropertyChangeListener("filesDropped", evt -> {
                 @SuppressWarnings("unchecked")

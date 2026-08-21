@@ -2254,14 +2254,38 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
     }
 
+    private boolean hasPromptedForDelete = false;
+
     private void checkExternalModification() {
         // Do not interrupt the user if the editor is actively busy loading or saving
-        if (activeFile == null || !activeFile.exists() || isNavigating || isLoadingChunk)
+        if (activeFile == null || isNavigating || isLoadingChunk)
             return;
 
         // --- Only prompt if the user is actively viewing this specific tab! ---
         if (!this.isShowing())
             return;
+
+        if (!activeFile.exists()) {
+            if (!hasPromptedForDelete) {
+                fileWatcherTimer.stop();
+                hasPromptedForDelete = true;
+
+                String msg = "The file '" + activeFile.getName()
+                        + "' has been deleted externally.\n\nWould you like to keep the file opened in the editor?";
+                int result = DialogUtil.showConfirmDialog(SwingUtilities.getWindowAncestor(this), msg,
+                        "File Deleted Externally", JOptionPane.YES_NO_OPTION);
+
+                if (result == JOptionPane.YES_OPTION) {
+                    setUnsavedChanges(true);
+                    fileWatcherTimer.start(); // keep running, but hasPromptedForDelete prevents re-prompting
+                } else {
+                    firePropertyChange("requestClose", false, true);
+                }
+            }
+            return;
+        } else {
+            hasPromptedForDelete = false;
+        }
 
         long currentMod = activeFile.lastModified();
 
