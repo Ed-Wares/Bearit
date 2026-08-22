@@ -531,7 +531,12 @@ public class HexEditorPanel extends JPanel {
 
     private JPanel createInspectorPanel() {
         // --- Create a wrapper to hold the Titled Border so it doesn't scroll away ---
-        pnlInspectorWrapper = new JPanel(new BorderLayout());
+        pnlInspectorWrapper = new JPanel(new BorderLayout()) {
+            @Override
+            public Dimension getMinimumSize() {
+                return getPreferredSize();
+            }
+        };
         pnlInspectorWrapper.setBorder(BorderFactory.createTitledBorder("Data Inspector"));
 
         // --- Create the inner content panel with GridBagLayout ---
@@ -574,7 +579,6 @@ public class HexEditorPanel extends JPanel {
         btnGo.addActionListener(goAction);
         gotoPanel.add(txtGoto, BorderLayout.CENTER);
         gotoPanel.add(btnGo, BorderLayout.EAST);
-        pnlInspector.add(new JLabel("  "), gbc);
         pnlInspector.add(gotoPanel, gbc);
         // --- Reset the constraints so the rest of the UI doesn't warp ---
         gbc.fill = GridBagConstraints.NONE;
