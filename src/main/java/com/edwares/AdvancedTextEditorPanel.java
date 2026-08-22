@@ -1140,6 +1140,10 @@ public class AdvancedTextEditorPanel extends JPanel {
         chunkLoadProgressBar.setString("Formatting...");
         chunkLoadProgressBar.setIndeterminate(false);
 
+        java.util.Map<Integer, java.io.File> oldDirtyChunks = fileManager.getDirtyChunksSnapshot();
+        boolean oldUnsaved = this.hasUnsavedChanges;
+        int currentChunkForUndo = loadedChunkIndex;
+
         SwingWorker<Boolean, Integer> worker = new SwingWorker<Boolean, Integer>() {
             @Override
             protected Boolean doInBackground() throws Exception {
@@ -1161,8 +1165,8 @@ public class AdvancedTextEditorPanel extends JPanel {
                 try {
                     boolean changed = get();
                     if (changed) {
-                        // Clear undo manager to prevent inconsistent state
-                        globalUndoManager.discardAllEdits();
+                        java.util.Map<Integer, java.io.File> newDirtyChunks = fileManager.getDirtyChunksSnapshot();
+                        globalUndoManager.addEdit(new GlobalFormatEdit(oldDirtyChunks, oldUnsaved, newDirtyChunks, true, currentChunkForUndo));
                         setUnsavedChanges(true);
                         
                         documentCache.clear();
@@ -3009,6 +3013,54 @@ public class AdvancedTextEditorPanel extends JPanel {
         @Override
         public String getRedoPresentationName() {
             return inner.getRedoPresentationName();
+        }
+    }
+
+    private class GlobalFormatEdit extends javax.swing.undo.AbstractUndoableEdit {
+        private final java.util.Map<Integer, java.io.File> oldDirtyChunks;
+        private final java.util.Map<Integer, java.io.File> newDirtyChunks;
+        private final boolean oldHasUnsavedChanges;
+        private final boolean newHasUnsavedChanges;
+        private final int targetChunkIndex;
+
+        public GlobalFormatEdit(java.util.Map<Integer, java.io.File> oldDirtyChunks, boolean oldHasUnsavedChanges,
+                                java.util.Map<Integer, java.io.File> newDirtyChunks, boolean newHasUnsavedChanges, int targetChunkIndex) {
+            this.oldDirtyChunks = oldDirtyChunks;
+            this.newDirtyChunks = newDirtyChunks;
+            this.oldHasUnsavedChanges = oldHasUnsavedChanges;
+            this.newHasUnsavedChanges = newHasUnsavedChanges;
+            this.targetChunkIndex = targetChunkIndex;
+        }
+
+        @Override
+        public void undo() throws javax.swing.undo.CannotUndoException {
+            super.undo();
+            fileManager.restoreDirtyChunksSnapshot(oldDirtyChunks);
+            setUnsavedChanges(oldHasUnsavedChanges);
+            isDirty = false;
+            
+            documentCache.clear();
+            int currentChunk = loadedChunkIndex;
+            loadedChunkIndex = -1;
+            triggerAsyncLoad(targetChunkIndex, 0, -1, false, null);
+        }
+
+        @Override
+        public void redo() throws javax.swing.undo.CannotRedoException {
+            super.redo();
+            fileManager.restoreDirtyChunksSnapshot(newDirtyChunks);
+            setUnsavedChanges(newHasUnsavedChanges);
+            isDirty = false;
+            
+            documentCache.clear();
+            int currentChunk = loadedChunkIndex;
+            loadedChunkIndex = -1;
+            triggerAsyncLoad(targetChunkIndex, 0, -1, false, null);
+        }
+        
+        @Override
+        public String getPresentationName() {
+            return "Document Format";
         }
     }
 

@@ -90,6 +90,18 @@ public class LargeFileManager {
         clearIndexCaches(); 
     }
 
+    public Map<Integer, File> getDirtyChunksSnapshot() {
+        return new ConcurrentHashMap<>(dirtyChunks);
+    }
+
+    public void restoreDirtyChunksSnapshot(Map<Integer, File> snapshot) {
+        dirtyChunks.clear();
+        if (snapshot != null) {
+            dirtyChunks.putAll(snapshot);
+        }
+        updateFileMetrics();
+    }
+
     public void setFile(File file) {
         this.currentFile = file;
         setBinaryMode(isLikelyBinaryFile(file));            
