@@ -1129,7 +1129,6 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     public void formatDocument(String type) {
-        if (!fileManager.hasFile()) return;
         if (isCurrentlyPreview) return;
 
         try {
