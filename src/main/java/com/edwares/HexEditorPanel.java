@@ -43,7 +43,7 @@ public class HexEditorPanel extends JPanel {
     private JPanel pnlStatusBar;
 
     // Inspector UI
-    private JTextField lblAddress, lblChunkAddress, lblPosition, lbl8Bit, lbl16Bit, lbl32Bit, lbl64Bit;
+    private JTextField lblAddress, lblChunkAddress, lblPosition, lbl8Bit, lblDecimal, lbl16Bit, lbl32Bit, lbl64Bit;
     private JTextField lblFloat, lblBinary, lblUnix32, lblUnix64;
     private JTextField lblDosTime, lblWin32Time;
     private JTextField lblUtf8, lblUtf16, lblEbcdic;
@@ -592,6 +592,7 @@ public class HexEditorPanel extends JPanel {
         lblAddress = addInspectorRow("Global Address:", pnlInspector, ++gbc.gridy);
         lblChunkAddress = addInspectorRow("Chunk Address:", pnlInspector, ++gbc.gridy);
         lblPosition = addInspectorRow("Position:", pnlInspector, ++gbc.gridy);
+        lblDecimal = addInspectorRow("Decimal:", pnlInspector, ++gbc.gridy);
         lbl8Bit = addInspectorRow("Int8:", pnlInspector, ++gbc.gridy);
         lbl16Bit = addInspectorRow("Int16 (LE):", pnlInspector, ++gbc.gridy);
         lbl32Bit = addInspectorRow("Int32 (LE):", pnlInspector, ++gbc.gridy);
@@ -685,6 +686,7 @@ public class HexEditorPanel extends JPanel {
             lblAddress.setText("-");
             lblChunkAddress.setText("-");
             lblPosition.setText("-");
+            lblDecimal.setText("-");
             lbl8Bit.setText("-");
             lbl16Bit.setText("-");
             lbl32Bit.setText("-");
@@ -712,6 +714,7 @@ public class HexEditorPanel extends JPanel {
         System.arraycopy(dataBytes, localAddress, buf, 0, len);
         ByteBuffer bb = ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN);
 
+        lblDecimal.setText(String.valueOf(buf[0] & 0xFF));
         lbl8Bit.setText(String.valueOf(buf[0]));
         lblBinary.setText(String.format("%8s", Integer.toBinaryString(buf[0] & 0xFF)).replace(' ', '0'));
         lbl16Bit.setText(len >= 2 ? String.valueOf(bb.getShort(0)) : "-");
