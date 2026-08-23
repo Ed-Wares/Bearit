@@ -1194,6 +1194,13 @@ public class AdvancedTextEditorPanel extends JPanel {
         String text = textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
         if (isBinaryMode()) {
             text = decodeViewToBinary(text); // --- REVERSE THE BINARY ENCODING ---
+        } else {
+            String le = fileManager.getDetectedLineEndings();
+            if ("CRLF".equals(le)) {
+                text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n");
+            } else if ("CR".equals(le)) {
+                text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r");
+            }
         }
 
         // --- ONLY APPEND WHAT WAS STRIPPED ---
@@ -1860,6 +1867,10 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     public String getCurrentTitle() {
         return currentTitle;
+    }
+
+    public JTextArea getTextArea() {
+        return textArea;
     }
 
     private void executeSaveRoutine() {
@@ -3978,11 +3989,18 @@ public class AdvancedTextEditorPanel extends JPanel {
      */
     public String getFileInfoString(File file) {
         if (file != null && file.exists()) {
-
             String sizeStr = humanReadableByteCount(file.length());
             String dateStr = formatLastModified(file.lastModified());
-            String isBinary = this.isBinaryMode() ? "  |  Binary" : "";
-            return "Size: " + sizeStr + "  |  Modified: " + dateStr + isBinary + getReadOnlyStatus();
+            
+            String encInfo = fileManager.getDetectedEncoding();
+            String leInfo = fileManager.getDetectedLineEndings();
+            
+            String extraInfo = "  |  " + encInfo;
+            if (!"N/A".equals(leInfo) && !"Binary".equals(encInfo)) {
+                extraInfo += " (" + leInfo + ")";
+            }
+            
+            return "Size: " + sizeStr + "  |  Modified: " + dateStr + extraInfo + getReadOnlyStatus();
         }
         return "Unsaved/New File";
     }

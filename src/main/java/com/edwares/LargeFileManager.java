@@ -85,6 +85,10 @@ public class LargeFileManager {
         this.currentChunkIndex = 0;
         this.totalChunks = 1;
         this.totalFileSize = 0;
+        this.isBinaryMode = false;
+        this.detectedEncoding = "UTF-8";
+        this.detectedLineEndings = "N/A";
+        this.activeCharset = StandardCharsets.UTF_8;
         clearDirtyChunks();
         preloadCache.clear();
         clearIndexCaches(); 
@@ -104,7 +108,7 @@ public class LargeFileManager {
 
     public void setFile(File file) {
         this.currentFile = file;
-        setBinaryMode(isLikelyBinaryFile(file));            
+        analyzeFileFormat(file);            
         this.pendingSaveAsFile = null;
         this.currentChunkIndex = 0;
         clearDirtyChunks();
@@ -125,61 +129,133 @@ public class LargeFileManager {
 
     public void setBinaryMode(boolean isBinary) {
         this.isBinaryMode = isBinary;
+        if (isBinary) {
+            this.activeCharset = StandardCharsets.ISO_8859_1;
+        } else {
+            this.activeCharset = StandardCharsets.UTF_8;
+        }
         clearIndexCaches(); // Re-calculate boundaries strictly mathematically
     }
 
-    /**
-     * Dynamically selects the encoding. 
-     * ISO_8859_1 is mathematically required for binary files to prevent 
-     * Java from destroying invalid UTF-8 byte sequences.
-     */
-    private Charset getActiveCharset() {
-        return isBinaryMode ? StandardCharsets.ISO_8859_1 : StandardCharsets.UTF_8;
+    private String detectedEncoding = "UTF-8";
+    private String detectedLineEndings = "N/A";
+    private Charset activeCharset = StandardCharsets.UTF_8;
+
+    public String getDetectedEncoding() {
+        return isBinaryMode ? "Binary" : detectedEncoding;
     }
 
-    /**
-     * Performs a lightning-fast heuristic scan of the first 160KB of a file 
-     * to determine if it is a binary or raw text file.
-     */
-    public static boolean isLikelyBinaryFile(File file) {
+    public String getDetectedLineEndings() {
+        return isBinaryMode ? "N/A" : detectedLineEndings;
+    }
+
+    public Charset getActiveCharset() {
+        return activeCharset;
+    }
+
+    private void analyzeFileFormat(File file) {
+        this.isBinaryMode = false;
+        this.detectedEncoding = "UTF-8";
+        this.detectedLineEndings = "N/A";
+        this.activeCharset = StandardCharsets.UTF_8;
+
         if (file == null || !file.exists() || file.length() == 0) {
-            return false;
+            return;
         }
 
-        int bufferSize = 163840; // Read only the first 160KB
+        int bufferSize = 163840; // 160KB
         try (java.io.InputStream is = new java.io.FileInputStream(file)) {
             byte[] buffer = new byte[bufferSize];
             int bytesRead = is.read(buffer);
 
-            if (bytesRead == -1) return false;
+            if (bytesRead == -1) return;
+
+            boolean hasBom = false;
+            // Check BOM
+            if (bytesRead >= 3 && (buffer[0] & 0xFF) == 0xEF && (buffer[1] & 0xFF) == 0xBB && (buffer[2] & 0xFF) == 0xBF) {
+                detectedEncoding = "UTF-8 BOM";
+                activeCharset = StandardCharsets.UTF_8;
+                hasBom = true;
+            } else if (bytesRead >= 2 && (buffer[0] & 0xFF) == 0xFE && (buffer[1] & 0xFF) == 0xFF) {
+                detectedEncoding = "UTF-16 BE";
+                activeCharset = StandardCharsets.UTF_16BE;
+                hasBom = true;
+            } else if (bytesRead >= 2 && (buffer[0] & 0xFF) == 0xFF && (buffer[1] & 0xFF) == 0xFE) {
+                detectedEncoding = "UTF-16 LE";
+                activeCharset = StandardCharsets.UTF_16LE;
+                hasBom = true;
+            }
+
+            if (hasBom) {
+                isBinaryMode = false;
+                String sample = new String(buffer, 0, Math.min(bytesRead, 8192), activeCharset);
+                int crlf = 0, lf = 0, cr = 0;
+                for (int i = 0; i < sample.length(); i++) {
+                    char c = sample.charAt(i);
+                    if (c == '\r') {
+                        if (i + 1 < sample.length() && sample.charAt(i + 1) == '\n') {
+                            crlf++;
+                            i++;
+                        } else {
+                            cr++;
+                        }
+                    } else if (c == '\n') {
+                        lf++;
+                    }
+                }
+                if (crlf >= lf && crlf >= cr && crlf > 0) detectedLineEndings = "CRLF";
+                else if (lf >= crlf && lf >= cr && lf > 0) detectedLineEndings = "LF";
+                else if (cr > 0) detectedLineEndings = "CR";
+                return;
+            }
 
             int controlCount = 0;
+            int crCount = 0;
+            int lfCount = 0;
+            int crlfCount = 0;
 
             for (int i = 0; i < bytesRead; i++) {
                 byte b = buffer[i];
 
-                // The absolute strongest indicator of a binary file is a Null byte
-                if (b == 0x00) {
-                    return true;
+                if (activeCharset == StandardCharsets.UTF_8 && b == 0x00) {
+                    isBinaryMode = true;
+                    activeCharset = StandardCharsets.ISO_8859_1;
+                    return;
                 }
 
-                // Count non-printable control characters (excluding \n, \r, \t)
                 if (b < 0x20 && b != 0x0A && b != 0x0D && b != 0x09) {
                     controlCount++;
                 }
+
+                if (b == 0x0D) { // CR
+                    if (i + 1 < bytesRead && buffer[i + 1] == 0x0A) { // CRLF
+                        crlfCount++;
+                        i++; // Skip the LF
+                    } else {
+                        crCount++;
+                    }
+                } else if (b == 0x0A) { // LF
+                    lfCount++;
+                }
             }
 
-            // If more than 10% of the sample is obscure control characters, assume binary
             if (bytesRead > 0 && ((double) controlCount / bytesRead) > 0.10) {
-                return true;
+                isBinaryMode = true;
+                activeCharset = StandardCharsets.ISO_8859_1;
+                return;
+            }
+
+            if (crlfCount >= lfCount && crlfCount >= crCount && crlfCount > 0) {
+                detectedLineEndings = "CRLF";
+            } else if (lfCount >= crlfCount && lfCount >= crCount && lfCount > 0) {
+                detectedLineEndings = "LF";
+            } else if (crCount > 0) {
+                detectedLineEndings = "CR";
             }
 
         } catch (java.io.IOException e) {
-            // Fallback to safe text mode if the header check fails
-            return false; 
+            // Default to UTF-8 text mode
         }
-
-        return false;
     }
 
     public int getTotalChunks() {
@@ -202,7 +278,20 @@ public class LargeFileManager {
     public void commitCurrentChunk(String text) throws IOException {
         File tempFile = Files.createTempFile("bearit_chunk_" + currentChunkIndex + "_", ".tmp").toFile();
         tempFile.deleteOnExit();
-        Files.writeString(tempFile.toPath(), text, getActiveCharset());
+        
+        try (java.io.OutputStream out = new java.io.FileOutputStream(tempFile)) {
+            if (currentChunkIndex == 0) {
+                if ("UTF-8 BOM".equals(detectedEncoding)) {
+                    out.write(new byte[]{(byte) 0xEF, (byte) 0xBB, (byte) 0xBF});
+                } else if ("UTF-16 BE".equals(detectedEncoding)) {
+                    out.write(new byte[]{(byte) 0xFE, (byte) 0xFF});
+                } else if ("UTF-16 LE".equals(detectedEncoding)) {
+                    out.write(new byte[]{(byte) 0xFF, (byte) 0xFE});
+                }
+            }
+            out.write(text.getBytes(getActiveCharset()));
+        }
+        
         dirtyChunks.put(currentChunkIndex, tempFile);
         preloadCache.remove(currentChunkIndex); 
         
