@@ -14,6 +14,48 @@ public class EncodingAndLineEndingTest {
     private File tempDir;
     private File resourcesDir;
 
+    @BeforeAll
+    public static void generateTestFilesIfMissing() throws Exception {
+        File dir = new File("src/main/resources/app-content/test-files");
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+        
+        createTestFile(dir, "test_utf8_crlf.txt", "Line 1\r\nLine 2\r\nLine 3".getBytes(StandardCharsets.UTF_8));
+        createTestFile(dir, "test_utf8_lf.txt", "Line 1\nLine 2\nLine 3".getBytes(StandardCharsets.UTF_8));
+        createTestFile(dir, "test_utf8_cr.txt", "Line 1\rLine 2\rLine 3".getBytes(StandardCharsets.UTF_8));
+        
+        byte[] utf8bom = new byte[]{(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
+        byte[] contentLf = "Line 1\nLine 2\nLine 3".getBytes(StandardCharsets.UTF_8);
+        byte[] combinedBomLf = new byte[utf8bom.length + contentLf.length];
+        System.arraycopy(utf8bom, 0, combinedBomLf, 0, utf8bom.length);
+        System.arraycopy(contentLf, 0, combinedBomLf, utf8bom.length, contentLf.length);
+        createTestFile(dir, "test_utf8_bom_lf.txt", combinedBomLf);
+
+        byte[] utf16leBom = new byte[]{(byte) 0xFF, (byte) 0xFE};
+        byte[] content16le = "Line 1\r\nLine 2\r\nLine 3".getBytes(StandardCharsets.UTF_16LE);
+        byte[] combined16le = new byte[utf16leBom.length + content16le.length];
+        System.arraycopy(utf16leBom, 0, combined16le, 0, utf16leBom.length);
+        System.arraycopy(content16le, 0, combined16le, utf16leBom.length, content16le.length);
+        createTestFile(dir, "test_utf16le_crlf.txt", combined16le);
+
+        byte[] utf16beBom = new byte[]{(byte) 0xFE, (byte) 0xFF};
+        byte[] content16be = "Line 1\r\nLine 2\r\nLine 3".getBytes(StandardCharsets.UTF_16BE);
+        byte[] combined16be = new byte[utf16beBom.length + content16be.length];
+        System.arraycopy(utf16beBom, 0, combined16be, 0, utf16beBom.length);
+        System.arraycopy(content16be, 0, combined16be, utf16beBom.length, content16be.length);
+        createTestFile(dir, "test_utf16be_crlf.txt", combined16be);
+
+        createTestFile(dir, "test_binary.bin", new byte[]{(byte) 0x00, (byte) 0x01, (byte) 0x02, (byte) 0x03, (byte) 0xFF, (byte) 0xFE, (byte) 0x0A, (byte) 0x0D, (byte) 0x00, (byte) 0x1A});
+    }
+
+    private static void createTestFile(File dir, String name, byte[] content) throws Exception {
+        File f = new File(dir, name);
+        if (!f.exists()) {
+            Files.write(f.toPath(), content);
+        }
+    }
+
     @BeforeEach
     public void setup() throws Exception {
         tempDir = Files.createTempDirectory("bearit_encoding_test").toFile();
