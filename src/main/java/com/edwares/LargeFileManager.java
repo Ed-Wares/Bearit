@@ -27,6 +27,17 @@ public class LargeFileManager {
     private int totalChunks = 1;
     private long totalFileSize = 0;
     private boolean isBinaryMode = false;
+    private String detectedEncoding = "UTF-8";
+    private String detectedLineEndings = "N/A";
+
+    public void setDetectedEncodingAndCharset(String enc, Charset charset) {
+        this.detectedEncoding = enc;
+        this.activeCharset = charset;
+    }
+
+    public void setDetectedLineEndings(String le) {
+        this.detectedLineEndings = le;
+    }
 
     private final Map<Integer, File> dirtyChunks = new ConcurrentHashMap<>();
     private final ExecutorService preloader = Executors.newSingleThreadExecutor();
@@ -137,8 +148,7 @@ public class LargeFileManager {
         clearIndexCaches(); // Re-calculate boundaries strictly mathematically
     }
 
-    private String detectedEncoding = "UTF-8";
-    private String detectedLineEndings = "N/A";
+
     private Charset activeCharset = StandardCharsets.UTF_8;
 
     public String getDetectedEncoding() {
@@ -258,6 +268,56 @@ public class LargeFileManager {
         }
     }
 
+    private void reanalyzeLineEndings() {
+        if (currentFile == null || !currentFile.exists() || isBinaryMode) return;
+        try (java.io.InputStream is = new java.io.FileInputStream(currentFile)) {
+            byte[] buffer = new byte[163840];
+            int bytesRead = is.read(buffer);
+            if (bytesRead == -1) return;
+
+            boolean hasBom = false;
+            int start = 0;
+            if (bytesRead >= 3 && (buffer[0] & 0xFF) == 0xEF && (buffer[1] & 0xFF) == 0xBB && (buffer[2] & 0xFF) == 0xBF) { hasBom = true; start = 3; }
+            else if (bytesRead >= 2 && (buffer[0] & 0xFF) == 0xFE && (buffer[1] & 0xFF) == 0xFF) { hasBom = true; start = 2; }
+            else if (bytesRead >= 2 && (buffer[0] & 0xFF) == 0xFF && (buffer[1] & 0xFF) == 0xFE) { hasBom = true; start = 2; }
+
+            if (hasBom) {
+                String sample = new String(buffer, start, Math.min(bytesRead - start, 8192), activeCharset);
+                int crlf = 0, lf = 0, cr = 0;
+                for (int i = 0; i < sample.length(); i++) {
+                    char c = sample.charAt(i);
+                    if (c == '\r') {
+                        if (i + 1 < sample.length() && sample.charAt(i + 1) == '\n') { crlf++; i++; } else { cr++; }
+                    } else if (c == '\n') { lf++; }
+                }
+                if (crlf >= lf && crlf >= cr && crlf > 0) detectedLineEndings = "CRLF";
+                else if (lf >= crlf && lf >= cr && lf > 0) detectedLineEndings = "LF";
+                else if (cr > 0) detectedLineEndings = "CR";
+                else detectedLineEndings = "N/A";
+                return;
+            }
+
+            int crCount = 0;
+            int lfCount = 0;
+            int crlfCount = 0;
+            for (int i = start; i < bytesRead; i++) {
+                byte b = buffer[i];
+                if (b == 0x0D) {
+                    if (i + 1 < bytesRead && buffer[i + 1] == 0x0A) { crlfCount++; i++; } else { crCount++; }
+                } else if (b == 0x0A) { lfCount++; }
+            }
+            if (crlfCount >= lfCount && crlfCount >= crCount && crlfCount > 0) {
+                detectedLineEndings = "CRLF";
+            } else if (lfCount >= crlfCount && lfCount >= crCount && lfCount > 0) {
+                detectedLineEndings = "LF";
+            } else if (crCount > 0) {
+                detectedLineEndings = "CR";
+            } else {
+                detectedLineEndings = "N/A";
+            }
+        } catch (java.io.IOException e) {}
+    }
+
     public int getTotalChunks() {
         return Math.max(totalChunks, dirtyChunks.keySet().stream().max(Integer::compare).orElse(0) + 1);
     }
@@ -311,14 +371,24 @@ public class LargeFileManager {
         chunkLineDeltas.clear();
     }
 
+    private Thread indexerThread = null;
+
+    public void stopIndexer() {
+        if (indexerThread != null && indexerThread.isAlive()) {
+            indexerThread.interrupt();
+        }
+    }
+
     public void buildIndexCacheAsync(java.util.function.Consumer<Integer> onChunkIndexed) {
         if (currentFile == null || !currentFile.exists()) return;
+        
+        stopIndexer();
         
         boundaryCache.clear();
         previewCache.clear();
         lineOffsetCache.clear();
         
-        new Thread(() -> {
+        indexerThread = new Thread(() -> {
             try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(currentFile, "r")) {
                 int totalChunks = getTotalChunks();
                 long currentGlobalLine = 1;
@@ -370,7 +440,8 @@ public class LargeFileManager {
             } catch (Exception e) {
                 System.err.println("Background file indexer failed: " + e.getMessage());
             }
-        }).start();
+        });
+        indexerThread.start();
     }
 
     public ChunkState navigateToIndex(int index, boolean requestPreview) throws IOException {
@@ -734,6 +805,9 @@ public class LargeFileManager {
         clearDirtyChunks();
         clearIndexCaches();
         updateFileMetrics();
+        if (!isBinaryMode && "N/A".equals(detectedLineEndings)) {
+            reanalyzeLineEndings();
+        }
         return loadCurrentChunk(false); 
     }
 

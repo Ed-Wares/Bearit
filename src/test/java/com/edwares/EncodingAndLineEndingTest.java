@@ -46,6 +46,9 @@ public class EncodingAndLineEndingTest {
         System.arraycopy(content16be, 0, combined16be, utf16beBom.length, content16be.length);
         createTestFile(dir, "test_utf16be_crlf.txt", combined16be);
 
+        String isoContent = "Line 1\nLine 2\nLine 3 \u00A3\u00E9";
+        createTestFile(dir, "test_iso88591.txt", isoContent.getBytes(StandardCharsets.ISO_8859_1));
+
         createTestFile(dir, "test_binary.bin", new byte[]{(byte) 0x00, (byte) 0x01, (byte) 0x02, (byte) 0x03, (byte) 0xFF, (byte) 0xFE, (byte) 0x0A, (byte) 0x0D, (byte) 0x00, (byte) 0x1A});
     }
 
@@ -127,6 +130,8 @@ public class EncodingAndLineEndingTest {
             System.arraycopy(appendBytes, 0, expectedBytes, originalBytes.length, appendBytes.length);
             assertArrayEquals(expectedBytes, savedBytes, "Saved bytes must perfectly match original + appended for " + fileName);
         }
+
+        editor.dispose();
     }
 
     @Test
@@ -162,5 +167,55 @@ public class EncodingAndLineEndingTest {
     @Test
     public void testBinary() throws Exception {
         runEncodingTest("test_binary.bin", true, "Binary", "N/A", null);
+    }
+
+    @Test
+    public void testIso8859_1_ManualEncoding() throws Exception {
+        String fileName = "test_iso88591.txt";
+        File sourceFile = new File(resourcesDir, fileName);
+        assertTrue(sourceFile.exists(), "Source file missing: " + sourceFile.getAbsolutePath());
+
+        File testFile = new File(tempDir, fileName);
+        Files.copy(sourceFile.toPath(), testFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+
+        AdvancedTextEditorPanel editor = new AdvancedTextEditorPanel();
+        editor.loadFile(testFile);
+        waitForUI();
+
+        // Manually switch to ISO-8859-1
+        editor.changeEncoding("ISO-8859-1");
+        waitForUI();
+        
+        String infoStr = editor.getFileInfoString(testFile);
+        assertTrue(infoStr.contains("ISO-8859-1"), "Encoding should be updated to ISO-8859-1. Info string: " + infoStr);
+
+        // Add a line with a special character that is 1 byte in ISO-8859-1 but 2 in UTF-8
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                editor.getTextArea().getDocument().insertString(
+                    editor.getTextArea().getDocument().getLength(),
+                    "\nLine 4 \u00A3", // Pound sign
+                    null
+                );
+            } catch (Exception e) {
+                fail(e);
+            }
+        });
+        waitForUI();
+
+        assertTrue(editor.saveSynchronously(), "Save failed for ISO-8859-1");
+        waitForUI();
+
+        byte[] savedBytes = Files.readAllBytes(testFile.toPath());
+        String savedString = new String(savedBytes, StandardCharsets.ISO_8859_1);
+        
+        // Verify it was saved as ISO-8859-1
+        assertTrue(savedString.endsWith("Line 4 \u00A3"), "Should be accurately read back as ISO-8859-1");
+        
+        // Verify it's different from UTF-8
+        byte[] utf8Bytes = savedString.getBytes(StandardCharsets.UTF_8);
+        assertTrue(savedBytes.length < utf8Bytes.length, "ISO-8859-1 encoding must be more compact for these characters than UTF-8");
+
+        editor.dispose();
     }
 }

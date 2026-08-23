@@ -1578,20 +1578,87 @@ public class BearitFrame extends JFrame {
         convertCaseMenu.add(mnuUpperCase);
         convertCaseMenu.add(mnuProperCase);
 
+        // --- Encoding Sub-Menu ---
+        JMenu encodingMenu = new JMenu("Encoding");
+        String[] encodings = {"UTF-8", "UTF-8 BOM", "UTF-16 LE", "UTF-16 BE", "ISO-8859-1"};
+        ButtonGroup encGroup = new ButtonGroup();
+        java.util.Map<String, JRadioButtonMenuItem> encItems = new java.util.HashMap<>();
+        for (String enc : encodings) {
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(enc);
+            item.addActionListener(e -> {
+                if (getActiveEditor() != null) getActiveEditor().changeEncoding(enc);
+            });
+            encGroup.add(item);
+            encodingMenu.add(item);
+            encItems.put(enc, item);
+        }
+        
+        encodingMenu.addMenuListener(new javax.swing.event.MenuListener() {
+            public void menuSelected(javax.swing.event.MenuEvent e) {
+                if (getActiveEditor() != null) {
+                    String currentEnc = getActiveEditor().getFileManager().getDetectedEncoding();
+                    if (encItems.containsKey(currentEnc)) {
+                        encItems.get(currentEnc).setSelected(true);
+                    } else if ("Binary".equals(currentEnc)) {
+                        encGroup.clearSelection();
+                    }
+                }
+            }
+            public void menuDeselected(javax.swing.event.MenuEvent e) {}
+            public void menuCanceled(javax.swing.event.MenuEvent e) {}
+        });
+
+        // --- End Of Line Type Sub-Menu ---
+        JMenu eolMenu = new JMenu("End Of Line Type");
+        String[][] eols = {
+            {"CRLF - Windows", "CRLF"},
+            {"LF - Unix/Linux/macOS", "LF"},
+            {"CR - Classic Mac", "CR"}
+        };
+        ButtonGroup eolGroup = new ButtonGroup();
+        java.util.Map<String, JRadioButtonMenuItem> eolItems = new java.util.HashMap<>();
+        for (String[] eol : eols) {
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(eol[0]);
+            item.addActionListener(e -> {
+                if (getActiveEditor() != null) getActiveEditor().changeLineEndings(eol[1]);
+            });
+            eolGroup.add(item);
+            eolMenu.add(item);
+            eolItems.put(eol[1], item);
+        }
+
+        eolMenu.addMenuListener(new javax.swing.event.MenuListener() {
+            public void menuSelected(javax.swing.event.MenuEvent e) {
+                if (getActiveEditor() != null) {
+                    String currentEol = getActiveEditor().getFileManager().getDetectedLineEndings();
+                    if (eolItems.containsKey(currentEol)) {
+                        eolItems.get(currentEol).setSelected(true);
+                    } else if ("N/A".equals(currentEol)) {
+                        eolGroup.clearSelection();
+                    }
+                }
+            }
+            public void menuDeselected(javax.swing.event.MenuEvent e) {}
+            public void menuCanceled(javax.swing.event.MenuEvent e) {}
+        });
+
         editMenu.add(undoItem);
         editMenu.add(redoItem);
         editMenu.addSeparator();
         editMenu.add(cutItem);
         editMenu.add(copyItem);
         editMenu.add(pasteItem);
+        editMenu.addSeparator();
         editMenu.add(selectAllItem);
         editMenu.addSeparator();
         editMenu.add(searchItem);
         editMenu.add(gotoItem);
         editMenu.addSeparator();
         editMenu.add(formatMenu);
-        editMenu.addSeparator();
         editMenu.add(convertCaseMenu);
+        editMenu.addSeparator();
+        editMenu.add(encodingMenu);
+        editMenu.add(eolMenu);
 
         // --- View Menu ---
         JMenu viewMenu = new JMenu("View");

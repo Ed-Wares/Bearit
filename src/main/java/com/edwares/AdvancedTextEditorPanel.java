@@ -2266,6 +2266,9 @@ public class AdvancedTextEditorPanel extends JPanel {
         if (fileWatcherTimer != null) {
             fileWatcherTimer.stop();
         }
+        if (fileManager != null) {
+            fileManager.stopIndexer();
+        }
     }
 
     private boolean hasPromptedForDelete = false;
@@ -4007,6 +4010,29 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     public boolean isBinaryMode() {
         return fileManager.isBinaryMode();
+    }
+
+    public void changeEncoding(String encodingName) {
+        if (isBinaryMode() || fileManager.getCurrentFile() == null) return;
+        java.nio.charset.Charset newCharset;
+        switch (encodingName) {
+            case "UTF-8 BOM": newCharset = java.nio.charset.StandardCharsets.UTF_8; break;
+            case "UTF-16 LE": newCharset = java.nio.charset.StandardCharsets.UTF_16LE; break;
+            case "UTF-16 BE": newCharset = java.nio.charset.StandardCharsets.UTF_16BE; break;
+            case "ISO-8859-1": newCharset = java.nio.charset.StandardCharsets.ISO_8859_1; break;
+            case "UTF-8":
+            default: newCharset = java.nio.charset.StandardCharsets.UTF_8; break;
+        }
+        fileManager.setDetectedEncodingAndCharset(encodingName, newCharset);
+        setUnsavedChanges(true);
+        updateStatusLabel(chunkStatus, getFileInfoString(activeFile));
+    }
+
+    public void changeLineEndings(String le) {
+        if (isBinaryMode() || fileManager.getCurrentFile() == null) return;
+        fileManager.setDetectedLineEndings(le);
+        setUnsavedChanges(true);
+        updateStatusLabel(chunkStatus, getFileInfoString(activeFile));
     }
 
     /**
