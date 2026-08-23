@@ -218,4 +218,72 @@ public class EncodingAndLineEndingTest {
 
         editor.dispose();
     }
+
+    private void runLineEndingConversionTest(String fileName, String initialExpected, String targetLineEnding) throws Exception {
+        File sourceFile = new File(resourcesDir, fileName);
+        assertTrue(sourceFile.exists(), "Source file missing: " + sourceFile.getAbsolutePath());
+
+        File testFile = new File(tempDir, fileName);
+        Files.copy(sourceFile.toPath(), testFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+
+        AdvancedTextEditorPanel editor = new AdvancedTextEditorPanel();
+        editor.loadFile(testFile);
+        waitForUI();
+
+        // Verify initial loaded properties
+        String infoStr = editor.getFileInfoString(testFile);
+        assertTrue(infoStr.contains("(" + initialExpected + ")"), "Line endings should initially be " + initialExpected + ". Info string: " + infoStr);
+
+        // Manually switch to target line ending
+        editor.changeLineEndings(targetLineEnding);
+        waitForUI();
+        
+        infoStr = editor.getFileInfoString(testFile);
+        assertTrue(infoStr.contains("(" + targetLineEnding + ")"), "Line endings should be updated to " + targetLineEnding + ". Info string: " + infoStr);
+
+        assertTrue(editor.saveSynchronously(), "Save failed for " + targetLineEnding + " conversion");
+        waitForUI();
+
+        byte[] savedBytes = Files.readAllBytes(testFile.toPath());
+        String savedString = new String(savedBytes, StandardCharsets.UTF_8);
+        
+        // Verify it was saved as the target line ending
+        if ("LF".equals(targetLineEnding)) {
+            assertFalse(savedString.contains("\r\n"), "Saved text must not contain CRLF");
+            String stripped = savedString.replace("\r\n", "");
+            assertFalse(stripped.contains("\r"), "Saved text must not contain naked CR");
+            assertTrue(savedString.contains("\n"), "Saved text must contain LF");
+        } else if ("CRLF".equals(targetLineEnding)) {
+            assertTrue(savedString.contains("\r\n"), "Saved text must contain CRLF");
+            String stripped = savedString.replace("\r\n", "");
+            assertFalse(stripped.contains("\n"), "Saved text must not contain naked LF");
+            assertFalse(stripped.contains("\r"), "Saved text must not contain naked CR");
+        } else if ("CR".equals(targetLineEnding)) {
+            assertFalse(savedString.contains("\r\n"), "Saved text must not contain CRLF");
+            assertFalse(savedString.contains("\n"), "Saved text must not contain naked LF");
+            assertTrue(savedString.contains("\r"), "Saved text must contain CR");
+        }
+
+        editor.dispose();
+    }
+
+    @Test
+    public void testCrlfToLfConversion() throws Exception {
+        runLineEndingConversionTest("test_utf8_crlf.txt", "CRLF", "LF");
+    }
+
+    @Test
+    public void testLfToCrlfConversion() throws Exception {
+        runLineEndingConversionTest("test_utf8_lf.txt", "LF", "CRLF");
+    }
+
+    @Test
+    public void testCrToCrlfConversion() throws Exception {
+        runLineEndingConversionTest("test_utf8_cr.txt", "CR", "CRLF");
+    }
+
+    @Test
+    public void testCrToLfConversion() throws Exception {
+        runLineEndingConversionTest("test_utf8_cr.txt", "CR", "LF");
+    }
 }

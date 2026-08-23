@@ -1200,6 +1200,8 @@ public class AdvancedTextEditorPanel extends JPanel {
                 text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n");
             } else if ("CR".equals(le)) {
                 text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r");
+            } else if ("LF".equals(le)) {
+                text = text.replace("\r\n", "\n").replace("\r", "\n");
             }
         }
 
