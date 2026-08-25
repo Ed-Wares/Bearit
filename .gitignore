@@ -2,3 +2,4 @@ target/
 release/
 distribution_payload/
 wix314-binaries/
+src/main/resources/app-content/test-files/*.txt
