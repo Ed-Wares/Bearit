@@ -46,7 +46,7 @@ public class HexEditorPanel extends JPanel {
     private JTextField lblAddress, lblChunkAddress, lblPosition, lbl8Bit, lblDecimal, lbl16Bit, lbl32Bit, lbl64Bit;
     private JTextField lblFloat, lblBinary, lblUnix32, lblUnix64;
     private JTextField lblDosTime, lblWin32Time;
-    private JTextField lblUtf8, lblUtf16, lblEbcdic;
+    private JTextField lblUtf8, lblIso88591, lblUtf16Le, lblUtf16Be, lblUtf32, lblEbcdic;
     private JTextField txtGoto;
     private JComboBox<Integer> comboBytesPerRow;
 
@@ -593,6 +593,12 @@ public class HexEditorPanel extends JPanel {
         lblChunkAddress = addInspectorRow("Chunk Address:", pnlInspector, ++gbc.gridy);
         lblPosition = addInspectorRow("Position:", pnlInspector, ++gbc.gridy);
         lblDecimal = addInspectorRow("Decimal:", pnlInspector, ++gbc.gridy);
+        lblIso88591 = addInspectorRow("ISO-8859-1:", pnlInspector, ++gbc.gridy);
+        lblUtf8 = addInspectorRow("UTF-8:", pnlInspector, ++gbc.gridy);
+        lblUtf16Le = addInspectorRow("UTF-16 LE:", pnlInspector, ++gbc.gridy);
+        lblUtf16Be = addInspectorRow("UTF-16 BE:", pnlInspector, ++gbc.gridy);
+        lblUtf32 = addInspectorRow("UTF-32:", pnlInspector, ++gbc.gridy);
+        lblEbcdic = addInspectorRow("EBCDIC:", pnlInspector, ++gbc.gridy);
         lbl8Bit = addInspectorRow("Int8:", pnlInspector, ++gbc.gridy);
         lbl16Bit = addInspectorRow("Int16 (LE):", pnlInspector, ++gbc.gridy);
         lbl32Bit = addInspectorRow("Int32 (LE):", pnlInspector, ++gbc.gridy);
@@ -603,9 +609,6 @@ public class HexEditorPanel extends JPanel {
         lblUnix64 = addInspectorRow("Unix 64:", pnlInspector, ++gbc.gridy);
         lblWin32Time = addInspectorRow("Win32 Time:", pnlInspector, ++gbc.gridy);
         lblDosTime = addInspectorRow("MS-DOS Time:", pnlInspector, ++gbc.gridy);
-        lblUtf8 = addInspectorRow("UTF-8:", pnlInspector, ++gbc.gridy);
-        lblUtf16 = addInspectorRow("UTF-16:", pnlInspector, ++gbc.gridy);
-        lblEbcdic = addInspectorRow("EBCDIC:", pnlInspector, ++gbc.gridy);
         
         gbc.gridy++; gbc.weighty = 1.0;
         pnlInspector.add(Box.createVerticalGlue(), gbc);
@@ -698,7 +701,10 @@ public class HexEditorPanel extends JPanel {
             lblWin32Time.setText("-");
             lblDosTime.setText("-");
             lblUtf8.setText("-");
-            lblUtf16.setText("-");
+            lblIso88591.setText("-");
+            lblUtf16Le.setText("-");
+            lblUtf16Be.setText("-");
+            lblUtf32.setText("-");
             lblEbcdic.setText("-");
             return;
         }
@@ -724,16 +730,32 @@ public class HexEditorPanel extends JPanel {
         if (utf8Len > 0) {
             String utf8Raw = new String(dataBytes, localAddress, utf8Len, StandardCharsets.UTF_8);
             lblUtf8.setText(getSafeDisplayChar(utf8Raw));
+            
+            String isoRaw = new String(dataBytes, localAddress, 1, StandardCharsets.ISO_8859_1);
+            lblIso88591.setText(getSafeDisplayChar(isoRaw));
         } else {
             lblUtf8.setText("N/A"); // End of file edge case
+            lblIso88591.setText("N/A");
         }
 
         // --- UTF-16 Character ---
         if (utf8Len >= 2) {
-            String utf16Raw = new String(dataBytes, localAddress, 2, StandardCharsets.UTF_16BE);
-            lblUtf16.setText(getSafeDisplayChar(utf16Raw));
+            String utf16LeRaw = new String(dataBytes, localAddress, 2, StandardCharsets.UTF_16LE);
+            lblUtf16Le.setText(getSafeDisplayChar(utf16LeRaw));
+            
+            String utf16BeRaw = new String(dataBytes, localAddress, 2, StandardCharsets.UTF_16BE);
+            lblUtf16Be.setText(getSafeDisplayChar(utf16BeRaw));
         } else {
-            lblUtf16.setText("N/A"); // End of file edge case
+            lblUtf16Le.setText("N/A");
+            lblUtf16Be.setText("N/A"); // End of file edge case
+        }
+        
+        // --- UTF-32 Character ---
+        if (utf8Len >= 4) {
+            String utf32Raw = new String(dataBytes, localAddress, 4, Charset.forName("UTF-32"));
+            lblUtf32.setText(getSafeDisplayChar(utf32Raw));
+        } else {
+            lblUtf32.setText("N/A");
         }
 
         // --- EBCDIC Character ---
