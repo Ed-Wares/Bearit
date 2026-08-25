@@ -255,6 +255,21 @@ public class LargeFileManager {
                 return;
             }
 
+            boolean isValidUtf8 = true;
+            try {
+                java.nio.charset.CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder();
+                decoder.onMalformedInput(java.nio.charset.CodingErrorAction.REPORT);
+                decoder.onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT);
+                decoder.decode(ByteBuffer.wrap(buffer, 0, bytesRead));
+            } catch (java.nio.charset.CharacterCodingException e) {
+                isValidUtf8 = false;
+            }
+
+            if (!isValidUtf8) {
+                detectedEncoding = "ISO-8859-1";
+                activeCharset = StandardCharsets.ISO_8859_1;
+            }
+
             if (crlfCount >= lfCount && crlfCount >= crCount && crlfCount > 0) {
                 detectedLineEndings = "CRLF";
             } else if (lfCount >= crlfCount && lfCount >= crCount && lfCount > 0) {
@@ -369,6 +384,11 @@ public class LargeFileManager {
         previewCache.clear();
         lineOffsetCache.clear();
         chunkLineDeltas.clear();
+    }
+
+    public void clearCachesForEncodingChange() {
+        preloadCache.clear();
+        clearIndexCaches();
     }
 
     private Thread indexerThread = null;

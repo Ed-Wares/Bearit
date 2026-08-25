@@ -4016,6 +4016,10 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     public void changeEncoding(String encodingName) {
         if (isBinaryMode() || fileManager.getCurrentFile() == null) return;
+        
+        // Don't do anything if it's the exact same encoding
+        if (encodingName.equals(fileManager.getDetectedEncoding())) return;
+
         java.nio.charset.Charset newCharset;
         switch (encodingName) {
             case "UTF-8 BOM": newCharset = java.nio.charset.StandardCharsets.UTF_8; break;
@@ -4025,7 +4029,22 @@ public class AdvancedTextEditorPanel extends JPanel {
             case "UTF-8":
             default: newCharset = java.nio.charset.StandardCharsets.UTF_8; break;
         }
+        
         fileManager.setDetectedEncodingAndCharset(encodingName, newCharset);
+        
+        if (!hasUnsavedChanges && activeFile != null) {
+            fileManager.clearCachesForEncodingChange();
+            try {
+                applyStateUpdates(fileManager.loadCurrentChunk(false), 1, -1, null);
+                isDirty = false;
+                setUnsavedChanges(false);
+            } catch (IOException ex) {
+                showError("Failed to apply new encoding: " + ex.getMessage());
+            }
+            updateStatusLabel(chunkStatus, getFileInfoString(activeFile));
+            return;
+        }
+
         setUnsavedChanges(true);
         updateStatusLabel(chunkStatus, getFileInfoString(activeFile));
     }

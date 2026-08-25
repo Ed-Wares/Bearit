@@ -170,6 +170,30 @@ public class EncodingAndLineEndingTest {
     }
 
     @Test
+    public void testIso8859_1_AutoDetectionAndRendering() throws Exception {
+        String fileName = "test_iso88591.txt";
+        File sourceFile = new File(resourcesDir, fileName);
+        assertTrue(sourceFile.exists(), "Source file missing: " + sourceFile.getAbsolutePath());
+
+        File testFile = new File(tempDir, fileName);
+        Files.copy(sourceFile.toPath(), testFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+
+        AdvancedTextEditorPanel editor = new AdvancedTextEditorPanel();
+        editor.loadFile(testFile);
+        waitForUI();
+
+        // Verify the encoding was auto-detected properly
+        String infoStr = editor.getFileInfoString(testFile);
+        assertTrue(infoStr.contains("ISO-8859-1"), "Encoding should be automatically detected as ISO-8859-1. Info string: " + infoStr);
+
+        // Verify the document rendered correctly with proper character representation
+        String text = editor.getTextArea().getText();
+        assertTrue(text.contains("\u00A3\u00E9"), "The text area should render the ISO-8859-1 specific characters properly");
+
+        editor.dispose();
+    }
+
+    @Test
     public void testIso8859_1_ManualEncoding() throws Exception {
         String fileName = "test_iso88591.txt";
         File sourceFile = new File(resourcesDir, fileName);
