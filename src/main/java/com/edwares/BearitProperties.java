@@ -187,16 +187,26 @@ public class BearitProperties {
         save();
     }
 
+    public static class SessionTab {
+        public String path;
+        public long position;
+        public SessionTab(String path, long position) { this.path = path; this.position = position; }
+    }
+
     // methods to handle saving and loading the session state (the list of open file paths)
-    public void saveSession(List<String> filePaths, int activeIndex) {
+    public void saveSession(List<SessionTab> tabs, int activeIndex) {
         // Clear old session
-        for (int i = 0; i < 20; i++) { props.remove("session.file." + i); }
+        for (int i = 0; i < 20; i++) { 
+            props.remove("session.file." + i); 
+            props.remove("session.pos." + i); 
+        }
         
         // Save new session
-        for (int i = 0; i < filePaths.size(); i++) {
-            props.setProperty("session.file." + i, filePaths.get(i));
+        for (int i = 0; i < tabs.size(); i++) {
+            props.setProperty("session.file." + i, tabs.get(i).path);
+            props.setProperty("session.pos." + i, String.valueOf(tabs.get(i).position));
         }
-        props.setProperty("session.count", String.valueOf(filePaths.size()));
+        props.setProperty("session.count", String.valueOf(tabs.size()));
         props.setProperty("session.active.index", String.valueOf(activeIndex));
         save();
     }
@@ -205,12 +215,14 @@ public class BearitProperties {
         return Integer.parseInt(props.getProperty("session.active.index", "0"));
     }
 
-    public List<String> getSession() {
-        List<String> session = new ArrayList<>();
+    public List<SessionTab> getSession() {
+        List<SessionTab> session = new ArrayList<>();
         int count = Integer.parseInt(props.getProperty("session.count", "0"));
         for (int i = 0; i < count; i++) {
             String path = props.getProperty("session.file." + i);
-            if (path != null) session.add(path);
+            long pos = 0;
+            try { pos = Long.parseLong(props.getProperty("session.pos." + i, "0")); } catch (Exception e) {}
+            if (path != null) session.add(new SessionTab(path, pos));
         }
         return session;
     }

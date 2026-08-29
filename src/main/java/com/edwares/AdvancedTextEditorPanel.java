@@ -1769,10 +1769,14 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     public void loadFile(File file) {
+        loadFile(file, -1);
+    }
+
+    public void loadFile(File file, long explicitPosition) {
         // --- Capture global position if reloading the same file ---
         boolean isReload = (this.activeFile != null
                 && this.activeFile.getAbsolutePath().equals(file.getAbsolutePath()));
-        final long savedPosition = isReload ? getGlobalCaretByteOffset() : 0;
+        final long savedPosition = explicitPosition != -1 ? explicitPosition : (isReload ? getGlobalCaretByteOffset() : 0);
 
         this.activeFile = file;
         fileManager.setFile(file);
@@ -1790,7 +1794,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         // --- Create a callback to restore the position after the initial chunk loads
         // ---
         Runnable postLoadAction = null;
-        if (isReload) {
+        if (isReload || explicitPosition != -1) {
             postLoadAction = () -> {
                 long fileLen = activeFile.length();
                 // Ensure we don't try to place the cursor past the end if the file was

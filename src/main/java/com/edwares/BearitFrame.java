@@ -268,12 +268,12 @@ public class BearitFrame extends JFrame {
         setJMenuBar(createMenuBar());
 
         // Load previous sessions ---
-        List<String> sessionFiles = BearitProperties.getInstance().getSession();
-        if (!sessionFiles.isEmpty()) {
-            for (String path : sessionFiles) {
-                File f = new File(path);
+        List<BearitProperties.SessionTab> sessionTabs = BearitProperties.getInstance().getSession();
+        if (!sessionTabs.isEmpty()) {
+            for (BearitProperties.SessionTab tab : sessionTabs) {
+                File f = new File(tab.path);
                 if (f.exists()) {
-                    addNewTab(f);
+                    addNewTab(f, tab.position);
                 }
             }
             
@@ -297,16 +297,16 @@ public class BearitFrame extends JFrame {
             props.setFrameWidth(getWidth());
             props.setFrameHeight(getHeight());
             // Save Session ---
-            List<String> openFiles = new ArrayList<>();
+            List<BearitProperties.SessionTab> openFiles = new ArrayList<>();
             for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
                 Component c = tabbedPane.getComponentAt(i);
                 if (c instanceof AdvancedTextEditorPanel) {
                     File f = ((AdvancedTextEditorPanel) c).getActiveFile();
-                    if (f != null) openFiles.add(f.getAbsolutePath());
+                    if (f != null) openFiles.add(new BearitProperties.SessionTab(f.getAbsolutePath(), ((AdvancedTextEditorPanel) c).getGlobalCaretByteOffset()));
                 }
                 if (c instanceof BearitTextHexWrapper) {
                     File f = ((BearitTextHexWrapper) c).getHiddenTextEditor().getActiveFile();
-                    if (f != null) openFiles.add(f.getAbsolutePath());
+                    if (f != null) openFiles.add(new BearitProperties.SessionTab(f.getAbsolutePath(), ((BearitTextHexWrapper) c).getHiddenTextEditor().getGlobalCaretByteOffset()));
                 }
             }
             // Pass the current tab index to the session saver
@@ -329,6 +329,10 @@ public class BearitFrame extends JFrame {
     }
 
     private void addNewTab(File file) {
+        addNewTab(file, -1);
+    }
+
+    private void addNewTab(File file, long initialPosition) {
         isUpdatingTabs = true; // Engage lock
         try {
             AdvancedTextEditorPanel editor = new AdvancedTextEditorPanel();
@@ -390,7 +394,7 @@ public class BearitFrame extends JFrame {
             });
 
             if (file != null) {
-                editor.loadFile(file);
+                editor.loadFile(file, initialPosition);
                 BearitProperties.getInstance().addRecentFile(file.getAbsolutePath());
             } else {
                 editor.createNewDocument();
