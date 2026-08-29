@@ -20,6 +20,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Deque;
+import java.util.ArrayDeque;
 
 public class BearitFrame extends JFrame {
     // Singleton instance reference for global access (e.g., from static contexts)
@@ -42,6 +44,8 @@ public class BearitFrame extends JFrame {
     private JRadioButtonMenuItem darkThemeItem;
 
     private JToggleButton btnToggleHex;
+    
+    private final Deque<String> recentlyClosedFiles = new ArrayDeque<>();
 
     public static BearitFrame getInstance() {
         return instance;
@@ -534,6 +538,9 @@ public class BearitFrame extends JFrame {
                 }
             }
         }
+        if (editor.hasActiveFile()) {
+            recentlyClosedFiles.push(editor.getActiveFile().getAbsolutePath());
+        }
         
         isUpdatingTabs = true; // Engage lock
         try {
@@ -652,6 +659,55 @@ public class BearitFrame extends JFrame {
         File selected = DialogUtil.showOpenFileDialog(this, "Open File");    
         if (selected != null) {
             openFileInTab(selected);//fileChooser.getSelectedFile());
+        }
+    }
+
+    private void performOpenFilePath() {
+        String path = DialogUtil.showInputDialog(this, "Enter file path:", "Open File Path");
+        if (path != null && !path.trim().isEmpty()) {
+            openFileInTab(new File(path.trim()));
+        }
+    }
+
+    private void performCloseFile() {
+        AdvancedTextEditorPanel editor = getActiveEditor();
+        if (editor != null) {
+            closeTab(editor);
+        }
+    }
+
+    private void performCloseAllFiles() {
+        // Collect all tabs to avoid concurrent modification issues
+        List<AdvancedTextEditorPanel> editors = new ArrayList<>();
+        for (int i = 0; i < tabbedPane.getTabCount(); i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            if (c instanceof AdvancedTextEditorPanel) {
+                editors.add((AdvancedTextEditorPanel) c);
+            } else if (c instanceof BearitTextHexWrapper) {
+                editors.add(((BearitTextHexWrapper) c).getHiddenTextEditor());
+            }
+        }
+        for (AdvancedTextEditorPanel editor : editors) {
+            closeTab(editor);
+        }
+    }
+
+    private void performRestoreClosedFile() {
+        if (!recentlyClosedFiles.isEmpty()) {
+            String path = recentlyClosedFiles.pop();
+            openFileInTab(new File(path));
+        } else {
+            DialogUtil.showMessageDialog(this, "No recently closed files available.", "Restore Closed File", JOptionPane.INFORMATION_MESSAGE);
+        }
+    }
+
+    private void performOpenAllRecentFiles() {
+        List<String> recentFiles = BearitProperties.getInstance().getRecentFiles();
+        for (String path : recentFiles) {
+            File f = new File(path);
+            if (f.exists()) {
+                openFileInTab(f);
+            }
         }
     }
 
@@ -1454,6 +1510,8 @@ public class BearitFrame extends JFrame {
         newItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_N, InputEvent.CTRL_DOWN_MASK));
         JMenuItem openItem = new JMenuItem("Open...");
         openItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_O, InputEvent.CTRL_DOWN_MASK));
+        JMenuItem openFilePathItem = new JMenuItem("Open File Path");
+        openFilePathItem.addActionListener(e -> performOpenFilePath());
 
         // --- Open Recent Submenu ---
         JMenu recentMenu = new JMenu("Open Recent");
@@ -1481,6 +1539,18 @@ public class BearitFrame extends JFrame {
                         recentMenu.add(pathItem);
                     }
                 }
+                
+                if (!recents.isEmpty()) {
+                    recentMenu.addSeparator();
+                    JMenuItem openAllItem = new JMenuItem("Open All Recent Files");
+                    openAllItem.addActionListener(evt -> performOpenAllRecentFiles());
+                    recentMenu.add(openAllItem);
+                    
+                    JMenuItem emptyRecentItem = new JMenuItem("Empty Recent Files List");
+                    emptyRecentItem.addActionListener(evt -> BearitProperties.getInstance().clearRecentFiles());
+                    recentMenu.add(emptyRecentItem);
+                }
+                
                 // Theme these brand-new items before the OS paints them to the screen!
                 DialogUtil.sweepComponents(recentMenu.getPopupMenu());
             }
@@ -1506,6 +1576,11 @@ public class BearitFrame extends JFrame {
         JMenuItem saveItem = new JMenuItem("Save");
         JMenuItem saveAsItem = new JMenuItem("Save As...");
         JMenuItem saveAllItem = new JMenuItem("Save All"); 
+        
+        JMenuItem closeFileItem = new JMenuItem("Close File");
+        JMenuItem closeAllFilesItem = new JMenuItem("Close All Files");
+        JMenuItem restoreClosedFileItem = new JMenuItem("Restore Recent Closed File");
+        
         JMenuItem exitItem = new JMenuItem("Exit");
 
         newItem.addActionListener(e -> performNew());
@@ -1518,10 +1593,15 @@ public class BearitFrame extends JFrame {
         // Add listener and shortcut to the new Save All menu item
         saveAllItem.addActionListener(e -> performSaveAll());
         
+        closeFileItem.addActionListener(e -> performCloseFile());
+        closeAllFilesItem.addActionListener(e -> performCloseAllFiles());
+        restoreClosedFileItem.addActionListener(e -> performRestoreClosedFile());
+        
         exitItem.addActionListener(e -> onClosingEvent(null));
 
         fileMenu.add(newItem);
         fileMenu.add(openItem);
+        fileMenu.add(openFilePathItem);
         fileMenu.add(recentMenu);
         fileMenu.add(mnuReload);
         fileMenu.addSeparator();
@@ -1530,6 +1610,10 @@ public class BearitFrame extends JFrame {
         fileMenu.add(saveItem);
         fileMenu.add(saveAsItem);
         fileMenu.add(saveAllItem); 
+        fileMenu.addSeparator();
+        fileMenu.add(closeFileItem);
+        fileMenu.add(closeAllFilesItem);
+        fileMenu.add(restoreClosedFileItem);
         fileMenu.addSeparator();
         fileMenu.add(exitItem);
 

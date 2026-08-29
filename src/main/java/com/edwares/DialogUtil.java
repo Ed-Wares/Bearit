@@ -81,6 +81,11 @@ public class DialogUtil {
         JDialog dialog = pane.createDialog(parent, title);
         
         themeDialog(dialog);
+        
+        // Find the JTextField and double its width (default is usually ~20 columns)
+        widenTextFields(dialog);
+        dialog.pack();
+        
         dialog.setVisible(true);
         dialog.dispose();
 
@@ -89,6 +94,16 @@ public class DialogUtil {
             return value.toString();
         }
         return null;
+    }
+
+    private static void widenTextFields(Container container) {
+        for (Component c : container.getComponents()) {
+            if (c instanceof JTextField) {
+                ((JTextField) c).setColumns(40);
+            } else if (c instanceof Container) {
+                widenTextFields((Container) c);
+            }
+        }
     }
 
     /**
