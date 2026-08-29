@@ -1068,6 +1068,18 @@ public class AdvancedTextEditorPanel extends JPanel {
             if (lblFontInfo != null) {
                 lblFontInfo.setText(" | Font: " + font.getName() + " " + font.getSize() + "pt | ");
             }
+
+            // Ensure caret is visible after font size changes the view bounds
+            SwingUtilities.invokeLater(() -> {
+                try {
+                    int pos = textArea.getCaretPosition();
+                    java.awt.Rectangle rect = textArea.modelToView(pos);
+                    if (rect != null) {
+                        textArea.scrollRectToVisible(rect);
+                    }
+                } catch (Exception e) {
+                }
+            });
         }
     }
 
