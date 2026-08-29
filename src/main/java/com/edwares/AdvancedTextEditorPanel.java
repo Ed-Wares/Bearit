@@ -1249,6 +1249,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         radLine.setSelected(lastGotoLineFlag);
         JRadioButton radPosition = new JRadioButton("Position (Byte Offset)");
         radPosition.setOpaque(false);
+        radPosition.setSelected(!lastGotoLineFlag);
 
         ButtonGroup group = new ButtonGroup();
         group.add(radLine);
@@ -2861,8 +2862,8 @@ public class AdvancedTextEditorPanel extends JPanel {
 
             Object currentSearch = comboSearch.getEditor().getItem();
             comboSearch.setModel(sModel);
-            if (currentSearch != null && !currentSearch.toString().isEmpty()) {
-                comboSearch.getEditor().setItem(currentSearch);
+            if (currentSearch != null) {
+                comboSearch.setSelectedItem(currentSearch);
             }
 
             DefaultComboBoxModel<String> rModel = new DefaultComboBoxModel<>();
@@ -2874,8 +2875,8 @@ public class AdvancedTextEditorPanel extends JPanel {
 
             Object currentReplace = comboReplace.getEditor().getItem();
             comboReplace.setModel(rModel);
-            if (currentReplace != null && !currentReplace.toString().isEmpty()) {
-                comboReplace.getEditor().setItem(currentReplace);
+            if (currentReplace != null) {
+                comboReplace.setSelectedItem(currentReplace);
             }
         } catch (Exception e) {
         }
