@@ -1847,6 +1847,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             setUnsavedChanges(false);
             restartBackgroundIndexer();
             lastKnownModifiedTime = activeFile.lastModified();
+            firePropertyChange("fileSaved", null, activeFile);
             return true;
         } catch (Exception e) {
             showError("Failed to save file: " + e.getMessage());
@@ -1869,6 +1870,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             setUnsavedChanges(false);
             restartBackgroundIndexer();
             lastKnownModifiedTime = activeFile.lastModified();
+            firePropertyChange("fileSaved", null, activeFile);
             return true;
         } catch (Exception e) {
             showError("Failed to save file: " + e.getMessage());
@@ -1924,8 +1926,10 @@ public class AdvancedTextEditorPanel extends JPanel {
                     isDirty = false;
                     setUnsavedChanges(false);
                     restartBackgroundIndexer();
-                    if (activeFile != null)
+                    if (activeFile != null) {
                         lastKnownModifiedTime = activeFile.lastModified();
+                        AdvancedTextEditorPanel.this.firePropertyChange("fileSaved", null, activeFile);
+                    }
                 } catch (Exception ex) {
                     showError("Streaming save operation failure: " + ex.getMessage());
                 } finally {
@@ -1935,6 +1939,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
         }.execute();
     }
+
 
     private void updateTitle(String newTitle) {
         String oldTitle = this.currentTitle;

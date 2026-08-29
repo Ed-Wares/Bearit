@@ -358,6 +358,16 @@ public class BearitFrame extends JFrame {
             editor.addPropertyChangeListener("editorTitle", evt -> updateTabHeader(editor, lblTitle));
             editor.addPropertyChangeListener("unsavedChanges", evt -> updateTabHeader(editor, lblTitle));
             editor.addPropertyChangeListener("requestClose", evt -> closeTab(editor));
+            editor.addPropertyChangeListener("fileSaved", evt -> {
+                File savedFile = (File) evt.getNewValue();
+                if (savedFile != null) {
+                    File propertiesFile = BearitProperties.getInstance().getPropertiesFile();
+                    if (savedFile.getAbsolutePath().equalsIgnoreCase(propertiesFile.getAbsolutePath())) {
+                        System.out.println("Properties file saved in editor. Reloading BearitProperties...");
+                        BearitProperties.getInstance().load();
+                    }
+                }
+            });
             // --- Hook up the custom drop event from the inner text editor ---
             editor.addPropertyChangeListener("filesDropped", evt -> {
                 @SuppressWarnings("unchecked")
@@ -2071,6 +2081,9 @@ public class BearitFrame extends JFrame {
         // Handle File Opening first
         if (cli.getFileToOpen() != null) {
             loadInitialFile(cli.getFileToOpen());
+        }
+        if (cli.isOpenProperties()) {
+            loadInitialFile(BearitProperties.getInstance().getPropertiesFile());
         }
 
         // Ensure we have an active tab to control

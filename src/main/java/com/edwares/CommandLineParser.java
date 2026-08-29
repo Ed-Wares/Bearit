@@ -11,6 +11,7 @@ public class CommandLineParser {
     
     private boolean hexModeOn = false;
     private boolean textModeOn = false;
+    private boolean openProperties = false;
     private String selectRange = null;
     private String searchTerm = null;
 
@@ -25,6 +26,8 @@ public class CommandLineParser {
                 hexModeOn = true;
             } else if ("-t".equalsIgnoreCase(arg)) {
                 textModeOn = true;
+            } else if ("-p".equalsIgnoreCase(arg)) {
+                openProperties = true;
             } else if ("-s".equalsIgnoreCase(arg)) {
                 if (i + 1 < args.length) {
                     selectRange = args[++i];
@@ -81,6 +84,7 @@ public class CommandLineParser {
     // Getters for the new commands
     public boolean isHexModeOn() { return hexModeOn; }
     public boolean isTextModeOn() { return textModeOn; }
+    public boolean isOpenProperties() { return openProperties; }
     public String getSelectRange() { return selectRange; }
     public String getSearchTerm() { return searchTerm; }
 
@@ -92,6 +96,7 @@ public class CommandLineParser {
             "  -?               Show this help message and exit.\n" +
             "  -h               Activate Hex Editor Mode.\n" +
             "  -t               Activate Text Editor Mode.\n" +
+            "  -p               Open properties file.\n" +
             "  -s <start,end>   Select text/bytes (e.g., -s 1024,2048).\n" +
             "  -f <search_term> Find search term.\n" +
             "  -g <SIZE_GB>     Generates a test text file.\n" +
