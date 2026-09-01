@@ -528,7 +528,19 @@ public class LargeFileManager {
         return count;
     }
 
-    public int replaceAllGlobal(Pattern pattern, String replacement, Consumer<Integer> progressPublisher, Supplier<Boolean> isCancelled) throws IOException {
+    public static boolean isMatchInColumnRange(String content, int matchStart, int matchEnd, int minCol, int maxCol) {
+        if (minCol < 0 || maxCol < 0) return true; // Disabled
+        
+        int lineStart = content.lastIndexOf('\n', matchStart - 1) + 1;
+        int startCol = matchStart - lineStart;
+        
+        int lineStartForEnd = content.lastIndexOf('\n', matchEnd - 1) + 1;
+        int endCol = matchEnd - lineStartForEnd;
+        
+        return startCol >= minCol && endCol <= maxCol;
+    }
+
+    public int replaceAllGlobal(Pattern pattern, String replacement, int minCol, int maxCol, Consumer<Integer> progressPublisher, Supplier<Boolean> isCancelled) throws IOException {
         int totalMatches = 0;
         int virtualTotalChunks = getTotalChunks();
 
@@ -547,8 +559,10 @@ public class LargeFileManager {
                 if (isCancelled != null && isCancelled.get()) {
                     return totalMatches;
                 }
-                m.appendReplacement(sb, replacement);
-                chunkMatches++;
+                if (isMatchInColumnRange(chunkContent, m.start(), m.end(), minCol, maxCol)) {
+                    m.appendReplacement(sb, replacement);
+                    chunkMatches++;
+                }
             }
             m.appendTail(sb);
             

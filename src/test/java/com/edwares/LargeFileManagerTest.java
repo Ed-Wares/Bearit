@@ -52,12 +52,46 @@ public class LargeFileManagerTest {
         // Act
         // Convert the search string to a Pattern, and provide dummy callbacks for progress and cancellation
         Pattern searchPattern = Pattern.compile(Pattern.quote("Error 404"));
-        fileManager.replaceAllGlobal(searchPattern, "Warning 200", pct -> {}, () -> false);
+        fileManager.replaceAllGlobal(searchPattern, "Warning 200", -1, -1, pct -> {}, () -> false);
 
         // Assert
         String updatedContent = fileManager.getChunkContent(0);
         assertFalse(updatedContent.contains("Error 404"), "Target string should be completely removed");
         assertTrue(updatedContent.contains("Warning 200: Not Found."), "Replacement string should be present");
+    }
+
+    @Test
+    void testIsMatchInColumnRange() {
+        String content = "Line1: abc\nLine2: def\nLine3: ghi";
+        // "def" is at index 18 (Line1 is 10 chars + \n = 11. "Line2: def" -> 11 + 7 = 18)
+        // start of "def" is 18. length is 3. end is 21.
+        // line start is 11. startCol = 18 - 11 = 7. endCol = 21 - 11 = 10.
+        
+        // Match within range 5 to 15
+        assertTrue(LargeFileManager.isMatchInColumnRange(content, 18, 21, 5, 15));
+        
+        // Match outside range 0 to 5
+        assertFalse(LargeFileManager.isMatchInColumnRange(content, 18, 21, 0, 5));
+        
+        // Disabled range (-1)
+        assertTrue(LargeFileManager.isMatchInColumnRange(content, 18, 21, -1, -1));
+    }
+
+    @Test
+    void testGlobalReplaceAllWithColumnRange(@TempDir Path tempDir) throws IOException {
+        File testFile = tempDir.resolve("test_replace_col.txt").toFile();
+        String content = "COL1 COL2 COL3\nError 404 Error 404 Error 404\n";
+        Files.writeString(testFile.toPath(), content);
+        
+        fileManager.setFile(testFile);
+
+        Pattern searchPattern = Pattern.compile(Pattern.quote("Error 404"));
+        // The first "Error 404" is at col 0-9. Second is 10-19. Third is 20-29.
+        // Replace only the second one (col 10 to 19)
+        fileManager.replaceAllGlobal(searchPattern, "Warning 200", 10, 19, pct -> {}, () -> false);
+
+        String updatedContent = fileManager.getChunkContent(0);
+        assertTrue(updatedContent.contains("Error 404 Warning 200 Error 404"), "Should only replace the match within the column range");
     }
 
     @Test

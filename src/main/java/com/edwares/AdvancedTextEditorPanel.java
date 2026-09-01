@@ -138,6 +138,9 @@ public class AdvancedTextEditorPanel extends JPanel {
     private JCheckBox chkCaseInsensitive;
     private JCheckBox chkRegex;
     private JCheckBox chkAllTabs;
+    private JCheckBox chkSearchInColumn;
+    private JTextField txtFromColumn;
+    private JTextField txtToColumn;
     private JButton btnFindPrev;
     private JButton btnFindNext;
     private JButton btnCount;
@@ -1484,6 +1487,12 @@ public class AdvancedTextEditorPanel extends JPanel {
             chkRegex.setEnabled(enabled);
         if (chkAllTabs != null)
             chkAllTabs.setEnabled(enabled);
+        if (chkSearchInColumn != null)
+            chkSearchInColumn.setEnabled(enabled);
+        if (txtFromColumn != null)
+            txtFromColumn.setEnabled(enabled);
+        if (txtToColumn != null)
+            txtToColumn.setEnabled(enabled);
         if (btnFindPrev != null)
             btnFindPrev.setEnabled(enabled);
         if (btnFindNext != null)
@@ -1517,6 +1526,14 @@ public class AdvancedTextEditorPanel extends JPanel {
         setSearchDialogEnabled(false);
         lblLoadingStatus.setText("Running full match count... 0%");
 
+        int minCol = -1, maxCol = -1;
+        if (chkSearchInColumn != null && chkSearchInColumn.isSelected()) {
+            try { minCol = Integer.parseInt(txtFromColumn.getText().trim()); } catch (Exception e) {}
+            try { maxCol = Integer.parseInt(txtToColumn.getText().trim()); } catch (Exception e) {}
+        }
+        final int fMinCol = minCol;
+        final int fMaxCol = maxCol;
+
         java.util.List<AdvancedTextEditorPanel> targets = (chkAllTabs != null && chkAllTabs.isSelected())
                 ? getAllOpenEditors()
                 : java.util.Arrays.asList(this);
@@ -1549,7 +1566,9 @@ public class AdvancedTextEditorPanel extends JPanel {
                         while (m.find()) {
                             if (isCancelled())
                                 return totalCount;
-                            totalCount++;
+                            if (LargeFileManager.isMatchInColumnRange(content, m.start(), m.end(), fMinCol, fMaxCol)) {
+                                totalCount++;
+                            }
                         }
                         chunksProcessed++;
                         if (totalGlobalChunks > 0)
@@ -1590,6 +1609,14 @@ public class AdvancedTextEditorPanel extends JPanel {
         setSearchDialogEnabled(false);
         lblLoadingStatus.setText("Replacing all globally... 0%");
 
+        int minCol = -1, maxCol = -1;
+        if (chkSearchInColumn != null && chkSearchInColumn.isSelected()) {
+            try { minCol = Integer.parseInt(txtFromColumn.getText().trim()); } catch (Exception e) {}
+            try { maxCol = Integer.parseInt(txtToColumn.getText().trim()); } catch (Exception e) {}
+        }
+        final int fMinCol = minCol;
+        final int fMaxCol = maxCol;
+
         java.util.List<AdvancedTextEditorPanel> targets = (chkAllTabs != null && chkAllTabs.isSelected())
                 ? getAllOpenEditors()
                 : java.util.Arrays.asList(this);
@@ -1617,7 +1644,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                 for (AdvancedTextEditorPanel editor : targets) {
                     if (isCancelled())
                         break;
-                    int replacedInEditor = editor.fileManager.replaceAllGlobal(p, rep,
+                    int replacedInEditor = editor.fileManager.replaceAllGlobal(p, rep, fMinCol, fMaxCol,
                             pct -> {
                                 int currentBase = chunksProcessed[0];
                                 double localContrib = (pct / 100.0) * editor.fileManager.getTotalChunks();
@@ -2795,6 +2822,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             chkCaseInsensitive = new JCheckBox("Case Insensitive");
             chkRegex = new JCheckBox("Regular Expression");
             chkAllTabs = new JCheckBox("All Open Tabs");
+            chkSearchInColumn = new JCheckBox("Search In Column");
 
             // Load saved states
             if (searchPropertiesListener != null) {
@@ -2821,6 +2849,8 @@ public class AdvancedTextEditorPanel extends JPanel {
             optionsPanel.add(chkRegex);
             optionsPanel.add(Box.createHorizontalStrut(15));
             optionsPanel.add(chkAllTabs);
+            optionsPanel.add(Box.createHorizontalStrut(15));
+            optionsPanel.add(chkSearchInColumn);
 
             gbc.gridx = 1;
             gbc.gridy = 2;
@@ -2828,8 +2858,30 @@ public class AdvancedTextEditorPanel extends JPanel {
             gbc.gridwidth = 2;
             inputPanel.add(optionsPanel, gbc);
 
+            // --- ROW 3: Column Range ---
+            JPanel colPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+            colPanel.add(new JLabel("From Column:"));
+            txtFromColumn = new JTextField(5);
+            colPanel.add(txtFromColumn);
+            colPanel.add(Box.createHorizontalStrut(10));
+            colPanel.add(new JLabel("To Column:"));
+            txtToColumn = new JTextField(5);
+            colPanel.add(txtToColumn);
+
+            gbc.gridx = 1;
+            gbc.gridy = 3;
+            gbc.weightx = 1.0;
+            gbc.gridwidth = 2;
+            colPanel.setVisible(false);
+            inputPanel.add(colPanel, gbc);
+
+            chkSearchInColumn.addActionListener(e -> {
+                colPanel.setVisible(chkSearchInColumn.isSelected());
+                searchDialog.pack();
+            });
+
             // --- Buttons Panel ---
-            JPanel pnlBtns = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+            JPanel pnlBtns = new JPanel(new FlowLayout(FlowLayout.CENTER));
             btnFindPrev = new JButton("⬆ Previous");
             btnFindNext = new JButton("⬇ Next");
             btnCount = new JButton("Count Matches");
@@ -2876,6 +2928,23 @@ public class AdvancedTextEditorPanel extends JPanel {
             searchDialog.add(pnlBtns, BorderLayout.SOUTH);
             searchDialog.pack();
             searchDialog.setLocationRelativeTo(this);
+        }
+
+        if (chkSearchInColumn != null && txtFromColumn != null && txtToColumn != null) {
+            int dot = textArea.getCaret().getDot();
+            int mark = textArea.getCaret().getMark();
+            if (dot != mark) {
+                int startOffset = Math.min(dot, mark);
+                int endOffset = Math.max(dot, mark);
+                try {
+                    int startLine = textArea.getLineOfOffset(startOffset);
+                    int endLine = textArea.getLineOfOffset(endOffset);
+                    int startCol = startOffset - textArea.getLineStartOffset(startLine);
+                    int endCol = endOffset - textArea.getLineStartOffset(endLine);
+                    txtFromColumn.setText(String.valueOf(startCol));
+                    txtToColumn.setText(String.valueOf(endCol));
+                } catch (Exception ex) {}
+            }
         }
 
         try {
@@ -3313,6 +3382,14 @@ public class AdvancedTextEditorPanel extends JPanel {
         final String fTarget = target;
         final Pattern fPattern = getSearchPattern(fTarget);
         final boolean fForward = searchForward;
+        
+        int minCol = -1, maxCol = -1;
+        if (chkSearchInColumn != null && chkSearchInColumn.isSelected()) {
+            try { minCol = Integer.parseInt(txtFromColumn.getText().trim()); } catch (Exception e) {}
+            try { maxCol = Integer.parseInt(txtToColumn.getText().trim()); } catch (Exception e) {}
+        }
+        final int fMinCol = minCol;
+        final int fMaxCol = maxCol;
 
         // Get all tabs in left-to-right physical order
         final java.util.List<AdvancedTextEditorPanel> fTargets = (chkAllTabs != null && chkAllTabs.isSelected())
@@ -3345,16 +3422,20 @@ public class AdvancedTextEditorPanel extends JPanel {
             String rawText = activeEditor.textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
             Matcher m = fPattern.matcher(rawText);
 
-            if (m.find(rawCaret)) {
-                int visualStart = Math.min(activeEditor.rawToVisualIndex(m.start()),
-                        activeEditor.textArea.getDocument().getLength());
-                int visualEnd = Math.min(activeEditor.rawToVisualIndex(m.end()),
-                        activeEditor.textArea.getDocument().getLength());
-                activeEditor.textArea.setCaretPosition(visualStart);
-                activeEditor.textArea.moveCaretPosition(visualEnd);
-                activeEditor.textArea.requestFocusInWindow();
-                setSearchDialogEnabled(true);
-                return;
+            boolean found = m.find(rawCaret);
+            while (found) {
+                if (LargeFileManager.isMatchInColumnRange(rawText, m.start(), m.end(), fMinCol, fMaxCol)) {
+                    int visualStart = Math.min(activeEditor.rawToVisualIndex(m.start()),
+                            activeEditor.textArea.getDocument().getLength());
+                    int visualEnd = Math.min(activeEditor.rawToVisualIndex(m.end()),
+                            activeEditor.textArea.getDocument().getLength());
+                    activeEditor.textArea.setCaretPosition(visualStart);
+                    activeEditor.textArea.moveCaretPosition(visualEnd);
+                    activeEditor.textArea.requestFocusInWindow();
+                    setSearchDialogEnabled(true);
+                    return;
+                }
+                found = m.find();
             }
         } else {
             int rawCaret = activeEditor.visualToRawIndex(visualCaret);
@@ -3365,8 +3446,10 @@ public class AdvancedTextEditorPanel extends JPanel {
             int lastIdx = -1;
             int lastLen = 0;
             while (m.find()) {
-                lastIdx = m.start();
-                lastLen = m.end() - m.start();
+                if (LargeFileManager.isMatchInColumnRange(searchableRawText, m.start(), m.end(), fMinCol, fMaxCol)) {
+                    lastIdx = m.start();
+                    lastLen = m.end() - m.start();
+                }
             }
 
             if (lastIdx != -1) {
@@ -3441,13 +3524,15 @@ public class AdvancedTextEditorPanel extends JPanel {
                         Matcher mc = fPattern.matcher(content);
 
                         if (fForward) {
-                            if (mc.find()) {
-                                MatchResult res = new MatchResult();
-                                res.editor = editor;
-                                res.chunkIdx = i;
-                                res.foundIdx = mc.start();
-                                res.foundLen = mc.end() - mc.start();
-                                return res;
+                            while (mc.find()) {
+                                if (LargeFileManager.isMatchInColumnRange(content, mc.start(), mc.end(), fMinCol, fMaxCol)) {
+                                    MatchResult res = new MatchResult();
+                                    res.editor = editor;
+                                    res.chunkIdx = i;
+                                    res.foundIdx = mc.start();
+                                    res.foundLen = mc.end() - mc.start();
+                                    return res;
+                                }
                             }
                         } else {
                             int tempIdx = -1;
@@ -3455,8 +3540,10 @@ public class AdvancedTextEditorPanel extends JPanel {
                             while (mc.find()) {
                                 if (isCancelled())
                                     return null;
-                                tempIdx = mc.start();
-                                tempLen = mc.end() - mc.start();
+                                if (LargeFileManager.isMatchInColumnRange(content, mc.start(), mc.end(), fMinCol, fMaxCol)) {
+                                    tempIdx = mc.start();
+                                    tempLen = mc.end() - mc.start();
+                                }
                             }
                             if (tempIdx != -1) {
                                 MatchResult res = new MatchResult();
@@ -3550,10 +3637,24 @@ public class AdvancedTextEditorPanel extends JPanel {
             String strippedSelection = selected.replace("\u200B\n", "").replace("\u200B", "");
             Pattern p = getSearchPattern(target);
             if (p.matcher(strippedSelection).matches() && !isCurrentlyPreview) {
-                String rep = (chkRegex != null && chkRegex.isSelected()) ? replacement
-                        : Matcher.quoteReplacement(replacement);
-                Matcher m = p.matcher(strippedSelection);
-                textArea.replaceSelection(m.replaceFirst(rep));
+                int minCol = -1, maxCol = -1;
+                if (chkSearchInColumn != null && chkSearchInColumn.isSelected()) {
+                    try { minCol = Integer.parseInt(txtFromColumn.getText().trim()); } catch (Exception e) {}
+                    try { maxCol = Integer.parseInt(txtToColumn.getText().trim()); } catch (Exception e) {}
+                }
+                
+                int startOffset = textArea.getSelectionStart();
+                int endOffset = textArea.getSelectionEnd();
+                String rawText = textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
+                int rawStart = visualToRawIndex(startOffset);
+                int rawEnd = visualToRawIndex(endOffset);
+                
+                if (LargeFileManager.isMatchInColumnRange(rawText, rawStart, rawEnd, minCol, maxCol)) {
+                    String rep = (chkRegex != null && chkRegex.isSelected()) ? replacement
+                            : Matcher.quoteReplacement(replacement);
+                    Matcher m = p.matcher(strippedSelection);
+                    textArea.replaceSelection(m.replaceFirst(rep));
+                }
             }
         }
         performFind(target, true);
