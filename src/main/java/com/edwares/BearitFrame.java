@@ -1834,6 +1834,16 @@ public class BearitFrame extends JFrame {
         viewMenu.addSeparator();
         viewMenu.add(whitespaceMenuItem);
         viewMenu.add(eolMenuItem);
+        
+        viewMenu.addSeparator();
+        JMenuItem countSummaryItem = new JMenuItem("Count Summary");
+        countSummaryItem.addActionListener(e -> {
+            AdvancedTextEditorPanel editor = getActiveEditor();
+            if (editor != null) {
+                editor.performCountSummary();
+            }
+        });
+        viewMenu.add(countSummaryItem);
 
         // --- Tools Menu ---
         JMenu toolsMenu = new JMenu("Tools");

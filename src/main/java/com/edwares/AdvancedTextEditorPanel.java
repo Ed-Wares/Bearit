@@ -1603,6 +1603,74 @@ public class AdvancedTextEditorPanel extends JPanel {
         activeSearchWorker.execute();
     }
 
+    public void performCountSummary() {
+        lblLoadingStatus.setText("Calculating summary... 0%");
+        
+        SwingWorker<String, Integer> worker = new SwingWorker<String, Integer>() {
+            @Override
+            protected String doInBackground() throws Exception {
+                long totalLines = 0;
+                long totalWords = 0;
+                long totalChars = 0;
+                int totalChunks = fileManager.getTotalChunks();
+
+                for (int i = 0; i < totalChunks; i++) {
+                    if (isCancelled()) return null;
+                    String content = fileManager.getChunkContent(i);
+                    totalChars += content.length();
+                    
+                    for (int j = 0; j < content.length(); j++) {
+                        if (content.charAt(j) == '\n') totalLines++;
+                    }
+                    
+                    boolean inWord = false;
+                    for (int j = 0; j < content.length(); j++) {
+                        if (Character.isWhitespace(content.charAt(j))) {
+                            inWord = false;
+                        } else {
+                            if (!inWord) {
+                                totalWords++;
+                                inWord = true;
+                            }
+                        }
+                    }
+
+                    int pct = (int) (((i + 1) * 100.0) / totalChunks);
+                    publish(pct);
+                }
+                
+                if (totalChars > 0) totalLines++;
+                
+                String fileName = activeFile != null ? activeFile.getName() : "Untitled";
+
+                return String.format("<html><b>File: %s</b><br><br><b>Lines:</b> %,d<br><b>Words:</b> %,d<br><b>Characters:</b> %,d</html>", fileName, totalLines, totalWords, totalChars);
+            }
+
+            @Override
+            protected void process(java.util.List<Integer> chunks) {
+                if (!chunks.isEmpty()) {
+                    lblLoadingStatus.setText("Calculating summary... " + chunks.get(chunks.size() - 1) + "%");
+                }
+            }
+
+            @Override
+            protected void done() {
+                lblLoadingStatus.setText("");
+                try {
+                    String result = get();
+                    if (result != null) {
+                        JOptionPane pane = new JOptionPane(result, JOptionPane.INFORMATION_MESSAGE);
+                        JDialog dialog = pane.createDialog(getDialogParent(), "Count Summary");
+                        dialog.setModal(false);
+                        dialog.setVisible(true);
+                    }
+                } catch (Exception ex) {
+                }
+            }
+        };
+        worker.execute();
+    }
+
     public void performReplaceAll(String target, String replacement) {
         if (target == null || target.isEmpty())
             return;
