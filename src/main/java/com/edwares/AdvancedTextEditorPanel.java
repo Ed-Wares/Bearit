@@ -1243,7 +1243,13 @@ public class AdvancedTextEditorPanel extends JPanel {
                 long selStart = Math.min(absDot, absMark);
                 long selEnd = Math.max(absDot, absMark);
                 long width = selEnd - selStart;
-                lblCursorInfo.setText(String.format("Line: %d | Col: %d | Sel: %d - %d (width: %d)", absoluteLine, col,
+                
+                int startOffset = Math.min(dot, mark);
+                int endOffset = Math.max(dot, mark);
+                int startCol = startOffset - textArea.getLineStartOffset(textArea.getLineOfOffset(startOffset));
+                int endCol = endOffset - textArea.getLineStartOffset(textArea.getLineOfOffset(endOffset));
+                
+                lblCursorInfo.setText(String.format("Line: %d | Col: %d - %d | Sel: %d - %d (width: %d)", absoluteLine, startCol, endCol,
                         selStart, selEnd, width));
             }
         } catch (Exception e) {
