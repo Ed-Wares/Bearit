@@ -1503,6 +1503,11 @@ public class AdvancedTextEditorPanel extends JPanel {
             btnReplace.setEnabled(enabled);
         if (btnReplaceAll != null)
             btnReplaceAll.setEnabled(enabled);
+            
+        if (enabled) {
+            updateSearchButtonState();
+        }
+            
         if (btnSwap != null)
             btnSwap.setEnabled(enabled);
         // --- Automatically pull focus back when re-enabling UI ---
@@ -1518,6 +1523,22 @@ public class AdvancedTextEditorPanel extends JPanel {
                 }
             });
         }
+    }
+
+    private void updateSearchButtonState() {
+        boolean enabled = true;
+        if (chkSearchInColumn != null && chkSearchInColumn.isSelected()) {
+            if (txtFromColumn != null && txtToColumn != null) {
+                if (txtFromColumn.getText().trim().isEmpty() || txtToColumn.getText().trim().isEmpty()) {
+                    enabled = false;
+                }
+            }
+        }
+        if (btnFindPrev != null) btnFindPrev.setEnabled(enabled);
+        if (btnFindNext != null) btnFindNext.setEnabled(enabled);
+        if (btnCount != null) btnCount.setEnabled(enabled);
+        if (btnReplace != null) btnReplace.setEnabled(enabled);
+        if (btnReplaceAll != null) btnReplaceAll.setEnabled(enabled);
     }
 
     public void performCountMatches(String target) {
@@ -2946,8 +2967,17 @@ public class AdvancedTextEditorPanel extends JPanel {
             chkSearchInColumn.addActionListener(e -> {
                 colPanel.setVisible(chkSearchInColumn.isSelected());
                 searchDialog.pack();
+                updateSearchButtonState();
             });
-
+            
+            javax.swing.event.DocumentListener docListener = new javax.swing.event.DocumentListener() {
+                public void insertUpdate(javax.swing.event.DocumentEvent e) { updateSearchButtonState(); }
+                public void removeUpdate(javax.swing.event.DocumentEvent e) { updateSearchButtonState(); }
+                public void changedUpdate(javax.swing.event.DocumentEvent e) { updateSearchButtonState(); }
+            };
+            txtFromColumn.getDocument().addDocumentListener(docListener);
+            txtToColumn.getDocument().addDocumentListener(docListener);
+            
             // --- Buttons Panel ---
             JPanel pnlBtns = new JPanel(new FlowLayout(FlowLayout.CENTER));
             btnFindPrev = new JButton("⬆ Previous");
@@ -3014,6 +3044,8 @@ public class AdvancedTextEditorPanel extends JPanel {
                 } catch (Exception ex) {}
             }
         }
+        
+        updateSearchButtonState();
 
         try {
             // Load the search and replace history from the properties listener if available
