@@ -10,14 +10,17 @@ By utilizing a custom virtual-paging architecture, background asynchronous prelo
 
 * **Massive File Support:** Open, view, and edit 50GB+ files instantly without `OutOfMemoryError` crashes.
 * **Multi-Tabbed Interface:** Open and manage multiple massive files or scripts simultaneously in a clean, tabbed layout.
-* **Integrated Hex Editor**: Instantly toggle any file into a high-performance Hex view with an interactive Data Inspector and offset jumping.
+* **Integrated Hex Editor:** Instantly toggle any file into a high-performance Hex view with an interactive Data Inspector and offset jumping.
 * **Asynchronous Paging:** Files are streamed from disk in 25MB chunks. Background threads preload adjacent chunks while scrolling, ensuring a stutter-free experience.
 * **Global Search & Replace:** Perform file-wide "Find Next", "Find Previous", "Count Matches", and "Replace All" operations across gigabytes of data using memory-safe stream processing.
+* **Column-Constrained Searching:** Filter search and replace operations to specific column boundaries within massive datasets.
+* **Document Statistics:** View detailed count summaries for lines, words, and characters for any loaded file.
 * **Persistent Undo/Redo:** An intelligent LRU cache keeps track of your recently edited chunks, allowing you to scroll away, scroll back, and still hit `Ctrl+Z` to undo your changes.
 * **Zero Dependencies:** Built entirely with standard Java 21 NIO and Swing libraries. No external JARs or heavy frameworks are required.
 * **Test Data Generator:** Includes a built-in tool to instantly spool up massive gigabyte-scale test files for benchmarking.
 * **Native Dark Theme:** A fully integrated, system-level dark mode built entirely in pure Java Swing.
-* **Custom Toolbar Tools:** Map external scripts or command-line operations to custom toolbar buttons (complete with custom icons and %rp relative path resolution).
+* **Custom Toolbar Tools:** Map external scripts or command-line operations to custom toolbar buttons (complete with custom icons, `%rp` relative path resolution, and auto-focusing output tabs).
+* **Smart File Handling:** Intelligent status bar updates and context-aware file prompts when handling non-existent or externally modified files.
 
 
 ---
@@ -32,7 +35,7 @@ Here is a quick look at the application:
 ## 📋 Requirements
 
 To build and run Bearit, you will need:
-* **Java Development Kit (JDK) 21** or higher. (only requirement for running Bearit)
+* **Java Development Kit (JDK) 21** or higher. (The only requirement for running Bearit)
 * **Apache Maven** (3.6.0 or higher) for building the project.
 
 ---
@@ -51,7 +54,7 @@ For the best experience, you can integrate Bearit directly into your operating s
 
 2. Navigate to the menu Help -> Install Context Menu.
 
-3. Open File manager and right click on a text file.
+3. Open your file manager and right-click on a text file.
    * Windows: This automatically creates a shortcut and adds Bearit to your Windows Explorer registry.
 
    * Linux (Ubuntu/MATE): This automatically generates the necessary shell scripts and installs them into your Nautilus or Caja file manager extensions.
@@ -70,7 +73,7 @@ When running on Linux, Bearit will automatically generate a Bearit.desktop launc
    ```bash
    mvn clean package
     ```
-4. Once the build completes, the compiled executable will be located in the target/ directory as bearit-1.*.jar
+4. Once the build completes, the compiled executable will be located in the target/ directory as bearit-1.1.*.jar
 
 ---
 
@@ -85,7 +88,7 @@ Launch the application with a blank new document:
 ```bash
 bearit
 #or
-java -jar target/bearit-1.0.1.jar
+java -jar target/bearit-1.1.*.jar
 ```
 
 ### Open a File Directly
@@ -95,7 +98,7 @@ Pass a file path as an argument to instantly load it into the editor:
 ```bash
 bearit /path/to/your/largefile.log
 #or
-java -jar target/bearit-1.0.1.jar /path/to/your/largefile.log
+java -jar target/bearit-1.1.*.jar /path/to/your/largefile.log
 ```
 
 ### Options & Arguments
@@ -108,14 +111,14 @@ Display usage information:
 ```bash
 bearit -?
 #or
-java -jar target/bearit-1.0.1.jar -?
+java -jar target/bearit-1.1.*.jar -?
 ```
 
 #### Generate Test Files
 Use the `-g` flag to create a large test file filled with random data:
 
 ```bash
-java -jar target/bearit-1.0.1.jar -g 10
+java -jar target/bearit-1.1.*.jar -g 10
 ```
 This will create a 10GB file called bearit_test_file_10.00GB.txt for testing purposes.
 
