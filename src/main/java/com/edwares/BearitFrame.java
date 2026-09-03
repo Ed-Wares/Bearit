@@ -641,6 +641,25 @@ public class BearitFrame extends JFrame {
     }
 
     private void openFileInTab(File file) {
+        if (!file.exists()) {
+            int result = DialogUtil.showConfirmDialog(this,
+                    "The file '" + file.getName() + "' does not exist.\n\nWould you like to create a new file?",
+                    "Create New File", JOptionPane.YES_NO_OPTION);
+            if (result == JOptionPane.YES_OPTION) {
+                try {
+                    if (file.getParentFile() != null) {
+                        file.getParentFile().mkdirs();
+                    }
+                    file.createNewFile();
+                } catch (java.io.IOException e) {
+                    DialogUtil.showMessageDialog(this, "Could not create file:\n" + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+            } else {
+                return;
+            }
+        }
+        
         AdvancedTextEditorPanel active = getActiveEditor();
         if (active != null && !active.hasUnsavedChanges() && !active.hasActiveFile()) {
             active.loadFile(file);
