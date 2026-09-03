@@ -83,6 +83,8 @@ Bearit can be launched as a standard desktop application or controlled via termi
 Launch the application with a blank new document:
 
 ```bash
+bearit
+#or
 java -jar target/bearit-1.0.1.jar
 ```
 
@@ -91,6 +93,8 @@ java -jar target/bearit-1.0.1.jar
 Pass a file path as an argument to instantly load it into the editor:
 
 ```bash
+bearit /path/to/your/largefile.log
+#or
 java -jar target/bearit-1.0.1.jar /path/to/your/largefile.log
 ```
 
@@ -102,14 +106,16 @@ Bearit includes a built-in CLI parser for specialized tasks.
 Display usage information:
 
 ```bash
-java -jar target/bearit-1.*.jar -?
+bearit -?
+#or
+java -jar target/bearit-1.0.1.jar -?
 ```
 
 #### Generate Test Files
 Use the `-g` flag to create a large test file filled with random data:
 
 ```bash
-java -jar target/bearit-1.*.jar -g 10
+java -jar target/bearit-1.0.1.jar -g 10
 ```
 This will create a 10GB file called bearit_test_file_10.00GB.txt for testing purposes.
 
