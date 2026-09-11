@@ -2138,6 +2138,46 @@ public class AdvancedTextEditorPanel extends JPanel {
                 paste();
             }
         });
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_TAB, InputEvent.SHIFT_DOWN_MASK), "customShiftTab");
+        am.put("customShiftTab", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                if (isCurrentlyPreview) return;
+                try {
+                    int pos = textArea.getCaretPosition();
+                    if (pos == 0) return;
+                    Document doc = textArea.getDocument();
+                    int tabSize = textArea.getTabSize();
+                    
+                    // Check for single tab character
+                    String leftChar = doc.getText(pos - 1, 1);
+                    if ("\t".equals(leftChar)) {
+                        doc.remove(pos - 1, 1);
+                        return;
+                    }
+                    
+                    // Check for space indent (up to tabSize)
+                    int spacesCount = 0;
+                    for (int i = 1; i <= tabSize && pos - i >= 0; i++) {
+                        if (" ".equals(doc.getText(pos - i, 1))) {
+                            spacesCount++;
+                        } else {
+                            break;
+                        }
+                    }
+                    
+                    if (spacesCount == tabSize) {
+                        doc.remove(pos - tabSize, tabSize);
+                        return;
+                    }
+                    
+                    // Fallback: move cursor left up to 4 characters
+                    int newPos = Math.max(0, pos - 4);
+                    textArea.setCaretPosition(newPos);
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+            }
+        });
 
         // --- Custom Home/End Keys to bypass Soft-Wraps ---
         im.put(KeyStroke.getKeyStroke(KeyEvent.VK_HOME, 0), "customHome");
