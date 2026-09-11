@@ -335,32 +335,65 @@ public class AdvancedTextEditorPanel extends JPanel {
                     g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 
                     // Apply heavy bold font and high-contrast color for visibility ---
-                    g2.setFont(getFont().deriveFont(Font.BOLD));
-                    g2.setColor(currentTheme.equals("Dark") ? new Color(160, 160, 160) : new Color(140, 140, 140));
+                    Font baseFont = getFont();
+                    Font whitespaceFont = baseFont.deriveFont(Font.BOLD);
+                    
+                    float newSize = baseFont.getSize() + 6f; // Larger size for line endings
+                    Font eolFont = baseFont.deriveFont(Font.BOLD, newSize);
+                    if (showEol && !eolFont.canDisplay('\u240D')) {
+                        eolFont = new Font("Segoe UI Symbol", Font.BOLD, (int)newSize);
+                        if (!eolFont.canDisplay('\u240D')) {
+                            eolFont = new Font("Lucida Sans Unicode", Font.BOLD, (int)newSize);
+                        }
+                        if (!eolFont.canDisplay('\u240D')) {
+                            eolFont = new Font("Monospaced", Font.BOLD, (int)newSize);
+                        }
+                    }
 
-                    FontMetrics fm = g2.getFontMetrics();
-                    int ascent = fm.getAscent();
-                    int charW = fm.charWidth(' ');
-                    int spaceSymbolW = fm.stringWidth("·");
-                    int tabSymbolW = fm.stringWidth("→");
+                    g2.setColor(currentTheme.equals("Dark") ? new Color(135, 206, 250) : new Color(100, 180, 255)); // Light blue for all whitespace and EOL
+
+                    FontMetrics baseFm = g2.getFontMetrics(baseFont);
+                    int ascent = baseFm.getAscent();
+                    int charW = baseFm.charWidth(' ');
+
+                    FontMetrics wsFm = g2.getFontMetrics(whitespaceFont);
+                    int spaceSymbolW = wsFm.stringWidth("·");
+                    int tabSymbolW = wsFm.stringWidth("→");
+                    
+                    FontMetrics eolFm = g2.getFontMetrics(eolFont);
+                    int crSymbolW = eolFm.stringWidth("\u240D");
 
                     try {
                         Rectangle clip = getVisibleRect();
                         int startOffset = viewToModel2D(new Point(0, clip.y));
-                        int endOffset = viewToModel2D(new Point(0, clip.y + clip.height + fm.getHeight()));
+                        int endOffset = viewToModel2D(new Point(0, clip.y + clip.height + baseFm.getHeight()));
                         String text = getDocument().getText(startOffset, endOffset - startOffset);
 
                         for (int i = 0; i < text.length(); i++) {
                             char c = text.charAt(i);
                             if (showWhitespace && c == ' ') {
+                                g2.setFont(whitespaceFont);
                                 Rectangle r = modelToView2D(startOffset + i).getBounds();
                                 g2.drawString("·", r.x + (charW - spaceSymbolW) / 2, r.y + ascent);
                             } else if (showWhitespace && c == '\t') {
+                                g2.setFont(whitespaceFont);
                                 Rectangle r = modelToView2D(startOffset + i).getBounds();
-                                g2.drawString("→", r.x + (charW - tabSymbolW) / 2, r.y + ascent);
+                                Rectangle rNext = modelToView2D(startOffset + i + 1).getBounds();
+                                int tabW = (rNext != null && rNext.y == r.y && rNext.x > r.x) ? (rNext.x - r.x) : (charW * textArea.getTabSize());
+                                g2.drawString("→", r.x + (tabW - tabSymbolW) / 2, r.y + ascent);
+                            } else if (showEol && c == '\r') {
+                                g2.setFont(eolFont);
+                                Rectangle r = modelToView2D(startOffset + i).getBounds();
+                                g2.drawString("\u240D", r.x + charW / 2, r.y + ascent);
                             } else if (showEol && c == '\n') {
+                                g2.setFont(eolFont);
                                 Rectangle r = modelToView2D(startOffset + i).getBounds();
-                                g2.drawString("¶", r.x + charW / 2, r.y + ascent);
+                                int offsetX = 0;
+                                if (i > 0 && text.charAt(i - 1) == '\r') {
+                                    // Shift LF to the right if it follows a CR to avoid overlapping
+                                    offsetX = crSymbolW + 4;
+                                }
+                                g2.drawString("\u240A", r.x + charW / 2 + offsetX, r.y + ascent);
                             }
                         }
                     } catch (Exception ex) {
