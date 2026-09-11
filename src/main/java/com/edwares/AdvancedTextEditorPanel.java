@@ -98,6 +98,11 @@ public class AdvancedTextEditorPanel extends JPanel {
     private boolean wasEditorFocused = false;
     private boolean isTransient = false; // --- Tracks if this is a temporary tab (like Tool Output)
 
+    private String autoSaveId = null;
+
+    public String getAutoSaveId() { return autoSaveId; }
+    public void setAutoSaveId(String id) { this.autoSaveId = id; }
+
     private boolean showWhitespace = false;
     private boolean showEol = false;
     private String currentTheme = "Light";
@@ -631,7 +636,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         lblIndexingStatus = newLabelTextField("");
         lblIndexingStatus.setForeground(new Color(120, 120, 120));
         lblFontInfo = newLabelTextField("Font: 14pt");
-        lblCursorInfo = newLabelTextField("Line: 1 | Pos: 0");
+        lblCursorInfo = newLabelTextField("| Line: 1 | Pos: 0");
 
         lineNumberPanel = new LineNumberPanel(this, textArea);
 
@@ -1102,7 +1107,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                 lineNumberPanel.adjustMetricSizing();
             }
             if (lblFontInfo != null) {
-                lblFontInfo.setText(" | Font: " + font.getName() + " " + font.getSize() + "pt | ");
+                lblFontInfo.setText(" | Font: " + font.getName() + " " + font.getSize() + "pt ");
             }
 
             // Ensure caret is visible after font size changes the view bounds
@@ -1274,7 +1279,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             long absMark = currentChunkStartOffset + mark;
 
             if (dot == mark) {
-                lblCursorInfo.setText(String.format("Line: %d | Col: %d | Pos: %d", absoluteLine, col, absDot));
+                lblCursorInfo.setText(String.format("| Line: %d | Col: %d | Pos: %d", absoluteLine, col, absDot));
             } else {
                 long selStart = Math.min(absDot, absMark);
                 long selEnd = Math.max(absDot, absMark);
@@ -1285,7 +1290,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                 int startCol = startOffset - textArea.getLineStartOffset(textArea.getLineOfOffset(startOffset));
                 int endCol = endOffset - textArea.getLineStartOffset(textArea.getLineOfOffset(endOffset));
                 
-                lblCursorInfo.setText(String.format("Line: %d | Col: %d - %d | Sel: %d - %d (width: %d)", absoluteLine, startCol, endCol,
+                lblCursorInfo.setText(String.format("| Line: %d | Col: %d - %d | Sel: %d - %d (width: %d)", absoluteLine, startCol, endCol,
                         selStart, selEnd, width));
             }
         } catch (Exception e) {
@@ -1968,6 +1973,27 @@ public class AdvancedTextEditorPanel extends JPanel {
         } catch (IOException ex) {
             showError("Failed to open file: " + ex.getMessage());
         }
+    }
+
+    public void autoSaveTo(File destFile) {
+        try {
+            fileManager.exportUnsavedContent(getCommitText(), destFile);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void recoverUnsavedContent(String content) {
+        SwingUtilities.invokeLater(() -> {
+            try {
+                if (!isCurrentlyPreview) {
+                    textArea.setText(content);
+                    textArea.setCaretPosition(0);
+                    isDirty = true;
+                    setUnsavedChanges(true);
+                }
+            } catch (Exception e) {}
+        });
     }
 
     public void saveCurrentFile() {

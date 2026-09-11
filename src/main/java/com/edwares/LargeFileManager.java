@@ -850,6 +850,29 @@ public class LargeFileManager {
         dirtyChunks.clear();
     }
 
+    public void exportUnsavedContent(String currentText, File destFile) throws IOException {
+        int virtualTotalChunks = getTotalChunks();
+        try (FileChannel destChannel = FileChannel.open(destFile.toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
+             FileChannel srcChannel = (currentFile != null && Files.exists(currentFile.toPath())) ? FileChannel.open(currentFile.toPath(), StandardOpenOption.READ) : null) {
+            
+            for (int i = 0; i < virtualTotalChunks; i++) {
+                if (i == currentChunkIndex) {
+                    byte[] bytes = currentText.getBytes(getActiveCharset());
+                    destChannel.write(ByteBuffer.wrap(bytes));
+                } else if (dirtyChunks.containsKey(i)) {
+                    byte[] bytes = Files.readAllBytes(dirtyChunks.get(i).toPath());
+                    destChannel.write(ByteBuffer.wrap(bytes));
+                } else if (srcChannel != null) {
+                    long[] boundaries = getChunkBoundaries(i);
+                    long bytesToTransfer = boundaries[1] - boundaries[0];
+                    if (bytesToTransfer > 0) {
+                        srcChannel.transferTo(boundaries[0], bytesToTransfer, destChannel);
+                    }
+                }
+            }
+        }
+    }
+
     private long computeAbsoluteLineOffset(int targetIndex) throws IOException {
         if (targetIndex == 0) return 1;
         long lineCounter = 1;

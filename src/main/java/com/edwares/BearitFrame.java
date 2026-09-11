@@ -46,6 +46,8 @@ public class BearitFrame extends JFrame {
     private JToggleButton btnToggleHex;
     
     private final Deque<String> recentlyClosedFiles = new ArrayDeque<>();
+    
+    private static int untitledCounter = 1;
 
     public static BearitFrame getInstance() {
         return instance;
@@ -275,15 +277,20 @@ public class BearitFrame extends JFrame {
         List<BearitProperties.SessionTab> sessionTabs = BearitProperties.getInstance().getSession();
         if (!sessionTabs.isEmpty()) {
             for (BearitProperties.SessionTab tab : sessionTabs) {
-                File f = new File(tab.path);
-                if (f.exists()) {
-                    addNewTab(f, tab.position);
+                if (tab.path != null && tab.path.startsWith("?Untitled:")) {
+                    String untitledId = tab.path.substring("?Untitled:".length());
+                    addNewTab(null, tab.position, untitledId);
+                } else {
+                    File f = new File(tab.path);
+                    if (f.exists()) {
+                        addNewTab(f, tab.position, null);
+                    }
                 }
             }
             
         }
         // Ensure at least one tab is open if session was empty or broken
-        if (tabbedPane.getTabCount() == 1) addNewTab(null);
+        if (tabbedPane.getTabCount() == 1) addNewTab(null, -1, null);
 
         // Restore the previously active tab index, ensuring it's within bounds
         int savedIndex = BearitProperties.getInstance().getSessionActiveIndex();
@@ -293,6 +300,59 @@ public class BearitFrame extends JFrame {
 
         // Force the UI to adapt to the saved theme immediately on launch
         applyTheme(BearitProperties.getInstance().getTheme());
+        setupAutoSaveTimer();
+    }
+
+    private void setupAutoSaveTimer() {
+        int autosaveSeconds = BearitProperties.getInstance().getAutosaveTimer();
+        if (autosaveSeconds <= 0) {
+            return;
+        }
+        int delayMs = autosaveSeconds * 1000;
+        Timer autoSaveTimer = new Timer(delayMs, e -> {
+            new SwingWorker<Void, Void>() {
+                @Override
+                protected Void doInBackground() throws Exception {
+                    performAutoSave();
+                    return null;
+                }
+            }.execute();
+        });
+        autoSaveTimer.setInitialDelay(delayMs);
+        autoSaveTimer.start();
+    }
+    
+    private void performAutoSave() {
+        BearitProperties props = BearitProperties.getInstance();
+        File unsavedDir = new File(props.getPropertiesFile().getParentFile(), "unsaved");
+        if (!unsavedDir.exists()) unsavedDir.mkdirs();
+        
+        List<BearitProperties.SessionTab> sessionTabs = new ArrayList<>();
+        int activeIdx = tabbedPane.getSelectedIndex();
+        
+        for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            AdvancedTextEditorPanel editor = null;
+            if (c instanceof AdvancedTextEditorPanel) {
+                editor = (AdvancedTextEditorPanel) c;
+            } else if (c instanceof BearitTextHexWrapper) {
+                editor = ((BearitTextHexWrapper) c).getHiddenTextEditor();
+            }
+            if (editor != null) {
+                File f = editor.getActiveFile();
+                String path = f != null ? f.getAbsolutePath() : "?Untitled:" + editor.getAutoSaveId();
+                sessionTabs.add(new BearitProperties.SessionTab(path, editor.getGlobalCaretByteOffset()));
+                
+                if (editor.hasUnsavedChanges() || f == null) {
+                    if (f == null || f.length() <= 50_000_000) {
+                        File autosaveFile = new File(unsavedDir, editor.getAutoSaveId() + ".txt");
+                        editor.autoSaveTo(autosaveFile);
+                    }
+                }
+            }
+        }
+        
+        props.saveSession(sessionTabs, activeIdx);
     }
 
     private void onClosingEvent(WindowEvent e) {
@@ -304,17 +364,31 @@ public class BearitFrame extends JFrame {
             List<BearitProperties.SessionTab> openFiles = new ArrayList<>();
             for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
                 Component c = tabbedPane.getComponentAt(i);
+                AdvancedTextEditorPanel editor = null;
                 if (c instanceof AdvancedTextEditorPanel) {
-                    File f = ((AdvancedTextEditorPanel) c).getActiveFile();
-                    if (f != null) openFiles.add(new BearitProperties.SessionTab(f.getAbsolutePath(), ((AdvancedTextEditorPanel) c).getGlobalCaretByteOffset()));
+                    editor = (AdvancedTextEditorPanel) c;
                 }
                 if (c instanceof BearitTextHexWrapper) {
-                    File f = ((BearitTextHexWrapper) c).getHiddenTextEditor().getActiveFile();
-                    if (f != null) openFiles.add(new BearitProperties.SessionTab(f.getAbsolutePath(), ((BearitTextHexWrapper) c).getHiddenTextEditor().getGlobalCaretByteOffset()));
+                    editor = ((BearitTextHexWrapper) c).getHiddenTextEditor();
+                }
+                if (editor != null) {
+                    File f = editor.getActiveFile();
+                    String path = f != null ? f.getAbsolutePath() : "?Untitled:" + editor.getAutoSaveId();
+                    openFiles.add(new BearitProperties.SessionTab(path, editor.getGlobalCaretByteOffset()));
                 }
             }
             // Pass the current tab index to the session saver
             props.saveSession(openFiles, tabbedPane.getSelectedIndex());
+            
+            // Clean exit, remove all autosaves
+            File unsavedDir = new File(props.getPropertiesFile().getParentFile(), "unsaved");
+            if (unsavedDir.exists() && unsavedDir.isDirectory()) {
+                File[] files = unsavedDir.listFiles();
+                if (files != null) {
+                    for (File f : files) f.delete();
+                }
+            }
+            
             System.exit(0);
         }
     }
@@ -323,6 +397,9 @@ public class BearitFrame extends JFrame {
 
     private void updateTabHeader(AdvancedTextEditorPanel editor, JLabel lblTitle) {
         String title = editor.getCurrentTitle();
+        if ("Untitled".equals(title) && editor.getAutoSaveId() != null && editor.getAutoSaveId().startsWith("Untitled")) {
+            title = editor.getAutoSaveId();
+        }
         if (editor.hasUnsavedChanges()) {
             title += "*";
         }
@@ -333,10 +410,14 @@ public class BearitFrame extends JFrame {
     }
 
     private void addNewTab(File file) {
-        addNewTab(file, -1);
+        addNewTab(file, -1, null);
     }
 
     private void addNewTab(File file, long initialPosition) {
+        addNewTab(file, initialPosition, null);
+    }
+
+    private void addNewTab(File file, long initialPosition, String forceAutoSaveId) {
         isUpdatingTabs = true; // Engage lock
         try {
             AdvancedTextEditorPanel editor = new AdvancedTextEditorPanel();
@@ -348,7 +429,28 @@ public class BearitFrame extends JFrame {
             editor.setShowWhitespace(props.isShowWhitespace());
             editor.setShowEol(props.isShowEol());
             editor.setEditorMaxLineLength(props.getMaxLineLength());
+            
+            if (forceAutoSaveId != null) {
+                editor.setAutoSaveId(forceAutoSaveId);
+                try {
+                    if (forceAutoSaveId.startsWith("Untitled")) {
+                        int num = Integer.parseInt(forceAutoSaveId.substring(8));
+                        if (num >= untitledCounter) untitledCounter = num + 1;
+                    }
+                } catch (Exception e) {}
+            } else if (file == null) {
+                editor.setAutoSaveId("Untitled" + (untitledCounter++));
+            } else {
+                try {
+                    String base64Path = java.util.Base64.getUrlEncoder().encodeToString(file.getAbsolutePath().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    editor.setAutoSaveId(file.getName() + "_" + base64Path);
+                } catch (Exception ex) {
+                    editor.setAutoSaveId("fallback_" + file.getName());
+                }
+            }
+            
             JLabel lblTitle = new JLabel("Untitled");
+            updateTabHeader(editor, lblTitle);
             JPanel tabHeader = ThemedTabbedPaneUI.insertNewTabWithClose(tabbedPane, lblTitle, editor, e -> closeTab(editor));
             // --- Component-Level Tab Right-Click Listener & Left-Click Selector ---
             
@@ -364,7 +466,17 @@ public class BearitFrame extends JFrame {
             editor.addPropertyChangeListener("requestClose", evt -> closeTab(editor));
             editor.addPropertyChangeListener("fileSaved", evt -> {
                 File savedFile = (File) evt.getNewValue();
+                
+                File unsavedDir = new File(BearitProperties.getInstance().getPropertiesFile().getParentFile(), "unsaved");
+                File autosaveFile = new File(unsavedDir, editor.getAutoSaveId() + ".txt");
+                if (autosaveFile.exists()) autosaveFile.delete();
+                
                 if (savedFile != null) {
+                    try {
+                        String base64Path = java.util.Base64.getUrlEncoder().encodeToString(savedFile.getAbsolutePath().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        editor.setAutoSaveId(savedFile.getName() + "_" + base64Path);
+                    } catch (Exception ex) {}
+
                     File propertiesFile = BearitProperties.getInstance().getPropertiesFile();
                     if (savedFile.getAbsolutePath().equalsIgnoreCase(propertiesFile.getAbsolutePath())) {
                         System.out.println("Properties file saved in editor. Reloading BearitProperties...");
@@ -412,6 +524,19 @@ public class BearitFrame extends JFrame {
                 BearitProperties.getInstance().addRecentFile(file.getAbsolutePath());
             } else {
                 editor.createNewDocument();
+            }
+
+            File unsavedDir = new File(BearitProperties.getInstance().getPropertiesFile().getParentFile(), "unsaved");
+            if (unsavedDir.exists()) {
+                File autosaveFile = new File(unsavedDir, editor.getAutoSaveId() + ".txt");
+                if (autosaveFile.exists()) {
+                    try {
+                        String unsavedContent = java.nio.file.Files.readString(autosaveFile.toPath());
+                        editor.recoverUnsavedContent(unsavedContent);
+                    } catch (Exception ex) {
+                        ex.printStackTrace();
+                    }
+                }
             }
 
             tabbedPane.setSelectedComponent(editor);
@@ -542,6 +667,10 @@ public class BearitFrame extends JFrame {
             recentlyClosedFiles.push(editor.getActiveFile().getAbsolutePath());
         }
         
+        File unsavedDir = new File(BearitProperties.getInstance().getPropertiesFile().getParentFile(), "unsaved");
+        File autosaveFile = new File(unsavedDir, editor.getAutoSaveId() + ".txt");
+        if (autosaveFile.exists()) autosaveFile.delete();
+        
         isUpdatingTabs = true; // Engage lock
         try {
             // Remove by index to guarantee the wrapper OR the editor gets completely removed
@@ -621,6 +750,9 @@ public class BearitFrame extends JFrame {
             } else {
                 // Otherwise, fallback to the default short name (e.g., "Untitled")
                 displayPath = activeEditor.getCurrentTitle(); 
+                if ("Untitled".equals(displayPath) && activeEditor.getAutoSaveId() != null && activeEditor.getAutoSaveId().startsWith("Untitled")) {
+                    displayPath = activeEditor.getAutoSaveId();
+                }
             }
             
             // It is best practice to keep the unsaved asterisk indicator on the main window too!

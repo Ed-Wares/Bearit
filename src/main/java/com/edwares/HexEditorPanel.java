@@ -331,7 +331,7 @@ public class HexEditorPanel extends JPanel {
         
         // Update the Font Status Label
         if (lblFontInfo != null) {
-            lblFontInfo.setText(" | Font: " + font.getName() + " " + currentFontSize + "pt | ");
+            lblFontInfo.setText(" | Font: " + font.getName() + " " + currentFontSize + "pt ");
         }
 
         // Apply new font sizes directly to the inspector wrapper UI components
@@ -445,7 +445,7 @@ public class HexEditorPanel extends JPanel {
 
         // --- Add the Font Info Label to the Right Side ---
         JPanel rightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
-        lblFontInfo = newLabelTextField(" | Font: " + this.getFont().getName() + " " + currentFontSize + "pt | ");
+        lblFontInfo = newLabelTextField(" | Font: " + this.getFont().getName() + " " + currentFontSize + "pt ");
         rightPanel.add(lblFontInfo);
         
         pnlStatusBar.add(rightPanel, BorderLayout.EAST);

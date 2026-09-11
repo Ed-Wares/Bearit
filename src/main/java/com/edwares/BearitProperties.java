@@ -32,6 +32,7 @@ public class BearitProperties {
     private boolean searchCaseInsensitive = false;
     private boolean searchRegex = false;
     private boolean searchAllTabs = false;
+    private int autosaveTimer = 60;
 
     private final String[] customToolCommands = new String[MAX_CUSTOM_TOOLS];
     private final String[] customToolIcons = new String[MAX_CUSTOM_TOOLS];
@@ -109,6 +110,7 @@ public class BearitProperties {
             searchCaseInsensitive = Boolean.parseBoolean(props.getProperty("search.caseInsensitive", "false"));
             searchRegex = Boolean.parseBoolean(props.getProperty("search.regex", "false"));
             searchAllTabs = Boolean.parseBoolean(props.getProperty("search.all.tabs", "false"));
+            autosaveTimer = Integer.parseInt(props.getProperty("autosave.timer", "60"));
 
             recentFiles.clear();
             for (int i = 1; i <= MAX_RECENT_FILES; i++) {
@@ -145,6 +147,7 @@ public class BearitProperties {
         props.setProperty("search.caseInsensitive", String.valueOf(searchCaseInsensitive));
         props.setProperty("search.regex", String.valueOf(searchRegex));
         props.setProperty("search.all.tabs", String.valueOf(searchAllTabs));
+        props.setProperty("autosave.timer", String.valueOf(autosaveTimer));
 
         // Clear out old recent file keys
         for (int i = 1; i <= MAX_RECENT_FILES; i++) {
@@ -374,5 +377,12 @@ public class BearitProperties {
     public void setSearchAllTabs(boolean searchAllTabs) {
         this.searchAllTabs = searchAllTabs;
     }
-    
+
+    public int getAutosaveTimer() {
+        return autosaveTimer;
+    }
+
+    public void setAutosaveTimer(int autosaveTimer) {
+        this.autosaveTimer = autosaveTimer;
+    }
 }
