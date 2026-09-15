@@ -126,26 +126,23 @@ This will create a 10GB file called bearit_test_file_10.00GB.txt for testing pur
 
 ## ⌨️ Keyboard Shortcuts
 
-* Ctrl + F: Open Search & Replace Dialog
-
-* Ctrl + G: Go To Line Number
-
-* Ctrl + Z: Undo (within cached chunks)
-
-* Ctrl + Y: Redo (within cached chunks)
-
-* Ctrl + Home: Jump to the very beginning of the file
-
-* Ctrl + End: Jump to the very end of the file
-
-* Ctrl + Plus: Increase font size
-
-* Ctrl + Minus: Decrease font size
-
 * Ctrl + N: New File
-
 * Ctrl + O: Open file
-
 * Ctrl + S: Save file
-
 * Ctrl + Shift + S: Save file as
+* Ctrl + R: Reload file
+* Ctrl + P: Print file
+* Ctrl + H: Toggle Hex View
+* Ctrl + F: Open Search & Replace Dialog
+* Ctrl + G: Go To Line Number
+* Ctrl + Z: Undo (within cached chunks)
+* Ctrl + Y: Redo (within cached chunks)
+* Ctrl + Home: Jump to the very beginning of the file
+* Ctrl + End: Jump to the very end of the file
+* Ctrl + Plus (or Ctrl + =): Increase font size
+* Ctrl + Minus: Decrease font size
+* Tab: Indent selected lines (or insert tab)
+* Shift + Tab: Un-indent selected lines
+* Ctrl + /: Toggle `//` comment on current line or selection
+* Ctrl + #: Toggle `#` comment on current line or selection (also works with Ctrl+Shift+3)
+* Alt + Shift + Arrow Keys: Block/Column Selection
