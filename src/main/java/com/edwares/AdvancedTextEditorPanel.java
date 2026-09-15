@@ -5,6 +5,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.text.AbstractDocument;
 import javax.swing.text.DefaultCaret;
+import javax.swing.text.DefaultEditorKit;
 import javax.swing.text.Document;
 import javax.swing.text.DocumentFilter;
 import javax.swing.text.Element;
@@ -413,6 +414,41 @@ public class AdvancedTextEditorPanel extends JPanel {
         // ghosting
         DefaultCaret customCaret = new DefaultCaret() {
             private Rectangle lastRect = null;
+
+            private int adjustForCRLF(int dot) {
+                try {
+                    JTextComponent comp = getComponent();
+                    if (comp != null) {
+                        Document doc = comp.getDocument();
+                        if (dot > 0 && dot < doc.getLength()) {
+                            if ("\n".equals(doc.getText(dot, 1)) && "\r".equals(doc.getText(dot - 1, 1))) {
+                                return dot - 1;
+                            }
+                        }
+                    }
+                } catch (Exception ex) {}
+                return dot;
+            }
+
+            @Override
+            public void setDot(int dot) {
+                super.setDot(adjustForCRLF(dot));
+            }
+
+            @Override
+            public void moveDot(int dot) {
+                super.moveDot(adjustForCRLF(dot));
+            }
+
+            @Override
+            public void setDot(int dot, javax.swing.text.Position.Bias dotBias) {
+                super.setDot(adjustForCRLF(dot), dotBias);
+            }
+
+            @Override
+            public void moveDot(int dot, javax.swing.text.Position.Bias dotBias) {
+                super.moveDot(adjustForCRLF(dot), dotBias);
+            }
 
             @Override
             protected synchronized void damage(Rectangle r) {
@@ -892,6 +928,9 @@ public class AdvancedTextEditorPanel extends JPanel {
             Element finalLine = root.getElement(lineIdx);
             int endOff = finalLine.getEndOffset();
             if (endOff > finalLine.getStartOffset() && doc.getText(endOff - 1, 1).equals("\n")) {
+                if (endOff > finalLine.getStartOffset() + 1 && doc.getText(endOff - 2, 1).equals("\r")) {
+                    return endOff - 2;
+                }
                 return endOff - 1; // Put cursor right before the true newline character
             }
             return endOff;
@@ -2289,6 +2328,147 @@ public class AdvancedTextEditorPanel extends JPanel {
                         
                         int newPos = Math.max(0, pos - 4);
                         textArea.setCaretPosition(newPos);
+                    }
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+            }
+        });
+
+        // --- Custom CRLF Handling ---
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0), "customBackspace");
+        am.put("customBackspace", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                if (isCurrentlyPreview) return;
+                try {
+                    int start = textArea.getSelectionStart();
+                    int end = textArea.getSelectionEnd();
+                    if (start != end) {
+                        textArea.replaceSelection("");
+                        return;
+                    }
+                    int pos = textArea.getCaretPosition();
+                    if (pos == 0) return;
+                    Document doc = textArea.getDocument();
+                    if (pos >= 2 && "\n".equals(doc.getText(pos - 1, 1)) && "\r".equals(doc.getText(pos - 2, 1))) {
+                        doc.remove(pos - 2, 2);
+                    } else {
+                        Action defaultAction = textArea.getActionMap().get(DefaultEditorKit.deletePrevCharAction);
+                        if (defaultAction != null) defaultAction.actionPerformed(e);
+                    }
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+            }
+        });
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0), "customDelete");
+        am.put("customDelete", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                if (isCurrentlyPreview) return;
+                try {
+                    int start = textArea.getSelectionStart();
+                    int end = textArea.getSelectionEnd();
+                    if (start != end) {
+                        textArea.replaceSelection("");
+                        return;
+                    }
+                    int pos = textArea.getCaretPosition();
+                    Document doc = textArea.getDocument();
+                    if (pos >= doc.getLength()) return;
+                    if (pos <= doc.getLength() - 2 && "\r".equals(doc.getText(pos, 1)) && "\n".equals(doc.getText(pos + 1, 1))) {
+                        doc.remove(pos, 2);
+                    } else {
+                        Action defaultAction = textArea.getActionMap().get(DefaultEditorKit.deleteNextCharAction);
+                        if (defaultAction != null) defaultAction.actionPerformed(e);
+                    }
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+            }
+        });
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, 0), "customLeft");
+        am.put("customLeft", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                if (isBlockSelecting || isCurrentlyPreview) {
+                    Action defaultAction = textArea.getActionMap().get(DefaultEditorKit.backwardAction);
+                    if (defaultAction != null) defaultAction.actionPerformed(e);
+                    return;
+                }
+                try {
+                    int pos = textArea.getCaretPosition();
+                    if (pos == 0) return;
+                    Document doc = textArea.getDocument();
+                    if (pos >= 2 && "\n".equals(doc.getText(pos - 1, 1)) && "\r".equals(doc.getText(pos - 2, 1))) {
+                        textArea.setCaretPosition(pos - 2);
+                    } else {
+                        Action defaultAction = textArea.getActionMap().get(DefaultEditorKit.backwardAction);
+                        if (defaultAction != null) defaultAction.actionPerformed(e);
+                    }
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+            }
+        });
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, InputEvent.SHIFT_DOWN_MASK), "customShiftLeft");
+        am.put("customShiftLeft", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                if (isCurrentlyPreview) return;
+                try {
+                    int pos = textArea.getCaretPosition();
+                    if (pos == 0) return;
+                    Document doc = textArea.getDocument();
+                    if (pos >= 2 && "\n".equals(doc.getText(pos - 1, 1)) && "\r".equals(doc.getText(pos - 2, 1))) {
+                        textArea.moveCaretPosition(pos - 2);
+                    } else {
+                        Action defaultAction = textArea.getActionMap().get(DefaultEditorKit.selectionBackwardAction);
+                        if (defaultAction != null) defaultAction.actionPerformed(e);
+                    }
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+            }
+        });
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, 0), "customRight");
+        am.put("customRight", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                if (isBlockSelecting || isCurrentlyPreview) {
+                    Action defaultAction = textArea.getActionMap().get(DefaultEditorKit.forwardAction);
+                    if (defaultAction != null) defaultAction.actionPerformed(e);
+                    return;
+                }
+                try {
+                    int pos = textArea.getCaretPosition();
+                    Document doc = textArea.getDocument();
+                    if (pos >= doc.getLength()) return;
+                    if (pos <= doc.getLength() - 2 && "\r".equals(doc.getText(pos, 1)) && "\n".equals(doc.getText(pos + 1, 1))) {
+                        textArea.setCaretPosition(pos + 2);
+                    } else {
+                        Action defaultAction = textArea.getActionMap().get(DefaultEditorKit.forwardAction);
+                        if (defaultAction != null) defaultAction.actionPerformed(e);
+                    }
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+            }
+        });
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, InputEvent.SHIFT_DOWN_MASK), "customShiftRight");
+        am.put("customShiftRight", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                if (isCurrentlyPreview) return;
+                try {
+                    int pos = textArea.getCaretPosition();
+                    Document doc = textArea.getDocument();
+                    if (pos >= doc.getLength()) return;
+                    if (pos <= doc.getLength() - 2 && "\r".equals(doc.getText(pos, 1)) && "\n".equals(doc.getText(pos + 1, 1))) {
+                        textArea.moveCaretPosition(pos + 2);
+                    } else {
+                        Action defaultAction = textArea.getActionMap().get(DefaultEditorKit.selectionForwardAction);
+                        if (defaultAction != null) defaultAction.actionPerformed(e);
                     }
                 } catch (Exception ex) {
                     ex.printStackTrace();
