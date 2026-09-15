@@ -2176,6 +2176,68 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     // --- Explicitly override native keys to map directly to our stripped methods
     // ---
+    private void toggleComment(String commentPrefix) {
+        if (isCurrentlyPreview) return;
+        try {
+            int startPos = textArea.getSelectionStart();
+            int endPos = textArea.getSelectionEnd();
+            Document doc = textArea.getDocument();
+            
+            int startLine = textArea.getLineOfOffset(startPos);
+            int endLine = textArea.getLineOfOffset(endPos);
+            
+            if (endPos == textArea.getLineStartOffset(endLine) && endLine > startLine) {
+                endLine--;
+            }
+            
+            boolean allCommented = true;
+            for (int i = startLine; i <= endLine; i++) {
+                int lineStart = textArea.getLineStartOffset(i);
+                int lineEnd = textArea.getLineEndOffset(i);
+                String lineText = doc.getText(lineStart, lineEnd - lineStart);
+                if (lineText.length() > 0 && !lineText.equals("\n") && !lineText.equals("\r\n")) {
+                    if (!lineText.startsWith(commentPrefix)) {
+                        allCommented = false;
+                        break;
+                    }
+                }
+            }
+            
+            int replaceStart = textArea.getLineStartOffset(startLine);
+            int replaceEnd = textArea.getLineEndOffset(endLine);
+            StringBuilder replacement = new StringBuilder();
+            
+            for (int i = startLine; i <= endLine; i++) {
+                int lineStart = textArea.getLineStartOffset(i);
+                int lineEnd = textArea.getLineEndOffset(i);
+                String lineText = doc.getText(lineStart, lineEnd - lineStart);
+                
+                if (lineText.length() == 0 || lineText.equals("\n") || lineText.equals("\r\n")) {
+                    replacement.append(lineText);
+                } else {
+                    if (allCommented) {
+                        replacement.append(lineText.substring(commentPrefix.length()));
+                    } else {
+                        replacement.append(commentPrefix).append(lineText);
+                    }
+                }
+            }
+            
+            if (doc instanceof AbstractDocument) {
+                ((AbstractDocument) doc).replace(replaceStart, replaceEnd - replaceStart, replacement.toString(), null);
+            } else {
+                doc.remove(replaceStart, replaceEnd - replaceStart);
+                doc.insertString(replaceStart, replacement.toString(), null);
+            }
+            
+            textArea.setSelectionStart(replaceStart);
+            textArea.setSelectionEnd(replaceStart + replacement.length());
+            
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
+
     private void setupKeyboardShortcuts() {
         InputMap im = textArea.getInputMap(JComponent.WHEN_FOCUSED);
         ActionMap am = textArea.getActionMap();
@@ -2545,6 +2607,23 @@ public class AdvancedTextEditorPanel extends JPanel {
                 }
             }
         });
+
+        // --- Comment Toggles ---
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_SLASH, InputEvent.CTRL_DOWN_MASK), "toggleSlashComment");
+        am.put("toggleSlashComment", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                toggleComment("//");
+            }
+        });
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_3, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "toggleHashComment");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_NUMBER_SIGN, InputEvent.CTRL_DOWN_MASK), "toggleHashCommentAlt");
+        am.put("toggleHashComment", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                toggleComment("#");
+            }
+        });
+        am.put("toggleHashCommentAlt", am.get("toggleHashComment"));
 
         im.put(KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK), "showSearch");
         am.put("showSearch", new AbstractAction() {
