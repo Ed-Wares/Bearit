@@ -2164,41 +2164,132 @@ public class AdvancedTextEditorPanel extends JPanel {
                 paste();
             }
         });
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_TAB, 0), "customTab");
+        am.put("customTab", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                if (isCurrentlyPreview) return;
+                try {
+                    int startPos = textArea.getSelectionStart();
+                    int endPos = textArea.getSelectionEnd();
+                    Document doc = textArea.getDocument();
+
+                    if (startPos != endPos) {
+                        int startLine = textArea.getLineOfOffset(startPos);
+                        int endLine = textArea.getLineOfOffset(endPos);
+                        
+                        if (endPos == textArea.getLineStartOffset(endLine) && endLine > startLine) {
+                            endLine--;
+                        }
+                        
+                        int replaceStart = textArea.getLineStartOffset(startLine);
+                        int replaceEnd = textArea.getLineEndOffset(endLine);
+                        
+                        StringBuilder replacement = new StringBuilder();
+                        for (int i = startLine; i <= endLine; i++) {
+                            int lineStart = textArea.getLineStartOffset(i);
+                            int lineEnd = textArea.getLineEndOffset(i);
+                            String lineText = doc.getText(lineStart, lineEnd - lineStart);
+                            if (lineText.length() > 0 && (lineText.equals("\n") || lineText.equals("\r\n"))) {
+                                replacement.append(lineText);
+                            } else {
+                                replacement.append("\t").append(lineText);
+                            }
+                        }
+                        
+                        if (doc instanceof AbstractDocument) {
+                            ((AbstractDocument) doc).replace(replaceStart, replaceEnd - replaceStart, replacement.toString(), null);
+                        } else {
+                            doc.remove(replaceStart, replaceEnd - replaceStart);
+                            doc.insertString(replaceStart, replacement.toString(), null);
+                        }
+                        
+                        textArea.setSelectionStart(replaceStart);
+                        textArea.setSelectionEnd(replaceStart + replacement.length());
+                    } else {
+                        textArea.replaceSelection("\t");
+                    }
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+            }
+        });
+
         im.put(KeyStroke.getKeyStroke(KeyEvent.VK_TAB, InputEvent.SHIFT_DOWN_MASK), "customShiftTab");
         am.put("customShiftTab", new AbstractAction() {
             public void actionPerformed(ActionEvent e) {
                 if (isCurrentlyPreview) return;
                 try {
-                    int pos = textArea.getCaretPosition();
-                    if (pos == 0) return;
+                    int startPos = textArea.getSelectionStart();
+                    int endPos = textArea.getSelectionEnd();
                     Document doc = textArea.getDocument();
                     int tabSize = textArea.getTabSize();
-                    
-                    // Check for single tab character
-                    String leftChar = doc.getText(pos - 1, 1);
-                    if ("\t".equals(leftChar)) {
-                        doc.remove(pos - 1, 1);
-                        return;
-                    }
-                    
-                    // Check for space indent (up to tabSize)
-                    int spacesCount = 0;
-                    for (int i = 1; i <= tabSize && pos - i >= 0; i++) {
-                        if (" ".equals(doc.getText(pos - i, 1))) {
-                            spacesCount++;
-                        } else {
-                            break;
+
+                    if (startPos != endPos) {
+                        int startLine = textArea.getLineOfOffset(startPos);
+                        int endLine = textArea.getLineOfOffset(endPos);
+                        
+                        if (endPos == textArea.getLineStartOffset(endLine) && endLine > startLine) {
+                            endLine--;
                         }
+                        
+                        int replaceStart = textArea.getLineStartOffset(startLine);
+                        int replaceEnd = textArea.getLineEndOffset(endLine);
+                        
+                        StringBuilder replacement = new StringBuilder();
+                        for (int i = startLine; i <= endLine; i++) {
+                            int lineStart = textArea.getLineStartOffset(i);
+                            int lineEnd = textArea.getLineEndOffset(i);
+                            String lineText = doc.getText(lineStart, lineEnd - lineStart);
+                            
+                            if (lineText.length() > 0 && lineText.charAt(0) == '\t') {
+                                replacement.append(lineText.substring(1));
+                            } else if (lineText.length() > 0 && lineText.charAt(0) == ' ') {
+                                int spaces = 0;
+                                while (spaces < tabSize && spaces < lineText.length() && lineText.charAt(spaces) == ' ') {
+                                    spaces++;
+                                }
+                                replacement.append(lineText.substring(spaces));
+                            } else {
+                                replacement.append(lineText);
+                            }
+                        }
+                        
+                        if (doc instanceof AbstractDocument) {
+                            ((AbstractDocument) doc).replace(replaceStart, replaceEnd - replaceStart, replacement.toString(), null);
+                        } else {
+                            doc.remove(replaceStart, replaceEnd - replaceStart);
+                            doc.insertString(replaceStart, replacement.toString(), null);
+                        }
+                        
+                        textArea.setSelectionStart(replaceStart);
+                        textArea.setSelectionEnd(replaceStart + replacement.length());
+                    } else {
+                        int pos = textArea.getCaretPosition();
+                        if (pos == 0) return;
+                        
+                        String leftChar = doc.getText(pos - 1, 1);
+                        if ("\t".equals(leftChar)) {
+                            doc.remove(pos - 1, 1);
+                            return;
+                        }
+                        
+                        int spacesCount = 0;
+                        for (int i = 1; i <= tabSize && pos - i >= 0; i++) {
+                            if (" ".equals(doc.getText(pos - i, 1))) {
+                                spacesCount++;
+                            } else {
+                                break;
+                            }
+                        }
+                        
+                        if (spacesCount == tabSize) {
+                            doc.remove(pos - tabSize, tabSize);
+                            return;
+                        }
+                        
+                        int newPos = Math.max(0, pos - 4);
+                        textArea.setCaretPosition(newPos);
                     }
-                    
-                    if (spacesCount == tabSize) {
-                        doc.remove(pos - tabSize, tabSize);
-                        return;
-                    }
-                    
-                    // Fallback: move cursor left up to 4 characters
-                    int newPos = Math.max(0, pos - 4);
-                    textArea.setCaretPosition(newPos);
                 } catch (Exception ex) {
                     ex.printStackTrace();
                 }
