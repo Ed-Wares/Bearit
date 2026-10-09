@@ -27,6 +27,8 @@ public class BearitProperties {
     private String theme = "Light"; // "Light" or "Dark"
     private boolean showWhitespace = false;
     private boolean showEol = false;
+    private boolean oneBasedColumnIndex = false;
+    private boolean readOnlyMode = false;
 
     // --- Search Settings ---
     private boolean searchCaseInsensitive = false;
@@ -107,6 +109,8 @@ public class BearitProperties {
             theme = props.getProperty("theme", "Light");
             showWhitespace = Boolean.parseBoolean(props.getProperty("show.whitespace", "false"));
             showEol = Boolean.parseBoolean(props.getProperty("show.eol", "false"));
+            oneBasedColumnIndex = Boolean.parseBoolean(props.getProperty("one.based.column", "false"));
+            readOnlyMode = Boolean.parseBoolean(props.getProperty("read.only.mode", "false"));
             searchCaseInsensitive = Boolean.parseBoolean(props.getProperty("search.caseInsensitive", "false"));
             searchRegex = Boolean.parseBoolean(props.getProperty("search.regex", "false"));
             searchAllTabs = Boolean.parseBoolean(props.getProperty("search.all.tabs", "false"));
@@ -144,6 +148,8 @@ public class BearitProperties {
         props.setProperty("theme", theme);
         props.setProperty("show.whitespace", String.valueOf(showWhitespace));
         props.setProperty("show.eol", String.valueOf(showEol));
+        props.setProperty("one.based.column", String.valueOf(oneBasedColumnIndex));
+        props.setProperty("read.only.mode", String.valueOf(readOnlyMode));
         props.setProperty("search.caseInsensitive", String.valueOf(searchCaseInsensitive));
         props.setProperty("search.regex", String.valueOf(searchRegex));
         props.setProperty("search.all.tabs", String.valueOf(searchAllTabs));
@@ -252,6 +258,10 @@ public class BearitProperties {
     public void setShowWhitespace(boolean showWhitespace) { this.showWhitespace = showWhitespace; }
     public boolean isShowEol() { return showEol; }
     public void setShowEol(boolean showEol) { this.showEol = showEol; }
+    public boolean isOneBasedColumnIndex() { return oneBasedColumnIndex; }
+    public void setOneBasedColumnIndex(boolean oneBasedColumnIndex) { this.oneBasedColumnIndex = oneBasedColumnIndex; }
+    public boolean isReadOnlyMode() { return readOnlyMode; }
+    public void setReadOnlyMode(boolean readOnlyMode) { this.readOnlyMode = readOnlyMode; }
 
     public String getCustomToolCommand(int index) {
         if (index >= 0 && index < MAX_CUSTOM_TOOLS) return customToolCommands[index];

@@ -40,6 +40,8 @@ public class BearitFrame extends JFrame {
     private JCheckBoxMenuItem hexMenuItem;
     private JCheckBoxMenuItem whitespaceMenuItem;
     private JCheckBoxMenuItem eolMenuItem;
+    private JCheckBoxMenuItem oneBasedColumnMenuItem;
+    private JCheckBoxMenuItem readOnlyMenuItem;
     private JRadioButtonMenuItem lightThemeItem;
     private JRadioButtonMenuItem darkThemeItem;
 
@@ -428,6 +430,8 @@ public class BearitFrame extends JFrame {
             editor.setWordWrap(props.isWordWrap());
             editor.setShowWhitespace(props.isShowWhitespace());
             editor.setShowEol(props.isShowEol());
+            editor.setOneBasedColumnIndex(props.isOneBasedColumnIndex());
+            editor.setReadOnlyMode(props.isReadOnlyMode());
             editor.setEditorMaxLineLength(props.getMaxLineLength());
             
             if (forceAutoSaveId != null) {
@@ -539,7 +543,27 @@ public class BearitFrame extends JFrame {
                 }
             }
 
-            tabbedPane.setSelectedComponent(editor);
+            // Ensure the newly added tab scrolls into view by deferring selection
+            SwingUtilities.invokeLater(() -> {
+                tabbedPane.validate(); // Force synchronous layout calculation
+                tabbedPane.setSelectedComponent(editor);
+                
+                // For heavy files, the layout might still be queued. A final synchronous index toggle forces the scroll.
+                SwingUtilities.invokeLater(() -> {
+                    int idx = tabbedPane.indexOfComponent(editor);
+                    if (idx > 0) {
+                        try {
+                            isUpdatingTabs = true;
+                            tabbedPane.setSelectedIndex(idx - 1); // Invisible toggle
+                            tabbedPane.setSelectedIndex(idx);
+                        } catch (Exception ex) {
+                        } finally {
+                            isUpdatingTabs = false;
+                            updateFrameTitle();
+                        }
+                    }
+                });
+            });
         } finally {
             isUpdatingTabs = false; // Disengage lock
             updateFrameTitle();
@@ -563,8 +587,31 @@ public class BearitFrame extends JFrame {
             List<AdvancedTextEditorPanel> toClose = new ArrayList<>();
             for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
                 Component c = tabbedPane.getComponentAt(i);
-                if (c instanceof AdvancedTextEditorPanel && c != targetEditor) {
-                    toClose.add((AdvancedTextEditorPanel) c);
+                AdvancedTextEditorPanel editor = null;
+                if (c instanceof AdvancedTextEditorPanel) editor = (AdvancedTextEditorPanel) c;
+                else if (c instanceof BearitTextHexWrapper) editor = ((BearitTextHexWrapper) c).getHiddenTextEditor();
+                
+                if (editor != null && editor != targetEditor) {
+                    toClose.add(editor);
+                }
+            }
+            for (AdvancedTextEditorPanel editor : toClose) {
+                closeTab(editor);
+            }
+        });
+
+        JMenuItem closeToRightItem = new JMenuItem("Close to the Right");
+        closeToRightItem.addActionListener(evt -> {
+            List<AdvancedTextEditorPanel> toClose = new ArrayList<>();
+            // Loop from the tab after the clicked tab, up to but not including the + tab
+            for (int i = tabIndex + 1; i < tabbedPane.getTabCount() - 1; i++) {
+                Component c = tabbedPane.getComponentAt(i);
+                AdvancedTextEditorPanel editor = null;
+                if (c instanceof AdvancedTextEditorPanel) editor = (AdvancedTextEditorPanel) c;
+                else if (c instanceof BearitTextHexWrapper) editor = ((BearitTextHexWrapper) c).getHiddenTextEditor();
+                
+                if (editor != null) {
+                    toClose.add(editor);
                 }
             }
             for (AdvancedTextEditorPanel editor : toClose) {
@@ -622,6 +669,7 @@ public class BearitFrame extends JFrame {
         popup.addSeparator();
         popup.add(closeTabItem);
         popup.add(closeOtherTabsItem);
+        popup.add(closeToRightItem);
         popup.addSeparator();
         popup.add(copyFilenameItem);
         popup.add(copyFullFilenameItem);
@@ -989,6 +1037,26 @@ public class BearitFrame extends JFrame {
             Component c = tabbedPane.getComponentAt(i);
             if (c instanceof AdvancedTextEditorPanel) {
                 ((AdvancedTextEditorPanel) c).setShowEol(showEol);
+            }
+        }
+    }
+
+    private void setGlobalOneBasedColumn(boolean oneBasedColumn) {
+        BearitProperties.getInstance().setOneBasedColumnIndex(oneBasedColumn);
+        for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            if (c instanceof AdvancedTextEditorPanel) {
+                ((AdvancedTextEditorPanel) c).setOneBasedColumnIndex(oneBasedColumn);
+            }
+        }
+    }
+
+    private void setGlobalReadOnlyMode(boolean readOnly) {
+        BearitProperties.getInstance().setReadOnlyMode(readOnly);
+        for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            if (c instanceof AdvancedTextEditorPanel) {
+                ((AdvancedTextEditorPanel) c).setReadOnlyMode(readOnly);
             }
         }
     }
@@ -1974,6 +2042,14 @@ public class BearitFrame extends JFrame {
         eolMenuItem.setSelected(props.isShowEol());
         eolMenuItem.addActionListener(e -> setGlobalEol(eolMenuItem.isSelected()));
 
+        oneBasedColumnMenuItem = new JCheckBoxMenuItem("1-Based Columns");
+        oneBasedColumnMenuItem.setSelected(props.isOneBasedColumnIndex());
+        oneBasedColumnMenuItem.addActionListener(e -> setGlobalOneBasedColumn(oneBasedColumnMenuItem.isSelected()));
+
+        readOnlyMenuItem = new JCheckBoxMenuItem("Read-Only Mode");
+        readOnlyMenuItem.setSelected(props.isReadOnlyMode());
+        readOnlyMenuItem.addActionListener(e -> setGlobalReadOnlyMode(readOnlyMenuItem.isSelected()));
+
         viewMenu.add(themeMenu);
         viewMenu.addSeparator();
         viewMenu.add(changeFontItem);
@@ -1985,6 +2061,9 @@ public class BearitFrame extends JFrame {
         viewMenu.addSeparator();
         viewMenu.add(whitespaceMenuItem);
         viewMenu.add(eolMenuItem);
+        viewMenu.add(oneBasedColumnMenuItem);
+        viewMenu.addSeparator();
+        viewMenu.add(readOnlyMenuItem);
         
         viewMenu.addSeparator();
         JMenuItem countSummaryItem = new JMenuItem("Count Summary");

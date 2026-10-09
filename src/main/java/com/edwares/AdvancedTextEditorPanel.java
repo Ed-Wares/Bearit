@@ -89,6 +89,7 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     private boolean isSyncingScroll = false;
     private boolean isLoadingChunk = false;
+    private boolean isSystemEdit = false;
     private boolean isDirty = false;
     private boolean hasUnsavedChanges = false; // Tracks global file edits
     private boolean isNavigating = false;
@@ -106,6 +107,8 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     private boolean showWhitespace = false;
     private boolean showEol = false;
+    private boolean oneBasedColumnIndex = false;
+    private boolean readOnlyMode = false;
     private String currentTheme = "Light";
     private boolean autoFillSearch = true;
 
@@ -227,6 +230,17 @@ public class AdvancedTextEditorPanel extends JPanel {
                     boolean isShift = (e.getModifiersEx() & InputEvent.SHIFT_DOWN_MASK) != 0;
                     boolean isCtrl = (e.getModifiersEx() & InputEvent.CTRL_DOWN_MASK) != 0;
 
+                    if (readOnlyMode || isCurrentlyPreview) {
+                        if (code == KeyEvent.VK_BACK_SPACE || code == KeyEvent.VK_DELETE || code == KeyEvent.VK_ENTER || code == KeyEvent.VK_TAB) {
+                            e.consume();
+                            return;
+                        }
+                        if (isCtrl && (code == KeyEvent.VK_V || code == KeyEvent.VK_X)) {
+                            e.consume();
+                            return;
+                        }
+                    }
+
                     // System.out.println("Detected Key Press: " + KeyEvent.getKeyText(code) + " |
                     // Alt: " + isAlt + " | Shift: " + isShift + " | Ctrl: " + isCtrl);
 
@@ -281,10 +295,14 @@ public class AdvancedTextEditorPanel extends JPanel {
                         }
                     }
                 } else if (e.getID() == KeyEvent.KEY_TYPED) {
+                    if (readOnlyMode || isCurrentlyPreview) {
+                        e.consume();
+                        return;
+                    }
                     // System.out.println("Key Typed: " + e.getKeyChar() + " | Modifiers: " +
                     // KeyEvent.getModifiersExText(e.getModifiersEx()));
                     // Feature: Delete the block if the user starts typing normally over it
-                    if (isBlockSelecting && hasValidBlockSelection() && !isCurrentlyPreview && !e.isControlDown()
+                    if (isBlockSelecting && hasValidBlockSelection() && !e.isControlDown()
                             && !e.isAltDown()) {
                         char c = e.getKeyChar();
                         if (c != KeyEvent.VK_BACK_SPACE && c != KeyEvent.VK_DELETE && c != KeyEvent.VK_ESCAPE) {
@@ -732,6 +750,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         setWordWrap(false);
         setShowWhitespace(this.showWhitespace);
         setShowEol(this.showEol);
+        setOneBasedColumnIndex(this.oneBasedColumnIndex);
+        setReadOnlyMode(this.readOnlyMode);
         applyTheme(this.currentTheme);
 
         // Prevent Swing from hijacking the scroll wheel for horizontal movement ---
@@ -858,16 +878,31 @@ public class AdvancedTextEditorPanel extends JPanel {
     private Document createWrappedDocument() {
         Document newDoc = new PlainDocument();
         ((AbstractDocument) newDoc).setDocumentFilter(new DocumentFilter() {
+            private boolean shouldBlock(FilterBypass fb) {
+                if (!readOnlyMode) return false;
+                if (isSystemEdit || isLoadingChunk || isNavigating) return false;
+                if (textArea != null && textArea.getDocument() != fb.getDocument()) return false;
+                return true;
+            }
+
             @Override
             public void insertString(FilterBypass fb, int offset, String string, AttributeSet attr)
                     throws BadLocationException {
+                if (shouldBlock(fb)) return;
                 super.insertString(fb, offset, processString(fb, offset, string), attr);
             }
 
             @Override
             public void replace(FilterBypass fb, int offset, int length, String text, AttributeSet attrs)
                     throws BadLocationException {
+                if (shouldBlock(fb)) return;
                 super.replace(fb, offset, length, processString(fb, offset, text), attrs);
+            }
+
+            @Override
+            public void remove(FilterBypass fb, int offset, int length) throws BadLocationException {
+                if (shouldBlock(fb)) return;
+                super.remove(fb, offset, length);
             }
 
             private String processString(FilterBypass fb, int offset, String text) throws BadLocationException {
@@ -1095,7 +1130,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     public void cut() {
-        if (!isCurrentlyPreview) {
+        if (!isCurrentlyPreview && !readOnlyMode) {
             if (hasValidBlockSelection()) {
                 cutBlock();
             } else {
@@ -1111,7 +1146,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     public void paste() {
-        if (!isCurrentlyPreview) {
+        if (!isCurrentlyPreview && !readOnlyMode) {
             if (isBlockSelecting)
                 pasteBlock();
             else
@@ -1163,6 +1198,16 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
     }
 
+    public void setReadOnlyMode(boolean readOnly) {
+        if (this.readOnlyMode == readOnly) return;
+        this.readOnlyMode = readOnly;
+        if (textArea.getCaret() != null) {
+            textArea.getCaret().setBlinkRate(readOnly ? 0 : 500);
+            textArea.getCaret().setVisible(true);
+        }
+        textArea.repaint();
+    }
+
     public void setWordWrap(boolean wrap) {
         textArea.setLineWrap(wrap);
         textArea.setWrapStyleWord(wrap);
@@ -1180,6 +1225,11 @@ public class AdvancedTextEditorPanel extends JPanel {
     public void setShowEol(boolean show) {
         this.showEol = show;
         textArea.repaint();
+    }
+
+    public void setOneBasedColumnIndex(boolean oneBasedColumn) {
+        this.oneBasedColumnIndex = oneBasedColumn;
+        updateCursorStatus();
     }
 
     public void applyTheme(String theme) {
@@ -1221,7 +1271,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     public void formatDocument(String type) {
-        if (isCurrentlyPreview) return;
+        if (isCurrentlyPreview || readOnlyMode) return;
 
         try {
             fileManager.commitCurrentChunk(getCommitText());
@@ -1314,6 +1364,9 @@ public class AdvancedTextEditorPanel extends JPanel {
             long absoluteLine = lineNumberPanel.getStartLine() + localLine;
             int col = dot - textArea.getLineStartOffset(localLine);
 
+            int colOffset = oneBasedColumnIndex ? 1 : 0;
+            col += colOffset;
+
             long absDot = currentChunkStartOffset + dot;
             long absMark = currentChunkStartOffset + mark;
 
@@ -1326,8 +1379,8 @@ public class AdvancedTextEditorPanel extends JPanel {
                 
                 int startOffset = Math.min(dot, mark);
                 int endOffset = Math.max(dot, mark);
-                int startCol = startOffset - textArea.getLineStartOffset(textArea.getLineOfOffset(startOffset));
-                int endCol = endOffset - textArea.getLineStartOffset(textArea.getLineOfOffset(endOffset));
+                int startCol = startOffset - textArea.getLineStartOffset(textArea.getLineOfOffset(startOffset)) + colOffset;
+                int endCol = endOffset - textArea.getLineStartOffset(textArea.getLineOfOffset(endOffset)) + colOffset;
                 
                 lblCursorInfo.setText(String.format("| Line: %d | Col: %d - %d | Sel: %d - %d (width: %d)", absoluteLine, startCol, endCol,
                         selStart, selEnd, width));
@@ -1878,7 +1931,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     public void undo() {
-        if (!globalUndoManager.canUndo())
+        if (readOnlyMode || isCurrentlyPreview || !globalUndoManager.canUndo())
             return;
         int targetChunk = globalUndoManager.getUndoChunk();
         if (targetChunk != -1 && targetChunk != loadedChunkIndex) {
@@ -1893,7 +1946,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     public void redo() {
-        if (!globalUndoManager.canRedo())
+        if (readOnlyMode || isCurrentlyPreview || !globalUndoManager.canRedo())
             return;
         int targetChunk = globalUndoManager.getRedoChunk();
         if (targetChunk != -1 && targetChunk != loadedChunkIndex) {
@@ -2026,10 +2079,15 @@ public class AdvancedTextEditorPanel extends JPanel {
         SwingUtilities.invokeLater(() -> {
             try {
                 if (!isCurrentlyPreview) {
-                    textArea.setText(content);
-                    textArea.setCaretPosition(0);
-                    isDirty = true;
-                    setUnsavedChanges(true);
+                    isSystemEdit = true;
+                    try {
+                        textArea.setText(content);
+                        textArea.setCaretPosition(0);
+                        isDirty = true;
+                        setUnsavedChanges(true);
+                    } finally {
+                        isSystemEdit = false;
+                    }
                 }
             } catch (Exception e) {}
         });
@@ -3055,7 +3113,10 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
 
         textArea.setEnabled(true);
-        textArea.setEditable(!isCurrentlyPreview);
+        if (textArea.getCaret() != null) {
+            textArea.getCaret().setBlinkRate((readOnlyMode || isCurrentlyPreview) ? 0 : 500);
+            textArea.getCaret().setVisible(true);
+        }
         chunkLoadProgressBar.setVisible(false);
 
         lineNumberPanel.setStartLine(state.startLine());
