@@ -367,4 +367,10 @@ public class BearitTextHexWrapper extends JPanel {
     public boolean isReadOnlyMode() {
         return hexEditor != null && hexEditor.isReadOnlyMode();
     }
+
+    public void setOneBasedColumnIndex(boolean oneBasedColumn) {
+        if (hiddenTextEditor != null) {
+            hiddenTextEditor.setOneBasedColumnIndex(oneBasedColumn);
+        }
+    }
 }

@@ -1050,6 +1050,8 @@ public class BearitFrame extends JFrame {
             Component c = tabbedPane.getComponentAt(i);
             if (c instanceof AdvancedTextEditorPanel) {
                 ((AdvancedTextEditorPanel) c).setOneBasedColumnIndex(oneBasedColumn);
+            } else if (c instanceof BearitTextHexWrapper) {
+                ((BearitTextHexWrapper) c).setOneBasedColumnIndex(oneBasedColumn);
             }
         }
     }
