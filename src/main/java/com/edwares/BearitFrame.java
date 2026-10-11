@@ -59,7 +59,7 @@ public class BearitFrame extends JFrame {
         instance = this;
         BearitProperties props = BearitProperties.getInstance();
         
-        setTitle("Bearit Text Editor");
+        setTitle(props.isReadOnlyMode() ? "Bearit Text Editor [Read-Only]" : "Bearit Text Editor");
         // The screen size is the working area of the screen, exluding taskbars and docks
         GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
         Insets screenInsets = Toolkit.getDefaultToolkit().getScreenInsets(ge.getDefaultScreenDevice().getDefaultConfiguration());
@@ -303,6 +303,7 @@ public class BearitFrame extends JFrame {
         // Force the UI to adapt to the saved theme immediately on launch
         applyTheme(BearitProperties.getInstance().getTheme());
         setupAutoSaveTimer();
+        updateFrameTitle();
     }
 
     private void setupAutoSaveTimer() {
@@ -786,6 +787,8 @@ public class BearitFrame extends JFrame {
     }
 
     private void updateFrameTitle() {
+        boolean isReadOnly = BearitProperties.getInstance().isReadOnlyMode();
+        String appTitle = isReadOnly ? "Bearit Text Editor [Read-Only]" : "Bearit Text Editor";
         AdvancedTextEditorPanel activeEditor = getActiveEditor(); 
         
         if (activeEditor != null) {
@@ -808,10 +811,10 @@ public class BearitFrame extends JFrame {
                 displayPath = "*" + displayPath;
             }
             
-            setTitle(displayPath + " - Bearit Text Editor");
+            setTitle(displayPath + " - " + appTitle);
         } else {
             // Fallback for when all tabs are completely closed
-            setTitle("Bearit Text Editor");
+            setTitle(appTitle);
         }
     }
     // --- File Operations ---
@@ -1057,8 +1060,11 @@ public class BearitFrame extends JFrame {
             Component c = tabbedPane.getComponentAt(i);
             if (c instanceof AdvancedTextEditorPanel) {
                 ((AdvancedTextEditorPanel) c).setReadOnlyMode(readOnly);
+            } else if (c instanceof BearitTextHexWrapper) {
+                ((BearitTextHexWrapper) c).setReadOnlyMode(readOnly);
             }
         }
+        updateFrameTitle();
     }
 
     private void performGenerateTestFile() {
@@ -1215,6 +1221,7 @@ public class BearitFrame extends JFrame {
             }
 
             BearitTextHexWrapper hexWrapper = new BearitTextHexWrapper(textPanel);
+            hexWrapper.setReadOnlyMode(BearitProperties.getInstance().isReadOnlyMode() || textPanel.isReadOnlyMode());
             // --- Wire up the hotkey to disable Hex Mode ---
             hexWrapper.setOnExitHexMode(() -> toggleHexModeForCurrentTab(false));            
             // Apply the global theme to the hex editor before displaying it ---
@@ -1239,6 +1246,7 @@ public class BearitFrame extends JFrame {
             hexWrapper.syncToHiddenEditor(true); 
             
             AdvancedTextEditorPanel restoredTextPanel = hexWrapper.getHiddenTextEditor();
+            restoredTextPanel.setReadOnlyMode(BearitProperties.getInstance().isReadOnlyMode());
             tabbedPane.setComponentAt(idx, restoredTextPanel);
             // Sync the text editor back to the hex editor's font size 
             restoredTextPanel.setFont(restoredTextPanel.getFont().deriveFont((float) hexWrapper.getCurrentFontSize()));

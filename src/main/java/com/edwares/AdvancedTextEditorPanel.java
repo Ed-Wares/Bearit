@@ -1198,12 +1198,19 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
     }
 
+    public boolean isReadOnlyMode() {
+        return readOnlyMode;
+    }
+
     public void setReadOnlyMode(boolean readOnly) {
         if (this.readOnlyMode == readOnly) return;
         this.readOnlyMode = readOnly;
         if (textArea.getCaret() != null) {
             textArea.getCaret().setBlinkRate(readOnly ? 0 : 500);
             textArea.getCaret().setVisible(true);
+        }
+        if (lblStatus != null) {
+            updateStatusLabel(chunkStatus, getFileInfoString(activeFile));
         }
         textArea.repaint();
     }
@@ -4725,7 +4732,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     public String getReadOnlyStatus() {
-        return fileManager.getCurrentFile() != null && fileManager.isReadOnly() ? "  |  ***READ-ONLY*** " : "";
+        return (readOnlyMode || (fileManager.getCurrentFile() != null && fileManager.isReadOnly())) ? "  |  ***READ-ONLY*** " : "";
     }
 
     /**
@@ -4746,7 +4753,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             
             return "Size: " + sizeStr + "  |  Modified: " + dateStr + extraInfo + getReadOnlyStatus();
         }
-        return "Unsaved/New File";
+        return "Unsaved/New File" + getReadOnlyStatus();
     }
 
     public boolean isBinaryMode() {

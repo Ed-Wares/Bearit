@@ -23,6 +23,7 @@ public class HexEditorPanel extends JPanel {
     private byte[] dataBytes;
     private long baseAddressOffset;
     private boolean isDark = false;
+    private boolean readOnlyMode = false;
     private int currentFontSize = 14; // Default starting size
     private Consumer<Font> fontChangeListener;
     private static final int SCROLL_RESOLUTION = 10000;
@@ -309,6 +310,22 @@ public class HexEditorPanel extends JPanel {
         add(createInspectorPanel(), BorderLayout.EAST);
         add(createStatusBar(), BorderLayout.SOUTH);
         updateColumnWidths();
+    }
+
+    // --- READ ONLY MODE ---
+    public boolean isReadOnlyMode() {
+        return readOnlyMode;
+    }
+
+    public void setReadOnlyMode(boolean readOnly) {
+        if (this.readOnlyMode == readOnly) return;
+        this.readOnlyMode = readOnly;
+        if (readOnly && hexTable != null && hexTable.isEditing()) {
+            hexTable.getCellEditor().cancelCellEditing();
+        }
+        if (hexTable != null) {
+            hexTable.repaint();
+        }
     }
 
     // --- FONT METHODS ---
@@ -849,7 +866,10 @@ public class HexEditorPanel extends JPanel {
         @Override
         public Class<?> getColumnClass(int colIndex) { return String.class; }
         @Override
-        public boolean isCellEditable(int row, int col) { return col > 0; }
+        public boolean isCellEditable(int row, int col) {
+            if (readOnlyMode) return false;
+            return col > 0;
+        }
 
         @Override
         public Object getValueAt(int row, int col) {
@@ -866,6 +886,7 @@ public class HexEditorPanel extends JPanel {
 
         @Override
         public void setValueAt(Object aValue, int row, int col) {
+            if (readOnlyMode) return;
             int index = row * bytesPerRow + (col <= bytesPerRow ? (col - 1) : (col - bytesPerRow - 1));
             if (index >= dataBytes.length) return;
 

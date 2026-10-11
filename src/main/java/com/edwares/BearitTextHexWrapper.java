@@ -16,8 +16,14 @@ public class BearitTextHexWrapper extends JPanel {
         setLayout(new BorderLayout());
 
         hexEditor = new HexEditorPanel();
+        if (hiddenTextEditor != null && hiddenTextEditor.isReadOnlyMode()) {
+            hexEditor.setReadOnlyMode(true);
+        } else if (BearitProperties.getInstance().isReadOnlyMode()) {
+            hexEditor.setReadOnlyMode(true);
+        }
         
         hexEditor.setOnDataChangedListener(() -> {
+            if (isReadOnlyMode()) return;
             isDirty = true;
             hiddenTextEditor.setUnsavedChanges(true); 
         });
@@ -114,6 +120,10 @@ public class BearitTextHexWrapper extends JPanel {
     }
 
     public void applyHexEdits() {
+        if (isReadOnlyMode()) {
+            isDirty = false;
+            return;
+        }
         try {
             LargeFileManager fm = hiddenTextEditor.getFileManager();
             // Commit the raw bytes to the dirty chunks map so it stays in memory
@@ -339,5 +349,22 @@ public class BearitTextHexWrapper extends JPanel {
         if (hexEditor != null) {
             hexEditor.setOnExitHexMode(listener);
         }
+    }
+
+    public void setReadOnlyMode(boolean readOnly) {
+        if (hiddenTextEditor != null) {
+            hiddenTextEditor.setReadOnlyMode(readOnly);
+        }
+        if (hexEditor != null) {
+            hexEditor.setReadOnlyMode(readOnly);
+            if (hiddenTextEditor != null) {
+                hexEditor.setFileSizeDateStatus(hiddenTextEditor.getFileInfoString(hiddenTextEditor.getActiveFile()));
+                hexEditor.updateChunkStatus(currentLoadedChunk + 1, hiddenTextEditor.getFileManager().getTotalChunks());
+            }
+        }
+    }
+
+    public boolean isReadOnlyMode() {
+        return hexEditor != null && hexEditor.isReadOnlyMode();
     }
 }
