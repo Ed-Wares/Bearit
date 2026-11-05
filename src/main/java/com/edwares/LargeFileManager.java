@@ -66,6 +66,10 @@ public class LargeFileManager {
      * Dynamic Fast Soft-Wrapper for Long Lines:
      * Scans the payload and injects \u200B\n (Zero-Width Space + Newline) 
      * if a continuous line exceeds the user-defined character maximum.
+     *
+     * Optimization: Lazily allocates the StringBuilder only when a line exceeds
+     * maxLength (returning the original String with zero allocations otherwise)
+     * and appends contiguous character slices in bulk instead of char-by-char.
      */
     public static String forceWrapLongLinesDynamic(String input, int maxLength, int initialOffset) {
         if (input == null || input.isEmpty() || maxLength <= 0) return input;
@@ -417,6 +421,10 @@ public class LargeFileManager {
         previewCache.clear();
         lineOffsetCache.clear();
         
+        // Optimization: Reuse a single RandomAccessFile and 256 KB read buffer across all chunks,
+        // populate previewCache from the first read pass without extra seeks/allocations,
+        // coalesce EDT progress callbacks via uiUpdatePending so the UI thread is never flooded,
+        // and run at slightly lower thread priority so indexing does not starve editor rendering.
         indexerThread = new Thread(() -> {
             try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(currentFile, "r")) {
                 int totalChunks = getTotalChunks();
@@ -497,12 +505,15 @@ public class LargeFileManager {
         currentChunkIndex = index;
         ChunkState state = loadCurrentChunk(requestPreview);
         
-        final int targetNext = index + 1;
-        final int targetPrev = index - 1;
-        preloader.submit(() -> preloadChunk(targetNext));
-        preloader.submit(() -> preloadChunk(targetPrev));
-        
-        preloadCache.keySet().removeIf(key -> Math.abs(key - currentChunkIndex) > 1);
+        // Optimization: Skip queueing full 25 MB neighbor-chunk preloads while dragging
+        // the global scrollbar in preview mode to avoid saturating disk I/O and heap.
+        if (!requestPreview) {
+            final int targetNext = index + 1;
+            final int targetPrev = index - 1;
+            preloader.submit(() -> preloadChunk(targetNext));
+            preloader.submit(() -> preloadChunk(targetPrev));
+            preloadCache.keySet().removeIf(key -> Math.abs(key - currentChunkIndex) > 1);
+        }
         
         return state;
     }
@@ -692,23 +703,49 @@ public class LargeFileManager {
             isPreview = false; 
             absoluteStartOffset = getChunkBoundaries(index)[0];
         } else if (currentFile != null && currentFile.exists()) {
-            long[] boundaries = getChunkBoundaries(index);
-            absoluteStartOffset = boundaries[0]; 
-            long bytesToRead = boundaries[1] - boundaries[0];
+            // Optimization: Serve scrollbar previews directly from previewCache when available,
+            // and use cached or approximate chunk boundaries during preview reads to avoid
+            // blocking on 500 KB newline boundary scans for unindexed chunks.
+            String cachedPreview = isPreview ? previewCache.get(index) : null;
+            if (cachedPreview != null) {
+                content = cachedPreview;
+                long[] cachedBounds = boundaryCache.get(index);
+                absoluteStartOffset = (cachedBounds != null) ? cachedBounds[0] : ((long) index * CHUNK_SIZE);
+            } else {
+                long[] boundaries;
+                if (isPreview) {
+                    long[] cachedBounds = boundaryCache.get(index);
+                    if (cachedBounds != null) {
+                        boundaries = cachedBounds;
+                    } else {
+                        long fileLen = currentFile.length();
+                        long approxStart = Math.min((long) index * CHUNK_SIZE, fileLen);
+                        long approxEnd = Math.min(approxStart + CHUNK_SIZE, fileLen);
+                        boundaries = new long[]{approxStart, approxEnd};
+                    }
+                } else {
+                    boundaries = getChunkBoundaries(index);
+                }
+                absoluteStartOffset = boundaries[0]; 
+                long bytesToRead = boundaries[1] - boundaries[0];
 
-            if (isPreview && bytesToRead > PREVIEW_SIZE) {
-                bytesToRead = PREVIEW_SIZE;
-            }
+                if (isPreview && bytesToRead > PREVIEW_SIZE) {
+                    bytesToRead = PREVIEW_SIZE;
+                }
 
-            if (bytesToRead > 0) {
-                try (FileChannel channel = FileChannel.open(currentFile.toPath(), StandardOpenOption.READ)) {
-                    ByteBuffer buffer = ByteBuffer.allocate((int) bytesToRead);
-                    channel.position(boundaries[0]);
-                    channel.read(buffer);
-                    content = new String(buffer.array(), getActiveCharset());
-                    
-                    if (isPreview && bytesToRead == PREVIEW_SIZE) {
-                        content += "\n\n... [Scrolling Preview: Release scrollbar to render full 25MB chunk] ...";
+                if (bytesToRead > 0) {
+                    try (FileChannel channel = FileChannel.open(currentFile.toPath(), StandardOpenOption.READ)) {
+                        ByteBuffer buffer = ByteBuffer.allocate((int) bytesToRead);
+                        channel.position(boundaries[0]);
+                        channel.read(buffer);
+                        content = new String(buffer.array(), getActiveCharset());
+                        
+                        if (isPreview && bytesToRead == PREVIEW_SIZE) {
+                            content += "\n\n... [Scrolling Preview: Release scrollbar to render full 25MB chunk] ...";
+                        }
+                        if (isPreview) {
+                            previewCache.put(index, content);
+                        }
                     }
                 }
             }
@@ -750,6 +787,9 @@ public class LargeFileManager {
         return getChunkBoundaries(index, null);
     }
 
+    // Optimization: Accepts an optional open RandomAccessFile handle and reuses the previous
+    // chunk's end boundary (prevBounds[1]) as the current chunk's start offset, eliminating
+    // redundant file opens and duplicate 500 KB boundary scans during sequential indexing.
     private long[] getChunkBoundaries(int index, java.io.RandomAccessFile existingRaf) throws IOException {
         long[] cached = boundaryCache.get(index);
         if (cached != null) return cached;

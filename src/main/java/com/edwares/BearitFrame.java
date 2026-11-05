@@ -571,6 +571,9 @@ public class BearitFrame extends JFrame {
             }
 
             // --- Theme the new tab components before selecting/laying out the tab ---
+            // Optimization: Theme only the newly created tab header and editor panel instead of
+            // sweeping the entire frame, select the tab immediately so it renders before background
+            // indexing starts, and scroll the tab strip viewport directly without toggling tab selection.
             String themeName = BearitProperties.getInstance().getTheme();
             DialogUtil.updateTheme(themeName);
             if (tabHeader != null) {

@@ -222,11 +222,15 @@ public class AdvancedTextEditorPanel extends JPanel {
 
         textArea = new JTextArea() {
 
+            // Optimization: Install custom FastTextAreaUI (FastWrappedPlainView / FastPlainView)
+            // to avoid O(N^2) line measurement and full-line rendering on 25MB chunks.
             @Override
             public void updateUI() {
                 setUI(new FastTextAreaUI());
             }
 
+            // Optimization: Short-circuit viewport height tracking using lineCount * fontHeight
+            // so JViewport validation does not call getPreferredSize() on a 25MB document.
             @Override
             public boolean getScrollableTracksViewportHeight() {
                 Container parent = getParent();
@@ -345,12 +349,24 @@ public class AdvancedTextEditorPanel extends JPanel {
 
             @Override
             protected void paintComponent(Graphics g) {
+                // Optimization: Restrict background and current-line highlight fills to the active clip bounds
+                // (instead of the entire 135,000px x 33,000px canvas) and compute the caret line's Y coordinate
+                // in O(1) via the line's start offset when word wrap is disabled.
+                Rectangle gClip = g.getClipBounds();
+                int fillX = (gClip != null) ? gClip.x : 0;
+                int fillY = (gClip != null) ? gClip.y : 0;
+                int fillW = (gClip != null) ? gClip.width : getWidth();
+                int fillH = (gClip != null) ? gClip.height : getHeight();
                 g.setColor(getBackground());
-                g.fillRect(0, 0, getWidth(), getHeight());
+                g.fillRect(fillX, fillY, fillW, fillH);
                 try {
-                    Rectangle r = modelToView2D(getCaretPosition()).getBounds();
-                    g.setColor(currentTheme.equals("Dark") ? new Color(75, 110, 175, 80) : new Color(235, 245, 255));
-                    g.fillRect(0, r.y, getWidth(), r.height);
+                    int caretPos = getCaretPosition();
+                    int queryPos = getLineWrap() ? caretPos : getLineStartOffset(getLineOfOffset(caretPos));
+                    Rectangle r = modelToView2D(queryPos).getBounds();
+                    if (gClip == null || (r.y + r.height >= fillY && r.y <= fillY + fillH)) {
+                        g.setColor(currentTheme.equals("Dark") ? new Color(75, 110, 175, 80) : new Color(235, 245, 255));
+                        g.fillRect(fillX, r.y, fillW, r.height);
+                    }
                 } catch (Exception e) {
                 }
 
@@ -410,36 +426,140 @@ public class AdvancedTextEditorPanel extends JPanel {
                     int crSymbolW = eolFm.stringWidth("\u240D");
 
                     try {
-                        Rectangle clip = getVisibleRect();
-                        int startOffset = viewToModel2D(new Point(0, clip.y));
-                        int endOffset = viewToModel2D(new Point(0, clip.y + clip.height + baseFm.getHeight()));
-                        String text = getDocument().getText(startOffset, endOffset - startOffset);
-
-                        for (int i = 0; i < text.length(); i++) {
-                            char c = text.charAt(i);
-                            if (showWhitespace && c == ' ') {
-                                g2.setFont(whitespaceFont);
-                                Rectangle r = modelToView2D(startOffset + i).getBounds();
-                                g2.drawString("·", r.x + (charW - spaceSymbolW) / 2, r.y + ascent);
-                            } else if (showWhitespace && c == '\t') {
-                                g2.setFont(whitespaceFont);
-                                Rectangle r = modelToView2D(startOffset + i).getBounds();
-                                Rectangle rNext = modelToView2D(startOffset + i + 1).getBounds();
-                                int tabW = (rNext != null && rNext.y == r.y && rNext.x > r.x) ? (rNext.x - r.x) : (charW * textArea.getTabSize());
-                                g2.drawString("→", r.x + (tabW - tabSymbolW) / 2, r.y + ascent);
-                            } else if (showEol && c == '\r') {
-                                g2.setFont(eolFont);
-                                Rectangle r = modelToView2D(startOffset + i).getBounds();
-                                g2.drawString("\u240D", r.x + charW / 2, r.y + ascent);
-                            } else if (showEol && c == '\n') {
-                                g2.setFont(eolFont);
-                                Rectangle r = modelToView2D(startOffset + i).getBounds();
-                                int offsetX = 0;
-                                if (i > 0 && text.charAt(i - 1) == '\r') {
-                                    // Shift LF to the right if it follows a CR to avoid overlapping
-                                    offsetX = crSymbolW + 4;
+                        // Optimization: Intersect visible bounds with the paint clip and, when word wrap is disabled,
+                        // horizontally cull each visible line to [visStart, visEnd] and advance X in O(1) per character
+                        // instead of scanning and calling modelToView2D across 825,000 characters on 15,000-char lines.
+                        final String CR_SYMBOL = String.valueOf((char) 0x240D);
+                        final String LF_SYMBOL = String.valueOf((char) 0x240A);
+                        final char SOFT_WRAP = 0x200B;
+                        Rectangle vis = getVisibleRect();
+                        Rectangle paintClip = (gClip != null) ? vis.intersection(gClip) : vis;
+                        if (paintClip.width <= 0 || paintClip.height <= 0) {
+                            paintClip = vis;
+                        }
+                        Document doc = getDocument();
+                        if (!getLineWrap()) {
+                            Element root = doc.getDefaultRootElement();
+                            int elemCount = root.getElementCount();
+                            int startLineIdx = Math.max(0,
+                                    root.getElementIndex(viewToModel2D(new Point(0, paintClip.y))));
+                            int endLineIdx = Math.min(elemCount - 1, root.getElementIndex(
+                                    viewToModel2D(new Point(0, paintClip.y + paintClip.height + baseFm.getHeight()))));
+                            Segment seg = new Segment();
+                            int docLen = doc.getLength();
+                            int clipLeftX = Math.max(0, paintClip.x - charW * 2);
+                            int clipRightX = paintClip.x + paintClip.width + charW * 2;
+                            for (int lineIdx = startLineIdx; lineIdx <= endLineIdx; lineIdx++) {
+                                Element lineElem = root.getElement(lineIdx);
+                                int lineStart = lineElem.getStartOffset();
+                                int lineEnd = Math.min(docLen, lineElem.getEndOffset());
+                                if (lineEnd <= lineStart) {
+                                    continue;
                                 }
-                                g2.drawString("\u240A", r.x + charW / 2 + offsetX, r.y + ascent);
+                                Rectangle lineRect = modelToView2D(lineStart).getBounds();
+                                int lineY = lineRect.y;
+                                if (lineY + lineRect.height < paintClip.y) {
+                                    continue;
+                                }
+                                if (lineY > paintClip.y + paintClip.height) {
+                                    break;
+                                }
+                                int visStart = viewToModel2D(new Point(clipLeftX, lineY));
+                                int visEnd = viewToModel2D(new Point(clipRightX, lineY));
+                                visStart = Math.max(lineStart, Math.min(lineEnd, visStart));
+                                visEnd = Math.max(visStart, Math.min(lineEnd, visEnd + 2));
+                                if (visEnd <= visStart) {
+                                    continue;
+                                }
+                                doc.getText(visStart, visEnd - visStart, seg);
+                                int curX = modelToView2D(visStart).getBounds().x;
+                                char[] arr = seg.array;
+                                int off = seg.offset;
+                                int cnt = seg.count;
+                                for (int i = 0; i < cnt; i++) {
+                                    char c = arr[off + i];
+                                    if (c == SOFT_WRAP) {
+                                        continue;
+                                    }
+                                    if (c == ' ') {
+                                        if (showWhitespace && curX + charW >= paintClip.x && curX <= clipRightX) {
+                                            g2.setFont(whitespaceFont);
+                                            g2.drawString("·", curX + (charW - spaceSymbolW) / 2, lineY + ascent);
+                                        }
+                                        curX += charW;
+                                    } else if (c == '\t') {
+                                        Rectangle rNext = modelToView2D(Math.min(docLen, visStart + i + 1)).getBounds();
+                                        int tabW = (rNext != null && rNext.y == lineY && rNext.x > curX)
+                                                ? (rNext.x - curX)
+                                                : (charW * textArea.getTabSize());
+                                        if (showWhitespace && curX + tabW >= paintClip.x && curX <= clipRightX) {
+                                            g2.setFont(whitespaceFont);
+                                            g2.drawString("→", curX + (tabW - tabSymbolW) / 2, lineY + ascent);
+                                        }
+                                        curX += tabW;
+                                    } else if (c == '\r') {
+                                        if (showEol && curX <= clipRightX) {
+                                            g2.setFont(eolFont);
+                                            g2.drawString(CR_SYMBOL, curX + charW / 2, lineY + ascent);
+                                        }
+                                    } else if (c == '\n') {
+                                        if (showEol && curX <= clipRightX) {
+                                            boolean prevSoft = (i > 0 && arr[off + i - 1] == SOFT_WRAP);
+                                            if (!prevSoft && visStart + i > lineStart) {
+                                                Segment prevSeg = new Segment();
+                                                doc.getText(visStart + i - 1, 1, prevSeg);
+                                                prevSoft = (prevSeg.count > 0 && prevSeg.array[prevSeg.offset] == SOFT_WRAP);
+                                            }
+                                            if (!prevSoft) {
+                                                g2.setFont(eolFont);
+                                                int offsetX = (i > 0 && arr[off + i - 1] == '\r') ? (crSymbolW + 4) : 0;
+                                                g2.drawString(LF_SYMBOL, curX + charW / 2 + offsetX, lineY + ascent);
+                                            }
+                                        }
+                                    } else {
+                                        curX += baseFm.charWidth(c);
+                                    }
+                                    if (curX > clipRightX + charW * 4) {
+                                        break;
+                                    }
+                                }
+                            }
+                        } else {
+                            int startOffset = viewToModel2D(new Point(0, paintClip.y));
+                            int endOffset = viewToModel2D(
+                                    new Point(paintClip.x + paintClip.width, paintClip.y + paintClip.height + baseFm.getHeight()));
+                            if (endOffset > startOffset) {
+                                String text = doc.getText(startOffset, endOffset - startOffset);
+                                for (int i = 0; i < text.length(); i++) {
+                                    char c = text.charAt(i);
+                                    if (showWhitespace && c == ' ') {
+                                        g2.setFont(whitespaceFont);
+                                        Rectangle r = modelToView2D(startOffset + i).getBounds();
+                                        g2.drawString("·", r.x + (charW - spaceSymbolW) / 2, r.y + ascent);
+                                    } else if (showWhitespace && c == '\t') {
+                                        g2.setFont(whitespaceFont);
+                                        Rectangle r = modelToView2D(startOffset + i).getBounds();
+                                        Rectangle rNext = modelToView2D(startOffset + i + 1).getBounds();
+                                        int tabW = (rNext != null && rNext.y == r.y && rNext.x > r.x) ? (rNext.x - r.x)
+                                                : (charW * textArea.getTabSize());
+                                        g2.drawString("→", r.x + (tabW - tabSymbolW) / 2, r.y + ascent);
+                                    } else if (showEol && c == '\r') {
+                                        g2.setFont(eolFont);
+                                        Rectangle r = modelToView2D(startOffset + i).getBounds();
+                                        g2.drawString(CR_SYMBOL, r.x + charW / 2, r.y + ascent);
+                                    } else if (showEol && c == '\n') {
+                                        if (i > 0 && text.charAt(i - 1) == SOFT_WRAP) {
+                                            continue;
+                                        }
+                                        g2.setFont(eolFont);
+                                        Rectangle r = modelToView2D(startOffset + i).getBounds();
+                                        int offsetX = 0;
+                                        if (i > 0 && text.charAt(i - 1) == '\r') {
+                                            offsetX = crSymbolW + 4;
+                                        }
+                                        g2.drawString(LF_SYMBOL, r.x + charW / 2 + offsetX, r.y + ascent);
+                                    }
+                                }
                             }
                         }
                     } catch (Exception ex) {
@@ -490,15 +610,25 @@ public class AdvancedTextEditorPanel extends JPanel {
                 super.moveDot(adjustForCRLF(dot), dotBias);
             }
 
+            // Optimization: Constrain caret line-highlight repaints to the visible viewport width
+            // and skip off-screen lines so caret blinking never unions with scroll repaint strips
+            // to force a full-viewport repaint during JViewport blit scrolling.
             @Override
             protected synchronized void damage(Rectangle r) {
                 if (r != null) {
                     try {
                         JTextComponent comp = getComponent();
-                        if (lastRect != null) {
-                            comp.repaint(0, lastRect.y, comp.getWidth(), lastRect.height);
+                        Rectangle vis = comp.getVisibleRect();
+                        int repX = (vis != null && vis.width > 0) ? vis.x : 0;
+                        int repW = (vis != null && vis.width > 0) ? vis.width : comp.getWidth();
+                        if (lastRect != null && lastRect.y != r.y) {
+                            if (vis == null || (lastRect.y + lastRect.height >= vis.y && lastRect.y <= vis.y + vis.height)) {
+                                comp.repaint(repX, lastRect.y, repW, lastRect.height);
+                            }
                         }
-                        comp.repaint(0, r.y, comp.getWidth(), r.height);
+                        if (vis == null || (r.y + r.height >= vis.y && r.y <= vis.y + vis.height)) {
+                            comp.repaint(repX, r.y, repW, r.height);
+                        }
                         lastRect = (Rectangle) r.clone();
                     } catch (Exception e) {
                     }
@@ -824,7 +954,14 @@ public class AdvancedTextEditorPanel extends JPanel {
         });
         add(globalScrollBar, BorderLayout.EAST);
 
-        JPanel statusBar = new JPanel(new BorderLayout());
+        // Optimization: Make statusBar a validate root so frequent status/cursor/indexing label updates
+        // remain isolated to the bottom bar and never invalidate or relayout the editor JScrollPane.
+        JPanel statusBar = new JPanel(new BorderLayout()) {
+            @Override
+            public boolean isValidateRoot() {
+                return true;
+            }
+        };
         statusBar.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
 
         JPanel leftStatusPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 0));
@@ -846,6 +983,8 @@ public class AdvancedTextEditorPanel extends JPanel {
     // Creates a JTextField that you can highlight and copy text to the clipboard
     private JTextField newLabelTextField(String text) {
         JTextField newLbl = new JTextField(text) {
+            // Optimization: Skip redundant setText() calls and only revalidate when string length
+            // changes, avoiding layout invalidations on every cursor move or indexing tick.
             @Override
             public void setText(String t) {
                 String old = getText();
@@ -909,6 +1048,12 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     private Document createWrappedDocument() {
+        return createWrappedDocument(-1);
+    }
+
+    // Optimization: Support a custom soft-wrap length so scrollbar preview chunks in no-wrap mode
+    // can wrap at 200 chars to fill the vertical viewport and scroll smoothly during fast thumb dragging.
+    private Document createWrappedDocument(int customMaxLineLength) {
         Document newDoc = new PlainDocument();
         ((AbstractDocument) newDoc).setDocumentFilter(new DocumentFilter() {
             private boolean shouldBlock(FilterBypass fb) {
@@ -941,7 +1086,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             private String processString(FilterBypass fb, int offset, String text) throws BadLocationException {
                 if (text == null || text.isEmpty())
                     return text;
-                int maxLen = getEditorMaxLineLength();
+                int maxLen = (customMaxLineLength > 0) ? customMaxLineLength : getEditorMaxLineLength();
                 if (maxLen <= 0)
                     return text;
 
@@ -1218,6 +1363,8 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
 
             // Ensure caret is visible after font size changes the view bounds
+            // Optimization: Skip scheduling modelToView/scrollRectToVisible when the editor is not yet
+            // showing or the caret is at 0 so initial tab creation does not force synchronous layout.
             if (textArea.isShowing() && textArea.getCaretPosition() > 0) {
                 SwingUtilities.invokeLater(() -> {
                     try {
@@ -1547,6 +1694,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     public void gotoLine(long targetLineNum) {
         lblLoadingStatus.setText("Searching for line position...");
 
+        // Optimization: Only extract the 25MB commit string from the document when the current chunk has unsaved edits.
         boolean wasDirty = isDirty && !isCurrentlyPreview;
         String commitText = wasDirty ? getCommitText() : "";
         isDirty = false;
@@ -1584,6 +1732,8 @@ public class AdvancedTextEditorPanel extends JPanel {
 
         try {
             // Find the exact chunk that contains the starting byte
+            // Optimization: Estimate the target chunk index in O(1) via globalStart / CHUNK_SIZE and
+            // adjust locally instead of scanning getChunkBoundaries() linearly from chunk 0.
             int totalChunks = fileManager.getTotalChunks();
             int targetChunk = (int) Math.min(Math.max(0, globalStart / LargeFileManager.CHUNK_SIZE), Math.max(0, totalChunks - 1));
             while (targetChunk > 0 && globalStart < fileManager.getChunkBoundaries(targetChunk)[0]) {
@@ -2096,6 +2246,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         updateCursorStatus();
     }
 
+    // Optimization: Defer background line indexing briefly after initial load so the new tab renders
+    // immediately, and throttle status-bar / line-gutter updates to whole-percentage steps.
     private javax.swing.Timer deferredIndexerTimer;
 
     private void restartBackgroundIndexer() {
@@ -2174,6 +2326,8 @@ public class AdvancedTextEditorPanel extends JPanel {
                 // position is deep in the file!
                 setGlobalSelection(safePosition, safePosition);
             }
+            // Optimization: Start the background line indexer 15ms after the initial chunk is displayed
+            // so the new file tab paints immediately without competing with disk I/O and EDT callbacks.
             deferredIndexerTimer = new javax.swing.Timer(15, e -> restartBackgroundIndexer());
             deferredIndexerTimer.setRepeats(false);
             deferredIndexerTimer.start();
@@ -2979,6 +3133,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
         updateStatusLabel(String.format("Chunk %d of %d", targetChunk + 1, total), fileSizeDateStatus);
 
+        // Optimization: Skip extracting the 25MB commit string when the current chunk has no unsaved edits,
+        // and pre-build/populate the PlainDocument off the EDT inside SwingWorker.doInBackground().
         boolean wasDirty = isDirty && !isCurrentlyPreview;
         String currentText = wasDirty ? getCommitText() : "";
         isDirty = false;
@@ -3001,7 +3157,12 @@ public class AdvancedTextEditorPanel extends JPanel {
                     throw new java.util.concurrent.CancellationException();
                 LargeFileManager.ChunkState state = fileManager.navigateToIndex(finalTarget, requestPreview);
                 if (state != null && cachedDoc == null && !isCancelled()) {
-                    Document newDoc = createWrappedDocument();
+                    // Optimization: In no-wrap mode, soft-wrap scrollbar preview chunks at 200 chars so the
+                    // 64KB preview fills the viewport vertically and scrolls smoothly during thumb dragging.
+                    int wrapLen = (state.isPreview() && !textArea.getLineWrap())
+                            ? Math.min(getEditorMaxLineLength(), 200)
+                            : getEditorMaxLineLength();
+                    Document newDoc = createWrappedDocument(wrapLen);
                     String content = state.content();
                     String boundaryNewline = "";
                     if (!isBinaryMode() && state.hasNext()) {
@@ -3214,6 +3375,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         applyStateUpdates(state, direction, localPercentForScroll, postLoadAction, null, null);
     }
 
+    // Optimization: Accept a pre-built Document constructed off the EDT by the background chunk worker
+    // so switching or previewing chunks only swaps the document reference on the UI thread.
     private void applyStateUpdates(LargeFileManager.ChunkState state, int direction, double localPercentForScroll,
             Runnable postLoadAction, Document prebuiltDoc, String prebuiltHiddenNewline) {
         isNavigating = true;
@@ -3231,7 +3394,10 @@ public class AdvancedTextEditorPanel extends JPanel {
                 hiddenBoundaryNewline = prebuiltHiddenNewline != null ? prebuiltHiddenNewline : "";
                 newDoc = prebuiltDoc;
             } else {
-                newDoc = createWrappedDocument();
+                int wrapLen = (isCurrentlyPreview && !textArea.getLineWrap())
+                        ? Math.min(getEditorMaxLineLength(), 200)
+                        : getEditorMaxLineLength();
+                newDoc = createWrappedDocument(wrapLen);
                 try {
                     String content = state.content();
                     // Strip the trailing newline used strictly for chunk file boundaries
@@ -3361,15 +3527,55 @@ public class AdvancedTextEditorPanel extends JPanel {
         if (currentHighlightText != null && !currentHighlightText.isEmpty()) {
             try {
                 // Determine visible range to improve performance
+                // Optimization: When word wrap is disabled, restrict match highlighting on each visible line
+                // to the horizontally visible character slice [visStart, visEnd] instead of extracting and
+                // searching ~825,000 characters across the full 15,000-char width of all visible lines.
                 Rectangle viewRect = scrollPane.getViewport().getViewRect();
+                Document doc = textArea.getDocument();
+                int docLen = doc.getLength();
+                if (!textArea.getLineWrap()) {
+                    Element root = doc.getDefaultRootElement();
+                    int elemCount = root.getElementCount();
+                    int startLineIdx = Math.max(0, root.getElementIndex(textArea.viewToModel(new Point(0, viewRect.y))));
+                    int endLineIdx = Math.min(elemCount - 1,
+                            root.getElementIndex(textArea.viewToModel(new Point(0, viewRect.y + viewRect.height))));
+                    int padPx = Math.max(64, currentHighlightText.length() * 16);
+                    int leftX = Math.max(0, viewRect.x - padPx);
+                    int rightX = viewRect.x + viewRect.width + padPx;
+                    int matchLen = currentHighlightText.length();
+                    for (int lineIdx = startLineIdx; lineIdx <= endLineIdx; lineIdx++) {
+                        Element lineElem = root.getElement(lineIdx);
+                        int lineStart = lineElem.getStartOffset();
+                        int lineEnd = Math.min(docLen, lineElem.getEndOffset());
+                        if (lineEnd <= lineStart) {
+                            continue;
+                        }
+                        int lineY = textArea.modelToView2D(lineStart).getBounds().y;
+                        int visStart = Math.max(lineStart,
+                                Math.min(lineEnd, textArea.viewToModel2D(new Point(leftX, lineY))));
+                        int visEnd = Math.max(visStart,
+                                Math.min(lineEnd, textArea.viewToModel2D(new Point(rightX, lineY)) + matchLen));
+                        if (visEnd <= visStart) {
+                            continue;
+                        }
+                        String lineSlice = doc.getText(visStart, visEnd - visStart);
+                        int index = 0;
+                        while ((index = lineSlice.indexOf(currentHighlightText, index)) >= 0) {
+                            highlighter.addHighlight(visStart + index, visStart + index + matchLen,
+                                    matchHighlightPainter);
+                            index += matchLen;
+                        }
+                    }
+                    return;
+                }
                 int startOffset = textArea.viewToModel(viewRect.getLocation());
                 int endOffset = textArea
                         .viewToModel(new Point(viewRect.x + viewRect.width, viewRect.y + viewRect.height));
 
                 if (startOffset < 0)
                     startOffset = 0;
-                if (endOffset < 0 || endOffset > textArea.getDocument().getLength()) {
-                    endOffset = textArea.getDocument().getLength();
+                if (endOffset < 0 || endOffset > docLen) {
+                    endOffset = docLen;
                 }
 
                 if (startOffset >= endOffset)
@@ -3970,6 +4176,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
     }
 
+    // Optimization: Single-pass character scan that replaces regex String.replaceAll() on 25MB chunks
+    // and returns the original String with zero allocations when no control/format characters exist.
     private static String stripControlAndFormatChars(String content) {
         if (content == null || content.isEmpty()) {
             return content;
@@ -4013,6 +4221,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         return sb.toString();
     }
 
+    // Optimization: Custom TextArea UI that installs FastWrappedPlainView (for word-wrap mode) and
+    // FastPlainView (for no-wrap mode), and seeds the initial wrap width from JViewport before layout.
     private static class FastTextAreaUI extends javax.swing.plaf.basic.BasicTextAreaUI {
         @Override
         public View create(Element elem) {
@@ -4046,11 +4256,16 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
     }
 
+    // Optimization: High-performance PlainView for word-wrap-disabled mode on large/no-newline files.
+    // Caches character metrics, tracks the longest line in O(1), horizontally clips text drawing and
+    // coordinate conversions to the visible viewport, and skips zero-width soft-wrap markers (0x200B).
     private static class FastPlainView extends javax.swing.text.PlainView {
         private static final char SOFT_WRAP_CHAR = 0x200B;
         private Font cachedFont;
         private int[] cachedWidths;
         private int cachedCharW;
+        private int cachedMinCharW;
+        private boolean isMonospacedAscii;
         private float cachedTabSize;
         private int tabBase;
         private Element longestLine;
@@ -4071,6 +4286,23 @@ public class AdvancedTextEditorPanel extends JPanel {
                     metrics = host.getFontMetrics(f);
                     cachedWidths = metrics.getWidths();
                     cachedCharW = Math.max(1, metrics.charWidth('m'));
+                    int minW = cachedCharW;
+                    boolean mono = true;
+                    if (cachedWidths != null && cachedWidths.length >= 127) {
+                        for (int c = 32; c < 127; c++) {
+                            int w = cachedWidths[c];
+                            if (w != cachedCharW) {
+                                mono = false;
+                            }
+                            if (w > 0 && w < minW) {
+                                minW = w;
+                            }
+                        }
+                    } else {
+                        mono = false;
+                    }
+                    cachedMinCharW = Math.max(1, minW);
+                    isMonospacedAscii = mono;
                     cachedTabSize = getTabSize() * cachedCharW;
                     recalculateLongestLineFast();
                 }
@@ -4122,9 +4354,15 @@ public class AdvancedTextEditorPanel extends JPanel {
                 int off = measureSegment.offset;
                 int count = measureSegment.count;
                 int[] widths = cachedWidths;
+                boolean mono = isMonospacedAscii;
+                int charW = cachedCharW;
                 float x = startX;
                 for (int i = 0; i < count; i++) {
                     char ch = arr[off + i];
+                    if (ch >= 32 && ch < 127) {
+                        x += mono ? charW : widths[ch];
+                        continue;
+                    }
                     if (ch == SOFT_WRAP_CHAR || ch == '\n' || ch == '\r') {
                         continue;
                     }
@@ -4216,31 +4454,75 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
             g.setColor(fg);
             Rectangle clip = g.getClipBounds();
+            Component host = getContainer();
+            if (host instanceof JComponent) {
+                Rectangle vis = ((JComponent) host).getVisibleRect();
+                if (vis != null && vis.width > 0) {
+                    clip = (clip != null) ? clip.intersection(vis) : vis;
+                }
+            }
             int clipLeft = (clip != null) ? (clip.x - 32) : Integer.MIN_VALUE;
             int clipRight = (clip != null) ? (clip.x + clip.width + 32) : Integer.MAX_VALUE;
             if (x > clipRight) {
                 return x;
             }
 
+            int reqLen = p1 - p0;
+            if (clipLeft <= (int) x && clipRight < Integer.MAX_VALUE && cachedMinCharW > 0) {
+                int maxVisibleChars = ((clipRight - (int) x) / cachedMinCharW) + 32;
+                if (maxVisibleChars > 0 && maxVisibleChars < reqLen) {
+                    reqLen = maxVisibleChars;
+                }
+            }
+
             Segment segment = getLineBuffer();
-            getDocument().getText(p0, p1 - p0, segment);
+            getDocument().getText(p0, reqLen, segment);
             char[] arr = segment.array;
             int start = segment.offset;
             int count = segment.count;
             int[] widths = cachedWidths;
+            boolean mono = isMonospacedAscii;
+            int charW = cachedCharW;
 
             float curX = x;
+            int i = 0;
+            if (mono && curX < clipLeft) {
+                int icurX = (int) curX;
+                while (i < count && icurX + charW < clipLeft) {
+                    char ch = arr[start + i];
+                    if (ch >= 32 && ch < 127) {
+                        icurX += charW;
+                        i++;
+                    } else {
+                        break;
+                    }
+                }
+                curX = icurX;
+            }
+
             int runStart = -1;
             int runLen = 0;
-            float runX = x;
+            float runX = curX;
             int iy = (int) y;
 
-            for (int i = 0; i < count; i++) {
+            for (; i < count; i++) {
                 if (curX > clipRight) {
                     break;
                 }
                 int idx = start + i;
                 char ch = arr[idx];
+                if (ch >= 32 && ch < 127) {
+                    int cw = mono ? charW : widths[ch];
+                    if (curX + cw >= clipLeft) {
+                        if (runLen == 0) {
+                            runStart = idx;
+                            runX = curX;
+                        }
+                        runLen++;
+                    }
+                    curX += cw;
+                    continue;
+                }
                 if (ch == SOFT_WRAP_CHAR || ch == '\r' || ch == '\n') {
                     if (runLen > 0) {
                         g.drawChars(arr, runStart, runLen, (int) runX, iy);
@@ -4329,15 +4611,32 @@ public class AdvancedTextEditorPanel extends JPanel {
                 return p0;
             }
             try {
-                doc.getText(p0, p1 - p0, measureSegment);
+                int reqLen = p1 - p0;
+                if (cachedMinCharW > 0 && fx >= alloc.x) {
+                    int maxNeeded = ((int) (fx - alloc.x) / cachedMinCharW) + 32;
+                    if (maxNeeded > 0 && maxNeeded < reqLen) {
+                        reqLen = maxNeeded;
+                    }
+                }
+                doc.getText(p0, reqLen, measureSegment);
                 char[] arr = measureSegment.array;
                 int off = measureSegment.offset;
                 int count = measureSegment.count;
                 int[] widths = cachedWidths;
+                boolean mono = isMonospacedAscii;
+                int charW = cachedCharW;
                 tabBase = alloc.x;
                 float curX = alloc.x;
                 for (int i = 0; i < count; i++) {
                     char ch = arr[off + i];
+                    if (ch >= 32 && ch < 127) {
+                        float nextX = curX + (mono ? charW : widths[ch]);
+                        if (fx < (curX + nextX) * 0.5f) {
+                            return p0 + i;
+                        }
+                        curX = nextX;
+                        continue;
+                    }
                     if (ch == SOFT_WRAP_CHAR || ch == '\r' || ch == '\n') {
                         continue;
                     }
@@ -4353,10 +4652,10 @@ public class AdvancedTextEditorPanel extends JPanel {
                     }
                     curX = nextX;
                 }
-                if (count > 0 && arr[off + count - 1] == SOFT_WRAP_CHAR) {
+                if (reqLen == p1 - p0 && count > 0 && arr[off + count - 1] == SOFT_WRAP_CHAR) {
                     return Math.max(p0, p1 - 1);
                 }
-                return p1;
+                return Math.min(p1, p0 + reqLen);
             } catch (BadLocationException e) {
                 return -1;
             }
@@ -4436,6 +4735,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
     }
 
+    // Optimization: Custom WrappedPlainView that bounds calculateBreakPosition() to the characters
+    // that fit within the viewport width instead of measuring entire 15,000-character lines per wrap row.
     private static class FastWrappedPlainView extends WrappedPlainView {
         private final boolean wrapStyleWord;
         private Font cachedFont;
@@ -4608,6 +4909,8 @@ public class AdvancedTextEditorPanel extends JPanel {
             repaint();
         }
 
+        // Optimization: Cache a prefix-sum array of true (non-soft-wrapped) line numbers per Document
+        // so LineNumberPanel.paintComponent() can look up real line numbers in O(1) during scrolling.
         private int[] getRealLinesPrefix(Document doc, Element root) {
             try {
                 int elemCount = root.getElementCount();
@@ -4644,6 +4947,8 @@ public class AdvancedTextEditorPanel extends JPanel {
             int maximumDigits = String.valueOf(startLine + totalLines).length() + 2;
             int functionalWidth = fm.stringWidth("0") * Math.max(maximumDigits, 4) + 12;
 
+            // Optimization: Use textArea.getHeight() (or lineCount * fontHeight before layout) instead of
+            // textArea.getPreferredSize() to avoid triggering full-document width measurement on 25MB chunks.
             int height = textArea.getHeight();
             if (height <= 0) {
                 Insets ins = textArea.getInsets();
@@ -4684,8 +4989,14 @@ public class AdvancedTextEditorPanel extends JPanel {
                 }
 
                 for (int i = startLineIdx; i <= endLineIdx; i++) {
+                    // Optimization: Skip soft-wrapped continuation lines via the cached prefix array
+                    // before calling modelToView2D() so no-newline files avoid per-line view lookups.
                     if (prefix != null) {
                         realLines = prefix[i];
+                        boolean prevWasFake = (i > 0 && prefix[i] == prefix[i - 1]);
+                        if (prevWasFake) {
+                            continue;
+                        }
                     }
                     int offset = root.getElement(i).getStartOffset();
                     Rectangle r = textArea.modelToView2D(offset).getBounds();
@@ -4698,8 +5009,11 @@ public class AdvancedTextEditorPanel extends JPanel {
                     boolean prevWasFake = (prefix != null) && (i > 0 && prefix[i] == prefix[i - 1]);
                     if (prefix == null && i > 0) {
                         int prevEndOff = root.getElement(i - 1).getEndOffset();
-                        if (prevEndOff >= 2 && "\u200B".equals(doc.getText(prevEndOff - 2, 1))) {
-                            prevWasFake = true;
+                        if (prevEndOff >= 2) {
+                            doc.getText(prevEndOff - 2, 1, lineSeg);
+                            if (lineSeg.count > 0 && lineSeg.array[lineSeg.offset] == SOFT_WRAP_CHAR) {
+                                prevWasFake = true;
+                            }
                         }
                     }
 
@@ -5408,6 +5722,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         try {
             int rawCaret = getRawCaretPosition(); // Handles soft wrap \u200B removal natively
             long chunkStartOffset = fileManager.getChunkBoundaries(loadedChunkIndex)[0];
+            // Optimization: Fast-path caret at offset 0 to return chunkStartOffset immediately
+            // without reading and UTF-8 encoding the 25MB chunk text.
             if (rawCaret <= 0) {
                 return chunkStartOffset;
             }
