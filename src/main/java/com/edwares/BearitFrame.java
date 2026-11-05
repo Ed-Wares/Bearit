@@ -448,10 +448,10 @@ public class BearitFrame extends JFrame {
      */
     private AdvancedTextEditorPanel addNewTab(File file, long initialPosition, String forceAutoSaveId, boolean selectTab) {
         final AdvancedTextEditorPanel editor = new AdvancedTextEditorPanel();
+        JPanel tabHeader = null;
         isUpdatingTabs = true; // Engage lock
         try {
             BearitProperties props = BearitProperties.getInstance();
-            editor.setFont(new Font(props.getFontName(), Font.PLAIN, props.getFontSize()));
             // --- Push global view settings into the decoupled editor panel ---
             editor.setFont(new Font(props.getFontName(), Font.PLAIN, props.getFontSize()));
             editor.setWordWrap(props.isWordWrap());
@@ -482,7 +482,7 @@ public class BearitFrame extends JFrame {
             
             JLabel lblTitle = new JLabel("Untitled");
             updateTabHeader(editor, lblTitle);
-            JPanel tabHeader = ThemedTabbedPaneUI.insertNewTabWithClose(tabbedPane, lblTitle, editor, e -> closeTab(editor));
+            tabHeader = ThemedTabbedPaneUI.insertNewTabWithClose(tabbedPane, lblTitle, editor, e -> closeTab(editor));
             // --- Component-Level Tab Right-Click Listener & Left-Click Selector ---
             
             // --- Attach the global drag-and-drop & context menu listener ---
@@ -570,32 +570,36 @@ public class BearitFrame extends JFrame {
                 }
             }
 
-            // Ensure the newly added tab scrolls into view by deferring selection
-            if (selectTab) SwingUtilities.invokeLater(() -> {
-                tabbedPane.validate(); // Force synchronous layout calculation
+            // --- Theme the new tab components before selecting/laying out the tab ---
+            String themeName = BearitProperties.getInstance().getTheme();
+            DialogUtil.updateTheme(themeName);
+            if (tabHeader != null) {
+                DialogUtil.sweepComponents(tabHeader);
+            }
+            DialogUtil.sweepComponents(editor);
+            editor.applyTheme(themeName);
+
+            if (selectTab) {
+                final JPanel finalTabHeader = tabHeader;
                 tabbedPane.setSelectedComponent(editor);
-                
-                // For heavy files, the layout might still be queued. A final synchronous index toggle forces the scroll.
+                // Ensure the newly added tab scrolls into view once laid out
                 SwingUtilities.invokeLater(() -> {
                     int idx = tabbedPane.indexOfComponent(editor);
-                    if (idx > 0) {
-                        try {
-                            isUpdatingTabs = true;
-                            tabbedPane.setSelectedIndex(idx - 1); // Invisible toggle
-                            tabbedPane.setSelectedIndex(idx);
-                        } catch (Exception ex) {
-                        } finally {
-                            isUpdatingTabs = false;
-                            updateFrameTitle();
+                    if (idx >= 0 && finalTabHeader != null) {
+                        Rectangle bounds = tabbedPane.getBoundsAt(idx);
+                        JViewport vp = (JViewport) SwingUtilities.getAncestorOfClass(JViewport.class, finalTabHeader);
+                        if (bounds != null && vp != null && vp.getView() instanceof JComponent) {
+                            ((JComponent) vp.getView()).scrollRectToVisible(bounds);
                         }
                     }
                 });
-            });
+            }
         } finally {
             isUpdatingTabs = false; // Disengage lock
             updateFrameTitle();
-            // --- Immediately sweep the new tab with our custom theme interceptors! ---
-            applyTheme(BearitProperties.getInstance().getTheme());
+            if (tabbedPane.getUI() instanceof ThemedTabbedPaneUI) {
+                ((ThemedTabbedPaneUI) tabbedPane.getUI()).syncCustomTabHeaderStyles();
+            }
         }
         return editor;
     }

@@ -70,24 +70,33 @@ public class LargeFileManager {
     public static String forceWrapLongLinesDynamic(String input, int maxLength, int initialOffset) {
         if (input == null || input.isEmpty() || maxLength <= 0) return input;
         
-        StringBuilder sb = new StringBuilder(input.length() + (input.length() / maxLength) * 3);
+        StringBuilder sb = null;
         int currentLineLength = initialOffset;
+        int len = input.length();
+        int lastAppend = 0;
         
-        for (int i = 0; i < input.length(); i++) {
+        for (int i = 0; i < len; i++) {
             char c = input.charAt(i);
             if (c == '\n') {
                 currentLineLength = 0;
-                sb.append(c);
             } else {
                 if (currentLineLength >= maxLength) {
+                    if (sb == null) {
+                        sb = new StringBuilder(len + (len / maxLength) * 3);
+                    }
+                    sb.append(input, lastAppend, i);
+                    lastAppend = i;
                     sb.append('\u200B').append('\n');
                     currentLineLength = 0;
                 }
-                sb.append(c);
                 currentLineLength++;
             }
         }
-        return sb.toString();
+        if (sb != null) {
+            sb.append(input, lastAppend, len);
+            return sb.toString();
+        }
+        return input;
     }
 
     public void setNewFile() {
@@ -412,55 +421,71 @@ public class LargeFileManager {
             try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(currentFile, "r")) {
                 int totalChunks = getTotalChunks();
                 long currentGlobalLine = 1;
+                byte[] buffer = new byte[256 * 1024];
+                Charset charset = getActiveCharset();
+                java.util.concurrent.atomic.AtomicInteger latestCompletedChunk = new java.util.concurrent.atomic.AtomicInteger(-1);
+                java.util.concurrent.atomic.AtomicBoolean uiUpdatePending = new java.util.concurrent.atomic.AtomicBoolean(false);
                 
                 for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
                     if (Thread.currentThread().isInterrupted()) break;
                     
-                    long[] bounds = getChunkBoundaries(chunkIdx);
+                    long[] bounds = getChunkBoundaries(chunkIdx, raf);
                     long start = bounds[0];
                     long end = bounds[1];
                     
                     lineOffsetCache.put(chunkIdx, currentGlobalLine);
                     
-                    long previewEnd = Math.min(end, start + 8192); 
-                    byte[] previewBytes = new byte[(int)(previewEnd - start)];
                     raf.seek(start);
-                    raf.readFully(previewBytes);
-                    
-                    String previewStr = new String(previewBytes, getActiveCharset());
-                    if (previewEnd < end) {
-                        previewStr += "\n\n... [Scrolling Preview: Release scrollbar to render full chunk] ...";
-                    }
-                    previewCache.put(chunkIdx, previewStr);
-                    
-                    raf.seek(start);
-                    byte[] buffer = new byte[8192];
                     long bytesRead = 0;
                     long chunkLen = end - start;
                     long linesInChunk = 0;
+                    boolean previewBuilt = false;
                     
                     while (bytesRead < chunkLen) {
                         if (Thread.currentThread().isInterrupted()) return;
                         int toRead = (int) Math.min(buffer.length, chunkLen - bytesRead);
                         int read = raf.read(buffer, 0, toRead);
                         if (read == -1) break;
+                        if (!previewBuilt) {
+                            int previewLen = (int) Math.min(read, 8192);
+                            String previewStr = new String(buffer, 0, previewLen, charset);
+                            if (start + previewLen < end) {
+                                previewStr += "\n\n... [Scrolling Preview: Release scrollbar to render full chunk] ...";
+                            }
+                            previewCache.put(chunkIdx, previewStr);
+                            previewBuilt = true;
+                        }
                         for (int i = 0; i < read; i++) {
                             if (buffer[i] == '\n') linesInChunk++;
                         }
                         bytesRead += read;
+                    }
+                    if (!previewBuilt) {
+                        previewCache.put(chunkIdx, "");
                     }
                     
                     currentGlobalLine += linesInChunk;
                     
                     final int completedChunk = chunkIdx;
                     if (onChunkIndexed != null) {
-                        javax.swing.SwingUtilities.invokeLater(() -> onChunkIndexed.accept(completedChunk));
+                        latestCompletedChunk.set(completedChunk);
+                        if (uiUpdatePending.compareAndSet(false, true)) {
+                            javax.swing.SwingUtilities.invokeLater(() -> {
+                                uiUpdatePending.set(false);
+                                int latest = latestCompletedChunk.get();
+                                if (latest >= 0) {
+                                    onChunkIndexed.accept(latest);
+                                }
+                            });
+                        }
                     }
                 }
             } catch (Exception e) {
                 System.err.println("Background file indexer failed: " + e.getMessage());
             }
-        });
+        }, "Bearit-LineIndexer");
+        indexerThread.setDaemon(true);
+        indexerThread.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
         indexerThread.start();
     }
 
@@ -722,21 +747,41 @@ public class LargeFileManager {
     }
 
     public long[] getChunkBoundaries(int index) throws IOException {
-        if (boundaryCache.containsKey(index)) return boundaryCache.get(index);
+        return getChunkBoundaries(index, null);
+    }
+
+    private long[] getChunkBoundaries(int index, java.io.RandomAccessFile existingRaf) throws IOException {
+        long[] cached = boundaryCache.get(index);
+        if (cached != null) return cached;
         if (currentFile == null) return new long[]{0, 0};
 
+        long fileLen = currentFile.length();
         long start = (long) index * CHUNK_SIZE; 
-        long end = Math.min(start + CHUNK_SIZE, currentFile.length());
+        long end = Math.min(start + CHUNK_SIZE, fileLen);
 
         // ONLY scan for newlines if we are in Text Mode
         if (!isBinaryMode) {
             final long MAX_SCAN_DISTANCE = 500 * 1024; // 500 KB Failsafe
-            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(currentFile, "r")) {
-                if (start > 0 && start < currentFile.length()) {
-                    start = fastFindNewline(raf, start, Math.min(start + MAX_SCAN_DISTANCE, currentFile.length()));
+            long[] prevBounds = (index > 0) ? boundaryCache.get(index - 1) : null;
+            if (existingRaf != null) {
+                if (prevBounds != null) {
+                    start = prevBounds[1];
+                } else if (start > 0 && start < fileLen) {
+                    start = fastFindNewline(existingRaf, start, Math.min(start + MAX_SCAN_DISTANCE, fileLen));
                 }
-                if (end < currentFile.length()) {
-                    end = fastFindNewline(raf, end, Math.min(end + MAX_SCAN_DISTANCE, currentFile.length()));
+                if (end < fileLen) {
+                    end = fastFindNewline(existingRaf, end, Math.min(end + MAX_SCAN_DISTANCE, fileLen));
+                }
+            } else {
+                try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(currentFile, "r")) {
+                    if (prevBounds != null) {
+                        start = prevBounds[1];
+                    } else if (start > 0 && start < fileLen) {
+                        start = fastFindNewline(raf, start, Math.min(start + MAX_SCAN_DISTANCE, fileLen));
+                    }
+                    if (end < fileLen) {
+                        end = fastFindNewline(raf, end, Math.min(end + MAX_SCAN_DISTANCE, fileLen));
+                    }
                 }
             }
         }

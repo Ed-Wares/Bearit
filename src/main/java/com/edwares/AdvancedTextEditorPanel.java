@@ -11,6 +11,10 @@ import javax.swing.text.DocumentFilter;
 import javax.swing.text.Element;
 import javax.swing.text.JTextComponent;
 import javax.swing.text.PlainDocument;
+import javax.swing.text.Segment;
+import javax.swing.text.Utilities;
+import javax.swing.text.View;
+import javax.swing.text.WrappedPlainView;
 import javax.swing.text.AttributeSet;
 import javax.swing.text.BadLocationException;
 import javax.swing.undo.CannotRedoException;
@@ -217,6 +221,23 @@ public class AdvancedTextEditorPanel extends JPanel {
         });
 
         textArea = new JTextArea() {
+
+            @Override
+            public void updateUI() {
+                setUI(new FastTextAreaUI());
+            }
+
+            @Override
+            public boolean getScrollableTracksViewportHeight() {
+                Container parent = getParent();
+                if (parent instanceof JViewport) {
+                    FontMetrics fm = getFontMetrics(getFont());
+                    if (getLineCount() * fm.getHeight() > parent.getHeight()) {
+                        return false;
+                    }
+                }
+                return super.getScrollableTracksViewportHeight();
+            }
 
             // Intercept Raw Hardware Keystrokes to bypass Swing's disabled native actions
             // ---
@@ -736,6 +757,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         setupKeyboardShortcuts();
 
         scrollPane = new JScrollPane(textArea);
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
         scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_NEVER);
         scrollPane.setRowHeaderView(lineNumberPanel);
 
@@ -826,12 +848,22 @@ public class AdvancedTextEditorPanel extends JPanel {
         JTextField newLbl = new JTextField(text) {
             @Override
             public void setText(String t) {
+                String old = getText();
+                if (java.util.Objects.equals(old, t)) {
+                    return;
+                }
                 super.setText(t);
-                // Force layout recalculation when text changes
-                revalidate();
+                // Force layout recalculation when text length changes
+                int oldLen = (old != null) ? old.length() : 0;
+                int newLen = (t != null) ? t.length() : 0;
+                if (oldLen != newLen) {
+                    revalidate();
+                    if (getParent() != null) {
+                        getParent().revalidate();
+                    }
+                }
                 repaint();
                 if (getParent() != null) {
-                    getParent().revalidate();
                     getParent().repaint();
                 }
             }
@@ -1186,16 +1218,18 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
 
             // Ensure caret is visible after font size changes the view bounds
-            SwingUtilities.invokeLater(() -> {
-                try {
-                    int pos = textArea.getCaretPosition();
-                    java.awt.Rectangle rect = textArea.modelToView(pos);
-                    if (rect != null) {
-                        textArea.scrollRectToVisible(rect);
+            if (textArea.isShowing() && textArea.getCaretPosition() > 0) {
+                SwingUtilities.invokeLater(() -> {
+                    try {
+                        int pos = textArea.getCaretPosition();
+                        java.awt.Rectangle rect = textArea.modelToView(pos);
+                        if (rect != null) {
+                            textArea.scrollRectToVisible(rect);
+                        }
+                    } catch (Exception e) {
                     }
-                } catch (Exception e) {
-                }
-            });
+                });
+            }
         }
     }
 
@@ -1513,14 +1547,14 @@ public class AdvancedTextEditorPanel extends JPanel {
     public void gotoLine(long targetLineNum) {
         lblLoadingStatus.setText("Searching for line position...");
 
-        String commitText = getCommitText();
-        boolean wasDirty = isDirty;
+        boolean wasDirty = isDirty && !isCurrentlyPreview;
+        String commitText = wasDirty ? getCommitText() : "";
         isDirty = false;
 
         new SwingWorker<Integer, Void>() {
             @Override
             protected Integer doInBackground() throws Exception {
-                if (wasDirty && !isCurrentlyPreview) {
+                if (wasDirty) {
                     fileManager.commitCurrentChunk(commitText);
                 }
                 return fileManager.getChunkForLine(targetLineNum);
@@ -1550,14 +1584,13 @@ public class AdvancedTextEditorPanel extends JPanel {
 
         try {
             // Find the exact chunk that contains the starting byte
-            int targetChunk = 0;
-            for (int i = 0; i < fileManager.getTotalChunks(); i++) {
-                long[] bounds = fileManager.getChunkBoundaries(i);
-                // bounds[0] is inclusive, bounds[1] is exclusive
-                if (globalStart >= bounds[0] && globalStart < bounds[1]) {
-                    targetChunk = i;
-                    break;
-                }
+            int totalChunks = fileManager.getTotalChunks();
+            int targetChunk = (int) Math.min(Math.max(0, globalStart / LargeFileManager.CHUNK_SIZE), Math.max(0, totalChunks - 1));
+            while (targetChunk > 0 && globalStart < fileManager.getChunkBoundaries(targetChunk)[0]) {
+                targetChunk--;
+            }
+            while (targetChunk < totalChunks - 1 && globalStart >= fileManager.getChunkBoundaries(targetChunk)[1]) {
+                targetChunk++;
             }
 
             final int finalTargetChunk = targetChunk;
@@ -2063,28 +2096,41 @@ public class AdvancedTextEditorPanel extends JPanel {
         updateCursorStatus();
     }
 
+    private javax.swing.Timer deferredIndexerTimer;
+
     private void restartBackgroundIndexer() {
+        if (deferredIndexerTimer != null && deferredIndexerTimer.isRunning()) {
+            deferredIndexerTimer.stop();
+        }
         lblIndexingStatus.setText("⚙ Indexing lines: 0%");
+        final int[] lastPct = { 0 };
         fileManager.buildIndexCacheAsync((indexedChunk) -> {
             int total = Math.max(1, fileManager.getTotalChunks());
             int pct = (int) (((indexedChunk + 1) * 100.0) / total);
 
             if (indexedChunk < total - 1) {
-                lblIndexingStatus.setText("⚙ Indexing lines: " + pct + "%");
+                if (pct != lastPct[0]) {
+                    lastPct[0] = pct;
+                    lblIndexingStatus.setText("⚙ Indexing lines: " + pct + "%");
+                }
             } else {
                 lblIndexingStatus.setText(""); // Complete
             }
 
             // If the chunk we are currently looking at finishes indexing, snap the numbers
             // into place
-            if (indexedChunk == loadedChunkIndex) {
+            boolean updatedStartLine = false;
+            if (indexedChunk >= loadedChunkIndex) {
                 long exactLine = fileManager.getExactLineOffset(loadedChunkIndex);
                 if (exactLine != -1 && exactLine != lineNumberPanel.getStartLine()) {
                     lineNumberPanel.setStartLine(exactLine);
                     updateCursorStatus();
+                    updatedStartLine = true;
                 }
             }
-            lineNumberPanel.repaint();
+            if (updatedStartLine || indexedChunk == loadedChunkIndex || indexedChunk >= total - 1) {
+                lineNumberPanel.repaint();
+            }
         });
     }
 
@@ -2098,10 +2144,15 @@ public class AdvancedTextEditorPanel extends JPanel {
                 && this.activeFile.getAbsolutePath().equals(file.getAbsolutePath()));
         final long savedPosition = explicitPosition != -1 ? explicitPosition : (isReload ? getGlobalCaretByteOffset() : 0);
 
+        if (deferredIndexerTimer != null && deferredIndexerTimer.isRunning()) {
+            deferredIndexerTimer.stop();
+        }
+        fileManager.stopIndexer();
+
         this.activeFile = file;
         fileManager.setFile(file);
         this.lastKnownModifiedTime = file.lastModified();
-        restartBackgroundIndexer();
+        lblIndexingStatus.setText("⚙ Indexing lines: 0%");
         isDirty = false;
         setUnsavedChanges(false);
         loadedChunkIndex = 0;
@@ -2111,11 +2162,9 @@ public class AdvancedTextEditorPanel extends JPanel {
         documentCache.clear();
         globalUndoManager.discardAllEdits();
 
-        // --- Create a callback to restore the position after the initial chunk loads
-        // ---
-        Runnable postLoadAction = null;
-        if (isReload || explicitPosition != -1) {
-            postLoadAction = () -> {
+        // --- Create a callback to restore the position and start background indexing after the initial chunk loads ---
+        Runnable postLoadAction = () -> {
+            if ((isReload || explicitPosition != -1) && savedPosition > 0) {
                 long fileLen = activeFile.length();
                 // Ensure we don't try to place the cursor past the end if the file was
                 // truncated by the external program
@@ -2124,8 +2173,11 @@ public class AdvancedTextEditorPanel extends JPanel {
                 // setGlobalSelection automatically handles chunk-switching if the saved
                 // position is deep in the file!
                 setGlobalSelection(safePosition, safePosition);
-            };
-        }
+            }
+            deferredIndexerTimer = new javax.swing.Timer(15, e -> restartBackgroundIndexer());
+            deferredIndexerTimer.setRepeats(false);
+            deferredIndexerTimer.start();
+        };
 
         try {
             // Pass the callback to applyStateUpdates
@@ -2927,23 +2979,52 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
         updateStatusLabel(String.format("Chunk %d of %d", targetChunk + 1, total), fileSizeDateStatus);
 
-        String currentText = getCommitText();
-        boolean wasDirty = isDirty;
+        boolean wasDirty = isDirty && !isCurrentlyPreview;
+        String currentText = wasDirty ? getCommitText() : "";
         isDirty = false;
 
         final int finalTarget = targetChunk;
+        final Document cachedDoc = (!requestPreview) ? documentCache.get(finalTarget) : null;
 
         // Assign to the tracking variable
         activeChunkWorker = new SwingWorker<LargeFileManager.ChunkState, Void>() {
+            private Document preparedDoc = null;
+            private String preparedHiddenNewline = "";
+
             @Override
             protected LargeFileManager.ChunkState doInBackground() throws Exception {
-                if (wasDirty && !isCurrentlyPreview) {
+                if (wasDirty) {
                     fileManager.commitCurrentChunk(currentText);
                 }
                 // If cancelled before we even start the heavy IO, abort.
                 if (isCancelled())
                     throw new java.util.concurrent.CancellationException();
-                return fileManager.navigateToIndex(finalTarget, requestPreview);
+                LargeFileManager.ChunkState state = fileManager.navigateToIndex(finalTarget, requestPreview);
+                if (state != null && cachedDoc == null && !isCancelled()) {
+                    Document newDoc = createWrappedDocument();
+                    String content = state.content();
+                    String boundaryNewline = "";
+                    if (!isBinaryMode() && state.hasNext()) {
+                        if (content.endsWith("\r\n")) {
+                            boundaryNewline = "\r\n";
+                            content = content.substring(0, content.length() - 2);
+                        } else if (content.endsWith("\n")) {
+                            boundaryNewline = "\n";
+                            content = content.substring(0, content.length() - 1);
+                        }
+                    }
+                    if (isBinaryMode()) {
+                        content = encodeBinaryForView(content);
+                    } else {
+                        content = stripControlAndFormatChars(content);
+                    }
+                    if (!isCancelled()) {
+                        newDoc.insertString(0, content, null);
+                        preparedDoc = newDoc;
+                        preparedHiddenNewline = boundaryNewline;
+                    }
+                }
+                return state;
             }
 
             @Override
@@ -2955,7 +3036,8 @@ public class AdvancedTextEditorPanel extends JPanel {
 
                     LargeFileManager.ChunkState state = get();
                     if (state != null) {
-                        applyStateUpdates(state, direction, localPercentForScroll, postLoadAction);
+                        applyStateUpdates(state, direction, localPercentForScroll, postLoadAction, preparedDoc,
+                                preparedHiddenNewline);
                     } else {
                         unlockUI();
                     }
@@ -3129,6 +3211,11 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     private void applyStateUpdates(LargeFileManager.ChunkState state, int direction, double localPercentForScroll,
             Runnable postLoadAction) {
+        applyStateUpdates(state, direction, localPercentForScroll, postLoadAction, null, null);
+    }
+
+    private void applyStateUpdates(LargeFileManager.ChunkState state, int direction, double localPercentForScroll,
+            Runnable postLoadAction, Document prebuiltDoc, String prebuiltHiddenNewline) {
         isNavigating = true;
         loadedChunkIndex = state.chunkIndex();
         isCurrentlyPreview = state.isPreview();
@@ -3139,31 +3226,37 @@ public class AdvancedTextEditorPanel extends JPanel {
         if (doc != null && !isCurrentlyPreview) {
             textArea.setDocument(doc);
         } else {
-            Document newDoc = createWrappedDocument();
-            try {
-                String content = state.content();
-                // Strip the trailing newline used strictly for chunk file boundaries
-                // --- CONDITIONAL BOUNDARY STRIPPING ---
-                hiddenBoundaryNewline = "";
-                if (!isBinaryMode() && state.hasNext()) {
-                    if (content.endsWith("\r\n")) {
-                        hiddenBoundaryNewline = "\r\n";
-                        content = content.substring(0, content.length() - 2);
-                    } else if (content.endsWith("\n")) {
-                        hiddenBoundaryNewline = "\n";
-                        content = content.substring(0, content.length() - 1);
+            Document newDoc;
+            if (prebuiltDoc != null) {
+                hiddenBoundaryNewline = prebuiltHiddenNewline != null ? prebuiltHiddenNewline : "";
+                newDoc = prebuiltDoc;
+            } else {
+                newDoc = createWrappedDocument();
+                try {
+                    String content = state.content();
+                    // Strip the trailing newline used strictly for chunk file boundaries
+                    // --- CONDITIONAL BOUNDARY STRIPPING ---
+                    hiddenBoundaryNewline = "";
+                    if (!isBinaryMode() && state.hasNext()) {
+                        if (content.endsWith("\r\n")) {
+                            hiddenBoundaryNewline = "\r\n";
+                            content = content.substring(0, content.length() - 2);
+                        } else if (content.endsWith("\n")) {
+                            hiddenBoundaryNewline = "\n";
+                            content = content.substring(0, content.length() - 1);
+                        }
                     }
-                }
-                // --- handle binary encoding logic ---
-                if (isBinaryMode()) {
-                    content = encodeBinaryForView(content);
-                } else {
-                    // Fallback to prevent crashes in minified UTF-8 text files
-                    content = content.replaceAll("[\\p{Cc}\\p{Cf}&&[^\\r\\n\\t]]", "");
-                }
+                    // --- handle binary encoding logic ---
+                    if (isBinaryMode()) {
+                        content = encodeBinaryForView(content);
+                    } else {
+                        // Fallback to prevent crashes in minified UTF-8 text files
+                        content = stripControlAndFormatChars(content);
+                    }
 
-                newDoc.insertString(0, content, null);
-            } catch (Exception ex) {
+                    newDoc.insertString(0, content, null);
+                } catch (Exception ex) {
+                }
             }
 
             newDoc.addDocumentListener(editorDocumentListener);
@@ -3877,6 +3970,575 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
     }
 
+    private static String stripControlAndFormatChars(String content) {
+        if (content == null || content.isEmpty()) {
+            return content;
+        }
+        int len = content.length();
+        int firstBad = -1;
+        for (int i = 0; i < len; i++) {
+            char c = content.charAt(i);
+            if (c >= 0x20 && c < 0x7F) {
+                continue;
+            }
+            if (c == '\n' || c == '\r' || c == '\t') {
+                continue;
+            }
+            int type = Character.getType(c);
+            if (type == Character.CONTROL || type == Character.FORMAT) {
+                firstBad = i;
+                break;
+            }
+        }
+        if (firstBad == -1) {
+            return content;
+        }
+        StringBuilder sb = new StringBuilder(len - 1);
+        sb.append(content, 0, firstBad);
+        for (int i = firstBad + 1; i < len; i++) {
+            char c = content.charAt(i);
+            if (c >= 0x20 && c < 0x7F) {
+                sb.append(c);
+                continue;
+            }
+            if (c == '\n' || c == '\r' || c == '\t') {
+                sb.append(c);
+                continue;
+            }
+            int type = Character.getType(c);
+            if (type != Character.CONTROL && type != Character.FORMAT) {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    private static class FastTextAreaUI extends javax.swing.plaf.basic.BasicTextAreaUI {
+        @Override
+        public View create(Element elem) {
+            JTextComponent c = getComponent();
+            if (c instanceof JTextArea) {
+                JTextArea area = (JTextArea) c;
+                if (area.getLineWrap()) {
+                    return new FastWrappedPlainView(elem, area.getWrapStyleWord());
+                }
+                return new FastPlainView(elem);
+            }
+            return super.create(elem);
+        }
+
+        @Override
+        public Dimension getPreferredSize(JComponent c) {
+            if (c instanceof JTextArea && c.getParent() instanceof JViewport) {
+                JTextArea area = (JTextArea) c;
+                int vpW = c.getParent().getWidth();
+                int vpH = c.getParent().getHeight();
+                if (vpW <= 0) {
+                    FontMetrics fm = area.getFontMetrics(area.getFont());
+                    int lines = Math.max(1, area.getLineCount());
+                    return new Dimension(400, lines * fm.getHeight());
+                }
+                if (area.getLineWrap() && area.getWidth() != vpW) {
+                    area.setSize(vpW, Math.max(1, vpH));
+                }
+            }
+            return super.getPreferredSize(c);
+        }
+    }
+
+    private static class FastPlainView extends javax.swing.text.PlainView {
+        private static final char SOFT_WRAP_CHAR = 0x200B;
+        private Font cachedFont;
+        private int[] cachedWidths;
+        private int cachedCharW;
+        private float cachedTabSize;
+        private int tabBase;
+        private Element longestLine;
+        private int maxLineWidth = -1;
+        private final Segment measureSegment = new Segment();
+
+        FastPlainView(Element elem) {
+            super(elem);
+        }
+
+        @Override
+        protected void updateMetrics() {
+            Component host = getContainer();
+            if (host != null) {
+                Font f = host.getFont();
+                if (f != cachedFont || metrics == null) {
+                    cachedFont = f;
+                    metrics = host.getFontMetrics(f);
+                    cachedWidths = metrics.getWidths();
+                    cachedCharW = Math.max(1, metrics.charWidth('m'));
+                    cachedTabSize = getTabSize() * cachedCharW;
+                    recalculateLongestLineFast();
+                }
+            }
+        }
+
+        private void recalculateLongestLineFast() {
+            Element root = getElement();
+            int count = root.getElementCount();
+            Element best = null;
+            int bestCharLen = -1;
+            for (int i = 0; i < count; i++) {
+                Element line = root.getElement(i);
+                int charLen = line.getEndOffset() - line.getStartOffset();
+                if (charLen > bestCharLen) {
+                    bestCharLen = charLen;
+                    best = line;
+                }
+            }
+            longestLine = best;
+            maxLineWidth = (best != null) ? getLineWidthFast(best) : 0;
+        }
+
+        private int getLineWidthFast(Element line) {
+            if (line == null || metrics == null) {
+                return 0;
+            }
+            int p0 = line.getStartOffset();
+            int p1 = line.getEndOffset() - 1;
+            if (p1 <= p0) {
+                return 0;
+            }
+            return (int) measureSpan(p0, p1, tabBase);
+        }
+
+        private float measureSpan(int p0, int p1, float startX) {
+            if (p1 <= p0) {
+                return 0f;
+            }
+            if (metrics == null) {
+                updateMetrics();
+                if (metrics == null) {
+                    return 0f;
+                }
+            }
+            try {
+                getDocument().getText(p0, p1 - p0, measureSegment);
+                char[] arr = measureSegment.array;
+                int off = measureSegment.offset;
+                int count = measureSegment.count;
+                int[] widths = cachedWidths;
+                float x = startX;
+                for (int i = 0; i < count; i++) {
+                    char ch = arr[off + i];
+                    if (ch == SOFT_WRAP_CHAR || ch == '\n' || ch == '\r') {
+                        continue;
+                    }
+                    if (ch == '\t') {
+                        x = nextTabStop(x, p0 + i);
+                    } else if (ch < 256 && widths != null) {
+                        x += widths[ch];
+                    } else {
+                        x += metrics.charWidth(ch);
+                    }
+                }
+                return x - startX;
+            } catch (BadLocationException e) {
+                return 0f;
+            }
+        }
+
+        @Override
+        public float getPreferredSpan(int axis) {
+            updateMetrics();
+            switch (axis) {
+                case View.X_AXIS:
+                    if (maxLineWidth < 0) {
+                        recalculateLongestLineFast();
+                    }
+                    return maxLineWidth;
+                case View.Y_AXIS:
+                    return getElement().getElementCount() * (metrics != null ? metrics.getHeight() : 16);
+                default:
+                    throw new IllegalArgumentException("Invalid axis: " + axis);
+            }
+        }
+
+        @Override
+        public void paint(Graphics g, Shape a) {
+            if (a != null) {
+                tabBase = a.getBounds().x;
+            }
+            super.paint(g, a);
+        }
+
+        @Override
+        protected int drawUnselectedText(Graphics g, int x, int y, int p0, int p1) throws BadLocationException {
+            return (int) drawUnselectedText((Graphics2D) g, (float) x, (float) y, p0, p1);
+        }
+
+        @Override
+        protected float drawUnselectedText(Graphics2D g, float x, float y, int p0, int p1)
+                throws BadLocationException {
+            JTextComponent host = (JTextComponent) getContainer();
+            Color fg = (host != null)
+                    ? (host.isEnabled() ? host.getForeground() : host.getDisabledTextColor())
+                    : g.getColor();
+            return drawClippedText(g, x, y, p0, p1, fg);
+        }
+
+        @Override
+        protected int drawSelectedText(Graphics g, int x, int y, int p0, int p1) throws BadLocationException {
+            return (int) drawSelectedText((Graphics2D) g, (float) x, (float) y, p0, p1);
+        }
+
+        @Override
+        protected float drawSelectedText(Graphics2D g, float x, float y, int p0, int p1) throws BadLocationException {
+            JTextComponent host = (JTextComponent) getContainer();
+            Color fg;
+            if (host != null) {
+                javax.swing.text.Caret caret = host.getCaret();
+                if (caret != null && caret.isSelectionVisible() && host.getHighlighter() != null) {
+                    fg = host.getSelectedTextColor();
+                } else {
+                    fg = host.isEnabled() ? host.getForeground() : host.getDisabledTextColor();
+                }
+            } else {
+                fg = g.getColor();
+            }
+            return drawClippedText(g, x, y, p0, p1, fg);
+        }
+
+        private float drawClippedText(Graphics g, float x, float y, int p0, int p1, Color fg)
+                throws BadLocationException {
+            if (p0 >= p1) {
+                return x;
+            }
+            if (metrics == null) {
+                updateMetrics();
+                if (metrics == null) {
+                    return x;
+                }
+            }
+            g.setColor(fg);
+            Rectangle clip = g.getClipBounds();
+            int clipLeft = (clip != null) ? (clip.x - 32) : Integer.MIN_VALUE;
+            int clipRight = (clip != null) ? (clip.x + clip.width + 32) : Integer.MAX_VALUE;
+            if (x > clipRight) {
+                return x;
+            }
+
+            Segment segment = getLineBuffer();
+            getDocument().getText(p0, p1 - p0, segment);
+            char[] arr = segment.array;
+            int start = segment.offset;
+            int count = segment.count;
+            int[] widths = cachedWidths;
+
+            float curX = x;
+            int runStart = -1;
+            int runLen = 0;
+            float runX = x;
+            int iy = (int) y;
+
+            for (int i = 0; i < count; i++) {
+                if (curX > clipRight) {
+                    break;
+                }
+                int idx = start + i;
+                char ch = arr[idx];
+                if (ch == SOFT_WRAP_CHAR || ch == '\r' || ch == '\n') {
+                    if (runLen > 0) {
+                        g.drawChars(arr, runStart, runLen, (int) runX, iy);
+                        runLen = 0;
+                        runStart = -1;
+                    }
+                    continue;
+                }
+                if (ch == '\t') {
+                    if (runLen > 0) {
+                        g.drawChars(arr, runStart, runLen, (int) runX, iy);
+                        runLen = 0;
+                        runStart = -1;
+                    }
+                    curX = nextTabStop(curX, p0 + i);
+                    continue;
+                }
+                int cw = (ch < 256 && widths != null) ? widths[ch] : metrics.charWidth(ch);
+                if (curX + cw >= clipLeft) {
+                    if (runLen == 0) {
+                        runStart = idx;
+                        runX = curX;
+                    }
+                    runLen++;
+                }
+                curX += cw;
+            }
+            if (runLen > 0) {
+                g.drawChars(arr, runStart, runLen, (int) runX, iy);
+            }
+            return curX;
+        }
+
+        @Override
+        public Shape modelToView(int pos, Shape a, javax.swing.text.Position.Bias b) throws BadLocationException {
+            Element root = getElement();
+            int lineIndex = root.getElementIndex(pos);
+            if (lineIndex < 0) {
+                return lineToRect(a, 0);
+            }
+            Rectangle lineArea = lineToRect(a, lineIndex);
+            tabBase = lineArea.x;
+            Element line = root.getElement(lineIndex);
+            int p0 = line.getStartOffset();
+            if (pos <= p0) {
+                lineArea.width = 1;
+                return lineArea;
+            }
+            lineArea.x += (int) measureSpan(p0, pos, tabBase);
+            lineArea.width = 1;
+            return lineArea;
+        }
+
+        @Override
+        public int viewToModel(float fx, float fy, Shape a, javax.swing.text.Position.Bias[] bias) {
+            if (bias != null && bias.length > 0) {
+                bias[0] = javax.swing.text.Position.Bias.Forward;
+            }
+            updateMetrics();
+            Rectangle alloc = a.getBounds();
+            Document doc = getDocument();
+            if (fy < alloc.y) {
+                return getStartOffset();
+            }
+            if (fy > alloc.y + alloc.height) {
+                return Math.max(0, getEndOffset() - 1);
+            }
+            Element root = doc.getDefaultRootElement();
+            int fontHeight = (metrics != null) ? metrics.getHeight() : 16;
+            int lineIndex = (fontHeight > 0)
+                    ? Math.abs((int) ((fy - alloc.y) / fontHeight))
+                    : (root.getElementCount() - 1);
+            if (lineIndex >= root.getElementCount()) {
+                return Math.max(0, getEndOffset() - 1);
+            }
+            Element line = root.getElement(lineIndex);
+            if (fx <= alloc.x) {
+                return line.getStartOffset();
+            }
+            if (fx > alloc.x + alloc.width) {
+                return Math.max(line.getStartOffset(), line.getEndOffset() - 1);
+            }
+            int p0 = line.getStartOffset();
+            int p1 = line.getEndOffset() - 1;
+            if (p1 <= p0) {
+                return p0;
+            }
+            try {
+                doc.getText(p0, p1 - p0, measureSegment);
+                char[] arr = measureSegment.array;
+                int off = measureSegment.offset;
+                int count = measureSegment.count;
+                int[] widths = cachedWidths;
+                tabBase = alloc.x;
+                float curX = alloc.x;
+                for (int i = 0; i < count; i++) {
+                    char ch = arr[off + i];
+                    if (ch == SOFT_WRAP_CHAR || ch == '\r' || ch == '\n') {
+                        continue;
+                    }
+                    float nextX;
+                    if (ch == '\t') {
+                        nextX = nextTabStop(curX, p0 + i);
+                    } else {
+                        int cw = (ch < 256 && widths != null) ? widths[ch] : metrics.charWidth(ch);
+                        nextX = curX + cw;
+                    }
+                    if (fx < (curX + nextX) * 0.5f) {
+                        return p0 + i;
+                    }
+                    curX = nextX;
+                }
+                if (count > 0 && arr[off + count - 1] == SOFT_WRAP_CHAR) {
+                    return Math.max(p0, p1 - 1);
+                }
+                return p1;
+            } catch (BadLocationException e) {
+                return -1;
+            }
+        }
+
+        @Override
+        public float nextTabStop(float x, int tabOffset) {
+            if (cachedTabSize <= 0f) {
+                updateMetrics();
+                if (cachedTabSize <= 0f) {
+                    return x;
+                }
+            }
+            int ntabs = (int) ((x - tabBase) / cachedTabSize);
+            return tabBase + (ntabs + 1) * cachedTabSize;
+        }
+
+        @Override
+        protected void updateDamage(DocumentEvent changes, Shape a, javax.swing.text.ViewFactory f) {
+            Component host = getContainer();
+            updateMetrics();
+            Element elem = getElement();
+            DocumentEvent.ElementChange ec = changes.getChange(elem);
+            Element[] added = (ec != null) ? ec.getChildrenAdded() : null;
+            Element[] removed = (ec != null) ? ec.getChildrenRemoved() : null;
+            if ((added != null && added.length > 0) || (removed != null && removed.length > 0)) {
+                if (added != null) {
+                    int bestLen = (longestLine != null)
+                            ? (longestLine.getEndOffset() - longestLine.getStartOffset())
+                            : -1;
+                    boolean changedBest = false;
+                    for (Element line : added) {
+                        int len = line.getEndOffset() - line.getStartOffset();
+                        if (len > bestLen) {
+                            bestLen = len;
+                            longestLine = line;
+                            changedBest = true;
+                        }
+                    }
+                    if (changedBest) {
+                        maxLineWidth = getLineWidthFast(longestLine);
+                    }
+                }
+                if (removed != null) {
+                    for (Element line : removed) {
+                        if (line == longestLine) {
+                            recalculateLongestLineFast();
+                            break;
+                        }
+                    }
+                }
+                preferenceChanged(null, true, true);
+                if (host != null) {
+                    host.repaint();
+                }
+            } else {
+                int line = elem.getElementIndex(changes.getOffset());
+                damageLineRange(line, line, a, host);
+                if (changes.getType() == DocumentEvent.EventType.INSERT) {
+                    Element editedLine = elem.getElement(line);
+                    int w = getLineWidthFast(editedLine);
+                    if (editedLine == longestLine) {
+                        maxLineWidth = w;
+                        preferenceChanged(null, true, false);
+                    } else if (w > maxLineWidth) {
+                        longestLine = editedLine;
+                        maxLineWidth = w;
+                        preferenceChanged(null, true, false);
+                    }
+                } else if (changes.getType() == DocumentEvent.EventType.REMOVE) {
+                    if (elem.getElement(line) == longestLine) {
+                        recalculateLongestLineFast();
+                        preferenceChanged(null, true, false);
+                    }
+                }
+            }
+        }
+    }
+
+    private static class FastWrappedPlainView extends WrappedPlainView {
+        private final boolean wrapStyleWord;
+        private Font cachedFont;
+        private FontMetrics cachedMetrics;
+        private int cachedCharW;
+        private int[] cachedWidths;
+
+        FastWrappedPlainView(Element elem, boolean wrapStyleWord) {
+            super(elem, wrapStyleWord);
+            this.wrapStyleWord = wrapStyleWord;
+        }
+
+        @Override
+        @SuppressWarnings("deprecation")
+        protected int calculateBreakPosition(int p0, int p1) {
+            int width = getWidth();
+            if (width <= 0 || p1 <= p0) {
+                return p1;
+            }
+            Container c = getContainer();
+            if (c != null) {
+                if (width <= 150 && c.getParent() instanceof JViewport) {
+                    int vpW = c.getParent().getWidth();
+                    if (vpW > 0) {
+                        Insets ins = ((JComponent) c).getInsets();
+                        int avail = vpW - (ins != null ? ins.left + ins.right + 5 : 5);
+                        if (avail > width) {
+                            width = avail;
+                        }
+                    } else {
+                        return p1;
+                    }
+                }
+                Font f = c.getFont();
+                if (f != cachedFont || cachedMetrics == null) {
+                    cachedFont = f;
+                    cachedMetrics = c.getFontMetrics(f);
+                    cachedCharW = cachedMetrics.charWidth('m');
+                    cachedWidths = cachedMetrics.getWidths();
+                }
+            }
+            if (cachedMetrics == null) {
+                return super.calculateBreakPosition(p0, p1);
+            }
+            int len = p1 - p0;
+            try {
+                Segment segment = getLineBuffer();
+                int maxCheck = (cachedCharW > 0) ? Math.min(len, (width / cachedCharW) * 2 + 64) : len;
+                getDocument().getText(p0, maxCheck, segment);
+                int breakPos = findBreak(segment, p0, width);
+                if (breakPos >= 0) {
+                    return breakPos;
+                }
+                if (maxCheck < len) {
+                    getDocument().getText(p0, len, segment);
+                    breakPos = findBreak(segment, p0, width);
+                    if (breakPos >= 0) {
+                        return breakPos;
+                    }
+                }
+                return p1;
+            } catch (BadLocationException e) {
+                return p1;
+            }
+        }
+
+        private int findBreak(Segment segment, int p0, int width) {
+            int x = 0;
+            int lastBreakOffset = -1;
+            char[] arr = segment.array;
+            int start = segment.offset;
+            int count = segment.count;
+            int[] widths = cachedWidths;
+            for (int i = 0; i < count; i++) {
+                char ch = arr[start + i];
+                int cw;
+                if (ch == '\t') {
+                    cw = (int) nextTabStop((float) x, p0 + i) - x;
+                } else if (ch < 256 && widths != null) {
+                    cw = widths[ch];
+                } else {
+                    cw = cachedMetrics.charWidth(ch);
+                }
+                if (x + cw > width) {
+                    if (wrapStyleWord) {
+                        if (Character.isWhitespace(ch)) {
+                            return p0 + i + 1;
+                        }
+                        if (lastBreakOffset >= 0) {
+                            return p0 + lastBreakOffset + 1;
+                        }
+                    }
+                    return (i == 0) ? (p0 + 1) : (p0 + i);
+                }
+                x += cw;
+                if (wrapStyleWord && Character.isWhitespace(ch)) {
+                    lastBreakOffset = i;
+                }
+            }
+            return -1;
+        }
+    }
+
     private static class GlobalUndoManager extends UndoManager {
         public int getUndoChunk() {
             UndoableEdit edit = editToBeUndone();
@@ -3896,10 +4558,15 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     private static class LineNumberPanel extends JPanel {
+        private static final char SOFT_WRAP_CHAR = 0x200B;
         private final JTextArea textArea;
         private final AdvancedTextEditorPanel parent; // Access parent to check indexing
         private long startLine = 1;
         private int currentLocalLine = 0;
+        private Document cachedDoc;
+        private int cachedElementCount = -1;
+        private int[] realLinesPrefix;
+        private final Segment lineSeg = new Segment();
 
         public LineNumberPanel(AdvancedTextEditorPanel parent, JTextArea textArea) {
             this.parent = parent;
@@ -3936,8 +4603,38 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
 
         public void adjustMetricSizing() {
+            cachedElementCount = -1;
             revalidate();
             repaint();
+        }
+
+        private int[] getRealLinesPrefix(Document doc, Element root) {
+            try {
+                int elemCount = root.getElementCount();
+                if (doc != cachedDoc || elemCount != cachedElementCount || realLinesPrefix == null
+                        || realLinesPrefix.length <= elemCount) {
+                    cachedDoc = doc;
+                    cachedElementCount = elemCount;
+                    realLinesPrefix = new int[elemCount + 1];
+                    int count = 0;
+                    for (int i = 0; i < elemCount; i++) {
+                        realLinesPrefix[i] = count;
+                        int endOff = root.getElement(i).getEndOffset();
+                        boolean isSoftWrap = false;
+                        if (endOff >= 2) {
+                            doc.getText(endOff - 2, 1, lineSeg);
+                            isSoftWrap = (lineSeg.count > 0 && lineSeg.array[lineSeg.offset] == SOFT_WRAP_CHAR);
+                        }
+                        if (!isSoftWrap) {
+                            count++;
+                        }
+                    }
+                    realLinesPrefix[elemCount] = count;
+                }
+                return realLinesPrefix;
+            } catch (Exception e) {
+                return null;
+            }
         }
 
         @Override
@@ -3947,7 +4644,13 @@ public class AdvancedTextEditorPanel extends JPanel {
             int maximumDigits = String.valueOf(startLine + totalLines).length() + 2;
             int functionalWidth = fm.stringWidth("0") * Math.max(maximumDigits, 4) + 12;
 
-            return new Dimension(functionalWidth, textArea.getPreferredSize().height);
+            int height = textArea.getHeight();
+            if (height <= 0) {
+                Insets ins = textArea.getInsets();
+                int insH = (ins != null) ? (ins.top + ins.bottom) : 0;
+                height = Math.max(1, totalLines) * fm.getHeight() + insH;
+            }
+            return new Dimension(functionalWidth, height);
         }
 
         @Override
@@ -3971,8 +4674,9 @@ public class AdvancedTextEditorPanel extends JPanel {
                 int startLineIdx = root.getElementIndex(startOffset);
                 int endLineIdx = root.getElementIndex(endOffset);
 
+                int[] prefix = getRealLinesPrefix(doc, root);
                 int realLines = 0;
-                for (int i = 0; i < startLineIdx; i++) {
+                for (int i = 0; prefix == null && i < startLineIdx; i++) {
                     int endOff = root.getElement(i).getEndOffset();
                     if (!(endOff >= 2 && "\u200B".equals(doc.getText(endOff - 2, 1)))) {
                         realLines++;
@@ -3980,6 +4684,9 @@ public class AdvancedTextEditorPanel extends JPanel {
                 }
 
                 for (int i = startLineIdx; i <= endLineIdx; i++) {
+                    if (prefix != null) {
+                        realLines = prefix[i];
+                    }
                     int offset = root.getElement(i).getStartOffset();
                     Rectangle r = textArea.modelToView2D(offset).getBounds();
 
@@ -3988,8 +4695,8 @@ public class AdvancedTextEditorPanel extends JPanel {
                     if (r.y > viewportClip.y + viewportClip.height)
                         break;
 
-                    boolean prevWasFake = false;
-                    if (i > 0) {
+                    boolean prevWasFake = (prefix != null) && (i > 0 && prefix[i] == prefix[i - 1]);
+                    if (prefix == null && i > 0) {
                         int prevEndOff = root.getElement(i - 1).getEndOffset();
                         if (prevEndOff >= 2 && "\u200B".equals(doc.getText(prevEndOff - 2, 1))) {
                             prevWasFake = true;
@@ -4013,6 +4720,9 @@ public class AdvancedTextEditorPanel extends JPanel {
                         g.drawString(stringLabel, alignedX, r.y + fm.getAscent());
                     }
 
+                    if (prefix != null) {
+                        continue;
+                    }
                     int thisEndOff = root.getElement(i).getEndOffset();
                     if (!(thisEndOff >= 2 && "\u200B".equals(doc.getText(thisEndOff - 2, 1)))) {
                         realLines++;
@@ -4657,7 +5367,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             if (isBinaryMode()) {
                 text = encodeBinaryForView(text);
             } else {
-                text = text.replaceAll("[\\p{Cc}\\p{Cf}&&[^\\r\\n\\t]]", "");
+                text = stripControlAndFormatChars(text);
             }
 
             textArea.setText(text);
@@ -4698,6 +5408,9 @@ public class AdvancedTextEditorPanel extends JPanel {
         try {
             int rawCaret = getRawCaretPosition(); // Handles soft wrap \u200B removal natively
             long chunkStartOffset = fileManager.getChunkBoundaries(loadedChunkIndex)[0];
+            if (rawCaret <= 0) {
+                return chunkStartOffset;
+            }
 
             // --- PERFECT BINARY MATH ---
             if (isBinaryMode()) {

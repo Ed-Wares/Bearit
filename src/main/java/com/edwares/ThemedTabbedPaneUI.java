@@ -78,7 +78,7 @@ public class ThemedTabbedPaneUI extends BasicTabbedPaneUI {
      * Iterates through custom tab component headers to update font sizing, 
      * visibility, text foreground matching, and guarantees transparent backgrounds.
      */
-    private void syncCustomTabHeaderStyles() {
+    public void syncCustomTabHeaderStyles() {
         if (tabPane == null) return;
         
         int selectedIndex = tabPane.getSelectedIndex();
