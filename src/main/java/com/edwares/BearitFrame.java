@@ -341,7 +341,7 @@ public class BearitFrame extends JFrame {
             } else if (c instanceof BearitTextHexWrapper) {
                 editor = ((BearitTextHexWrapper) c).getHiddenTextEditor();
             }
-            if (editor != null) {
+            if (editor != null && !editor.isTransient()) {
                 File f = editor.getActiveFile();
                 String path = f != null ? f.getAbsolutePath() : "?Untitled:" + editor.getAutoSaveId();
                 sessionTabs.add(new BearitProperties.SessionTab(path, editor.getGlobalCaretByteOffset()));
@@ -355,7 +355,23 @@ public class BearitFrame extends JFrame {
             }
         }
         
-        props.saveSession(sessionTabs, activeIdx);
+        props.saveSession(sessionTabs, toSessionTabIndex(activeIdx));
+    }
+
+    /**
+     * Converts a tabbedPane index into an index within the persisted session list,
+     * which excludes transient tabs (e.g. Tool Output).
+     */
+    private int toSessionTabIndex(int tabIndex) {
+        int sessionIdx = 0;
+        for (int i = 0; i < tabIndex && i < tabbedPane.getTabCount() - 1; i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            AdvancedTextEditorPanel editor = null;
+            if (c instanceof AdvancedTextEditorPanel) editor = (AdvancedTextEditorPanel) c;
+            else if (c instanceof BearitTextHexWrapper) editor = ((BearitTextHexWrapper) c).getHiddenTextEditor();
+            if (editor != null && !editor.isTransient()) sessionIdx++;
+        }
+        return sessionIdx;
     }
 
     private void onClosingEvent(WindowEvent e) {
@@ -374,14 +390,14 @@ public class BearitFrame extends JFrame {
                 if (c instanceof BearitTextHexWrapper) {
                     editor = ((BearitTextHexWrapper) c).getHiddenTextEditor();
                 }
-                if (editor != null) {
+                if (editor != null && !editor.isTransient()) {
                     File f = editor.getActiveFile();
                     String path = f != null ? f.getAbsolutePath() : "?Untitled:" + editor.getAutoSaveId();
                     openFiles.add(new BearitProperties.SessionTab(path, editor.getGlobalCaretByteOffset()));
                 }
             }
             // Pass the current tab index to the session saver
-            props.saveSession(openFiles, tabbedPane.getSelectedIndex());
+            props.saveSession(openFiles, toSessionTabIndex(tabbedPane.getSelectedIndex()));
             
             // Clean exit, remove all autosaves
             File unsavedDir = new File(props.getPropertiesFile().getParentFile(), "unsaved");
@@ -420,10 +436,20 @@ public class BearitFrame extends JFrame {
         addNewTab(file, initialPosition, null);
     }
 
-    private void addNewTab(File file, long initialPosition, String forceAutoSaveId) {
+    private AdvancedTextEditorPanel addNewTab(File file, long initialPosition, String forceAutoSaveId) {
+        return addNewTab(file, initialPosition, forceAutoSaveId, true);
+    }
+
+    /**
+     * Creates a new editor tab and returns the created editor.
+     * NOTE: Selection of the new tab is deferred (invokeLater), so callers must use the
+     * returned editor rather than getActiveEditor() to reference the new tab.
+     * @param selectTab when false, the tab is added in the background without being selected
+     */
+    private AdvancedTextEditorPanel addNewTab(File file, long initialPosition, String forceAutoSaveId, boolean selectTab) {
+        final AdvancedTextEditorPanel editor = new AdvancedTextEditorPanel();
         isUpdatingTabs = true; // Engage lock
         try {
-            AdvancedTextEditorPanel editor = new AdvancedTextEditorPanel();
             BearitProperties props = BearitProperties.getInstance();
             editor.setFont(new Font(props.getFontName(), Font.PLAIN, props.getFontSize()));
             // --- Push global view settings into the decoupled editor panel ---
@@ -545,7 +571,7 @@ public class BearitFrame extends JFrame {
             }
 
             // Ensure the newly added tab scrolls into view by deferring selection
-            SwingUtilities.invokeLater(() -> {
+            if (selectTab) SwingUtilities.invokeLater(() -> {
                 tabbedPane.validate(); // Force synchronous layout calculation
                 tabbedPane.setSelectedComponent(editor);
                 
@@ -571,6 +597,7 @@ public class BearitFrame extends JFrame {
             // --- Immediately sweep the new tab with our custom theme interceptors! ---
             applyTheme(BearitProperties.getInstance().getTheme());
         }
+        return editor;
     }
 
     // --- Context Menu Logic ---
@@ -1447,6 +1474,8 @@ public class BearitFrame extends JFrame {
         return input.replace("%acp", acp);
     }
     
+    private static final String TOOL_OUTPUT_AUTOSAVE_ID = "ToolOutput";
+
     private void appendToolOutput(String text) {
         AdvancedTextEditorPanel outputPanel = null;
 
@@ -1468,14 +1497,13 @@ public class BearitFrame extends JFrame {
         
         // Create if missing
         if (outputPanel == null) {
-            int currentTabIndex = tabbedPane.getSelectedIndex();
-            performNew(); 
-            outputPanel = getActiveEditor();
-            outputPanel.setCustomTitle("Tool Output");
+            // NOTE: addNewTab() defers tab selection, so getActiveEditor() would still return the
+            // previously active (file) tab here. Always use the editor returned by addNewTab().
+            // A dedicated autosave id keeps the tool tab from consuming an "Untitled N" number.
+            boolean autoFocus = BearitProperties.getInstance().isAutoFocusToolOutput();
+            outputPanel = addNewTab(null, -1, TOOL_OUTPUT_AUTOSAVE_ID, autoFocus);
             outputPanel.setTransient(true); // Prevent Tool tab from prompting for save
-            if (!BearitProperties.getInstance().isAutoFocusToolOutput()) {
-                tabbedPane.setSelectedIndex(currentTabIndex); // Switch back to original File tab if user doesn't want auto-focus
-            }
+            outputPanel.setCustomTitle("Tool Output");
         }
         
         outputPanel.appendText(text);

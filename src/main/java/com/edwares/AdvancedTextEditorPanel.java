@@ -3307,16 +3307,24 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     public void appendText(String text) {
+        boolean wasSystemEdit = isSystemEdit;
+        isSystemEdit = true; // Programmatic append (e.g. tool output) must bypass the read-only filter
         try {
             Document doc = textArea.getDocument();
             doc.insertString(doc.getLength(), text, null);
             textArea.setCaretPosition(doc.getLength());
         } catch (Exception e) {
+        } finally {
+            isSystemEdit = wasSystemEdit;
         }
     }
 
     public void setCustomTitle(String title) {
         updateTitle(title);
+    }
+
+    public boolean isTransient() {
+        return isTransient;
     }
 
     public void setTransient(boolean b) {
