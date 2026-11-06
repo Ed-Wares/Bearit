@@ -221,12 +221,60 @@ public class AdvancedTextEditorPanel extends JPanel {
         });
 
         textArea = new JTextArea() {
+            private Font lastPaintFont;
+            private java.awt.font.FontRenderContext lastPaintFrc;
+            private FontMetrics lastPaintFontMetrics;
 
             // Optimization: Install custom FastTextAreaUI (FastWrappedPlainView / FastPlainView)
             // to avoid O(N^2) line measurement and full-line rendering on 25MB chunks.
             @Override
             public void updateUI() {
                 setUI(new FastTextAreaUI());
+            }
+
+            // Keep component FontMetrics synchronized with the active Graphics2D FontRenderContext
+            // when painting onto scaled/HiDPI surfaces whose transform differs from the window's default
+            // GraphicsConfiguration (e.g., mixed-DPI multi-monitor setups or offscreen scaled buffers).
+            @Override
+            public void paint(Graphics g) {
+                if (g instanceof Graphics2D) {
+                    Font f = getFont();
+                    if (f != null) {
+                        FontMetrics gFm = g.getFontMetrics(f);
+                        if (gFm != null) {
+                            java.awt.font.FontRenderContext gFrc = gFm.getFontRenderContext();
+                            if (f != lastPaintFont || lastPaintFontMetrics == null || !gFrc.equals(lastPaintFrc)) {
+                                lastPaintFont = f;
+                                lastPaintFrc = gFrc;
+                                lastPaintFontMetrics = gFm;
+                                javax.swing.plaf.TextUI ui = getUI();
+                                if (ui != null) {
+                                    View root = ui.getRootView(this);
+                                    if (root != null && root.getViewCount() > 0) {
+                                        View child = root.getView(0);
+                                        if (child instanceof FastWrappedPlainView) {
+                                            ((FastWrappedPlainView) child).syncGraphicsMetrics(f, gFm, gFrc);
+                                        } else if (child instanceof FastPlainView) {
+                                            ((FastPlainView) child).syncGraphicsMetrics(f, gFm, gFrc);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                super.paint(g);
+            }
+
+            @Override
+            public FontMetrics getFontMetrics(Font font) {
+                if (font != null && font == lastPaintFont && lastPaintFontMetrics != null && lastPaintFrc != null) {
+                    java.awt.GraphicsConfiguration gc = getGraphicsConfiguration();
+                    if (gc == null || !gc.getDefaultTransform().equals(lastPaintFrc.getTransform())) {
+                        return lastPaintFontMetrics;
+                    }
+                }
+                return super.getFontMetrics(font);
             }
 
             // Optimization: Short-circuit viewport height tracking using lineCount * fontHeight
@@ -4336,6 +4384,10 @@ public class AdvancedTextEditorPanel extends JPanel {
             recalculateLongestLineFast();
         }
 
+        void syncGraphicsMetrics(Font f, FontMetrics gFm, java.awt.font.FontRenderContext gFrc) {
+            rebuildFontMetricsCache(f, gFm, gFrc);
+        }
+
         @Override
         protected void updateMetrics() {
             Component host = getContainer();
@@ -4343,9 +4395,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                 Font f = host.getFont();
                 FontMetrics hostFm = host.getFontMetrics(f);
                 java.awt.font.FontRenderContext hostFrc = hostFm.getFontRenderContext();
-                if (f != cachedFont || metrics == null || cachedFrc == null) {
-                    rebuildFontMetricsCache(f, hostFm, hostFrc);
-                } else if (!hostFrc.equals(cachedFrc) && (hostFrc.isTransformed() || !cachedFrc.isTransformed())) {
+                if (f != cachedFont || metrics == null || cachedFrc == null || !hostFrc.equals(cachedFrc)) {
                     rebuildFontMetricsCache(f, hostFm, hostFrc);
                 }
             }
@@ -4910,6 +4960,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         private FontMetrics cachedMetrics;
         private double cachedCharW;
         private double[] cachedFloatWidths;
+        private boolean isMonospacedAscii;
+        private int wrappedTabBase;
 
         FastWrappedPlainView(Element elem, boolean wrapStyleWord) {
             super(elem, wrapStyleWord);
@@ -4932,6 +4984,28 @@ public class AdvancedTextEditorPanel extends JPanel {
             }
             cachedFloatWidths = fWidths;
             cachedCharW = Math.max(1.0, fWidths['m']);
+            boolean mono = true;
+            for (int ch = 32; ch < 127; ch++) {
+                if (Math.abs(fWidths[ch] - cachedCharW) > 1e-4) {
+                    mono = false;
+                    break;
+                }
+            }
+            isMonospacedAscii = mono;
+        }
+
+        void syncGraphicsMetrics(Font f, FontMetrics gFm, java.awt.font.FontRenderContext gFrc) {
+            rebuildWrappedFontMetrics(f, gFm, gFrc);
+            preferenceChanged(null, true, true);
+            getMinimumSpan(View.X_AXIS);
+        }
+
+        @Override
+        public void paint(Graphics g, Shape a) {
+            if (a != null) {
+                wrappedTabBase = a.getBounds().x;
+            }
+            super.paint(g, a);
         }
 
         @Override
@@ -4951,15 +5025,156 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
 
         @Override
+        public float nextTabStop(float x, int pos) {
+            int tabSize = getTabSize();
+            if (tabSize == 0) {
+                return x;
+            }
+            float tabW = (float) (tabSize * (cachedCharW > 0.0 ? cachedCharW : 8.0));
+            int ntabs = (int) ((x - wrappedTabBase) / tabW);
+            return wrappedTabBase + (ntabs + 1) * tabW;
+        }
+
+        private static boolean isWrappedZeroWidthChar(char ch) {
+            return (ch >= 0xFE00 && ch <= 0xFE0F) || Character.getType(ch) == Character.FORMAT;
+        }
+
+        private double getWrappedComplexCharWidth(char[] arr, int idx, int begin, int end) {
+            char ch = arr[idx];
+            if (Character.isHighSurrogate(ch)) {
+                if (idx + 1 < end && Character.isLowSurrogate(arr[idx + 1]) && cachedFont != null && cachedFrc != null) {
+                    return cachedFont.getStringBounds(arr, idx, idx + 2, cachedFrc).getWidth();
+                }
+            } else if (Character.isLowSurrogate(ch)) {
+                if (idx > begin && Character.isHighSurrogate(arr[idx - 1])) {
+                    return 0.0;
+                }
+            }
+            if (isWrappedZeroWidthChar(ch)) {
+                return 0.0;
+            }
+            if (cachedFont != null && cachedFrc != null) {
+                return cachedFont.getStringBounds(arr, idx, idx + 1, cachedFrc).getWidth();
+            }
+            return (cachedMetrics != null) ? cachedMetrics.charWidth(ch) : cachedCharW;
+        }
+
+        private float drawWrappedText(Graphics2D g, float x, float y, int p0, int p1, Color fg)
+                throws BadLocationException {
+            if (p0 >= p1) {
+                return x;
+            }
+            Container c = getContainer();
+            if (g != null && c != null) {
+                Font f = c.getFont();
+                FontMetrics gFm = g.getFontMetrics(f);
+                if (gFm != null) {
+                    java.awt.font.FontRenderContext gFrc = gFm.getFontRenderContext();
+                    if (f != cachedFont || cachedMetrics == null || cachedFrc == null || !gFrc.equals(cachedFrc)) {
+                        rebuildWrappedFontMetrics(f, gFm, gFrc);
+                    }
+                }
+            }
+            g.setColor(fg);
+            Segment segment = getLineBuffer();
+            getDocument().getText(p0, p1 - p0, segment);
+            char[] arr = segment.array;
+            int start = segment.offset;
+            int count = segment.count;
+            double[] widths = cachedFloatWidths;
+            boolean mono = isMonospacedAscii;
+            double charW = cachedCharW;
+            double curX = x;
+            int runStart = -1;
+            int runLen = 0;
+            float runX = (float) curX;
+
+            for (int i = 0; i < count; i++) {
+                int idx = start + i;
+                char ch = arr[idx];
+                if (ch >= 32 && ch < 127) {
+                    double cw = (mono || widths == null) ? charW : widths[ch];
+                    if (runLen == 0) {
+                        runStart = idx;
+                        runX = (float) curX;
+                    }
+                    runLen++;
+                    curX += cw;
+                    continue;
+                }
+                if (ch == SOFT_WRAP_CHAR || ch == '\r' || ch == '\n') {
+                    if (runLen > 0) {
+                        g.drawString(new String(arr, runStart, runLen), runX, y);
+                        runLen = 0;
+                        runStart = -1;
+                    }
+                    continue;
+                }
+                if (ch == '\t') {
+                    if (runLen > 0) {
+                        g.drawString(new String(arr, runStart, runLen), runX, y);
+                        runLen = 0;
+                        runStart = -1;
+                    }
+                    curX = nextTabStop((float) curX, p0 + i);
+                    continue;
+                }
+                if (ch >= 256) {
+                    if (runLen > 0) {
+                        g.drawString(new String(arr, runStart, runLen), runX, y);
+                        runLen = 0;
+                        runStart = -1;
+                    }
+                    double cw = getWrappedComplexCharWidth(arr, idx, start, start + count);
+                    int glyphLen = (Character.isHighSurrogate(ch) && i + 1 < count
+                            && Character.isLowSurrogate(arr[idx + 1])) ? 2 : 1;
+                    if (!isWrappedZeroWidthChar(ch) && !(Character.isLowSurrogate(ch) && cw == 0.0)) {
+                        g.drawString(new String(arr, idx, glyphLen), (float) curX, y);
+                    }
+                    curX += cw;
+                    i += glyphLen - 1;
+                    continue;
+                }
+                double cw = (widths != null) ? widths[ch] : charW;
+                if (runLen == 0) {
+                    runStart = idx;
+                    runX = (float) curX;
+                }
+                runLen++;
+                curX += cw;
+            }
+            if (runLen > 0) {
+                g.drawString(new String(arr, runStart, runLen), runX, y);
+            }
+            return (float) curX;
+        }
+
+        @Override
         protected float drawUnselectedText(Graphics2D g, float x, float y, int p0, int p1)
                 throws BadLocationException {
-            return super.drawUnselectedText(g, x, y, p0, p1);
+            JTextComponent host = (JTextComponent) getContainer();
+            Color fg = (host != null)
+                    ? (host.isEnabled() ? host.getForeground() : host.getDisabledTextColor())
+                    : g.getColor();
+            return drawWrappedText(g, x, y, p0, p1, fg);
         }
 
         @Override
         protected float drawSelectedText(Graphics2D g, float x, float y, int p0, int p1)
                 throws BadLocationException {
-            return super.drawSelectedText(g, x, y, p0, p1);
+            JTextComponent host = (JTextComponent) getContainer();
+            Color fg;
+            if (host != null) {
+                javax.swing.text.Caret caret = host.getCaret();
+                if (caret != null && caret.isSelectionVisible() && host.getHighlighter() != null) {
+                    fg = host.getSelectedTextColor();
+                } else {
+                    fg = host.isEnabled() ? host.getForeground() : host.getDisabledTextColor();
+                }
+            } else {
+                fg = g.getColor();
+            }
+            return drawWrappedText(g, x, y, p0, p1, fg);
         }
 
         @Override

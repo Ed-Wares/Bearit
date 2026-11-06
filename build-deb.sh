@@ -1,9 +1,17 @@
 #!/bin/bash
 # This script builds the Linux DEB package for the Bearit application using jpackage.
+set -eo pipefail
 
-mvn clean package
+if ! mvn clean package; then
+    echo "ERROR: Maven build failed. Stopping DEB package build." >&2
+    exit 1
+fi
 
 jar_file=$(find target/ -maxdepth 1 -name "bearit*.jar" -printf "%T@ %p\n" | sort -n | tail -n 1 | cut -d' ' -f2-)
+if [ -z "$jar_file" ]; then
+    echo "ERROR: Could not find target/bearit*.jar" >&2
+    exit 1
+fi
 inputs_app_version=$(echo "$jar_file" | sed -E 's/.*-([0-9]+\.[0-9]+\.[0-9]+)\.jar/\1/')
 
 echo building linux deb package for $jar_file ...
@@ -40,7 +48,7 @@ EOF
 chmod +x linux_resources/prerm
 
 echo running jpackage ...
-jpackage --type deb \
+if ! jpackage --type deb \
 --input target/ \
 --main-jar bearit-$inputs_app_version.jar \
 --main-class com.edwares.BearitApp \
@@ -50,6 +58,9 @@ jpackage --type deb \
 --icon src/main/resources/Bearit.png \
 --vendor "EdWares" \
 --resource-dir linux_resources/ \
---linux-menu-group "Utility;Development;"
+--linux-menu-group "Utility;Development;"; then
+    echo "ERROR: jpackage DEB creation failed." >&2
+    exit 1
+fi
 
 echo "deb package built at distribution_payload/linux/bearit-$inputs_app_version.deb"

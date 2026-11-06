@@ -318,95 +318,104 @@ public class EncodingAndLineEndingTest {
                 + "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz\r\n";
         Files.write(crlfFile.toPath(), content.getBytes(StandardCharsets.UTF_8));
 
-        for (boolean wrap : new boolean[] { false, true }) {
-            final javax.swing.JFrame[] frameHolder = new javax.swing.JFrame[1];
-            AdvancedTextEditorPanel editor = new AdvancedTextEditorPanel();
-            SwingUtilities.invokeAndWait(() -> {
-                javax.swing.JFrame frame = new javax.swing.JFrame();
-                editor.setWordWrap(wrap);
-                editor.setFont(new java.awt.Font("Monospaced", java.awt.Font.PLAIN, 14));
-                frame.add(editor);
-                frame.setSize(900, 400);
-                frame.addNotify();
-                frame.validate();
-                editor.getTextArea().setSize(800, 400);
-                frameHolder[0] = frame;
-            });
-            editor.loadFile(crlfFile);
-            waitForUI();
+        for (double scale : new double[] { 1.0, 1.25, 1.5 }) {
+            for (boolean wrap : new boolean[] { false, true }) {
+                final javax.swing.JFrame[] frameHolder = new javax.swing.JFrame[1];
+                AdvancedTextEditorPanel editor = new AdvancedTextEditorPanel();
+                SwingUtilities.invokeAndWait(() -> {
+                    javax.swing.JFrame frame = new javax.swing.JFrame();
+                    editor.setWordWrap(wrap);
+                    editor.setFont(new java.awt.Font("Monospaced", java.awt.Font.PLAIN, 14));
+                    frame.add(editor);
+                    frame.setSize(900, 400);
+                    frame.addNotify();
+                    frame.validate();
+                    editor.getTextArea().setSize(800, 400);
+                    frameHolder[0] = frame;
+                });
+                editor.loadFile(crlfFile);
+                waitForUI();
 
-            SwingUtilities.invokeAndWait(() -> {
-                try {
-                    javax.swing.JTextArea ta = editor.getTextArea();
-                    ta.setCaretPosition(0);
+                SwingUtilities.invokeAndWait(() -> {
+                    try {
+                        javax.swing.JTextArea ta = editor.getTextArea();
+                        ta.setCaretPosition(0);
+                        int imgW = (int) Math.ceil(800 * scale);
+                        int imgH = (int) Math.ceil(240 * scale);
 
-                    java.awt.image.BufferedImage imgUnsel = new java.awt.image.BufferedImage(
-                            1000, 300, java.awt.image.BufferedImage.TYPE_INT_RGB);
-                    java.awt.Graphics2D gUnsel = imgUnsel.createGraphics();
-                    gUnsel.scale(1.25, 1.25);
-                    gUnsel.setClip(0, 0, 800, 200);
-                    ta.paint(gUnsel);
-                    gUnsel.dispose();
+                        java.awt.image.BufferedImage imgUnsel = new java.awt.image.BufferedImage(
+                                imgW, imgH, java.awt.image.BufferedImage.TYPE_INT_RGB);
+                        java.awt.Graphics2D gUnsel = imgUnsel.createGraphics();
+                        gUnsel.scale(scale, scale);
+                        gUnsel.setClip(0, 0, 800, 200);
+                        ta.paint(gUnsel);
+                        gUnsel.dispose();
 
-                    // Select range 31..38 on line 0 and verify trailing text after the selection does not shift
-                    ta.select(31, 38);
-                    java.awt.image.BufferedImage imgSel = new java.awt.image.BufferedImage(
-                            1000, 300, java.awt.image.BufferedImage.TYPE_INT_RGB);
-                    java.awt.Graphics2D gSel = imgSel.createGraphics();
-                    gSel.scale(1.25, 1.25);
-                    gSel.setClip(0, 0, 800, 200);
-                    ta.paint(gSel);
-                    gSel.dispose();
+                        // Select range 31..38 on line 0 and verify trailing text after the selection does not shift
+                        ta.select(31, 38);
+                        java.awt.image.BufferedImage imgSel = new java.awt.image.BufferedImage(
+                                imgW, imgH, java.awt.image.BufferedImage.TYPE_INT_RGB);
+                        java.awt.Graphics2D gSel = imgSel.createGraphics();
+                        gSel.scale(scale, scale);
+                        gSel.setClip(0, 0, 800, 200);
+                        ta.paint(gSel);
+                        gSel.dispose();
 
-                    java.awt.FontMetrics fm = ta.getFontMetrics(ta.getFont());
-                    int lineH = (int) Math.ceil(fm.getHeight() * 1.25);
-                    int xAfterSel = (int) Math.ceil(40 * 9 * 1.25);
-                    int trailingDiffs = 0;
-                    for (int y = 0; y < lineH; y++) {
-                        for (int x = xAfterSel; x < 900; x++) {
-                            if (imgUnsel.getRGB(x, y) != imgSel.getRGB(x, y)) {
-                                trailingDiffs++;
+                        java.awt.FontMetrics fm = ta.getFontMetrics(ta.getFont());
+                        int lineH = (int) Math.ceil(fm.getHeight() * scale);
+                        javax.swing.text.View rootView = ta.getUI().getRootView(ta);
+                        java.awt.Shape afterSelShape = rootView.modelToView(
+                                40, new java.awt.Rectangle(0, 0, 800, 200), javax.swing.text.Position.Bias.Forward);
+                        int xAfterSel = (int) Math.ceil(afterSelShape.getBounds2D().getX() * scale);
+                        int maxScanX = Math.min(imgW, (int) Math.floor(750 * scale));
+                        int trailingDiffs = 0;
+                        for (int y = 0; y < lineH; y++) {
+                            for (int x = xAfterSel; x < maxScanX; x++) {
+                                if (imgUnsel.getRGB(x, y) != imgSel.getRGB(x, y)) {
+                                    trailingDiffs++;
+                                }
                             }
                         }
-                    }
-                    assertEquals(0, trailingDiffs,
-                            "Trailing text after selection must not shift horizontally on HiDPI (wrap=" + wrap + ")");
+                        assertEquals(0, trailingDiffs,
+                                "Trailing text after selection must not shift horizontally on HiDPI (scale=" + scale
+                                        + ", wrap=" + wrap + ")");
 
-                    // Unselect and repaint only the highlight clip bounds, verifying no shifted fragments remain
-                    javax.swing.text.View rootView = ta.getUI().getRootView(ta);
-                    java.awt.Shape selShape = rootView.modelToView(
-                            31, javax.swing.text.Position.Bias.Forward,
-                            38, javax.swing.text.Position.Bias.Backward,
-                            new java.awt.Rectangle(0, 0, 800, 200));
-                    java.awt.Rectangle clipRect = selShape.getBounds();
-                    ta.setCaretPosition(0);
-                    java.awt.Graphics2D gPartial = imgSel.createGraphics();
-                    gPartial.scale(1.25, 1.25);
-                    gPartial.setClip(clipRect.x - 1, clipRect.y, clipRect.width + 2, clipRect.height);
-                    ta.paint(gPartial);
-                    gPartial.dispose();
+                        // Unselect and repaint only the highlight clip bounds, verifying no shifted fragments remain
+                        java.awt.Shape selShape = rootView.modelToView(
+                                31, javax.swing.text.Position.Bias.Forward,
+                                38, javax.swing.text.Position.Bias.Backward,
+                                new java.awt.Rectangle(0, 0, 800, 200));
+                        java.awt.Rectangle clipRect = selShape.getBounds();
+                        ta.setCaretPosition(0);
+                        java.awt.Graphics2D gPartial = imgSel.createGraphics();
+                        gPartial.scale(scale, scale);
+                        gPartial.setClip(clipRect.x - 1, clipRect.y, clipRect.width + 2, clipRect.height);
+                        ta.paint(gPartial);
+                        gPartial.dispose();
 
-                    int leftoverFragments = 0;
-                    for (int y = 0; y < lineH; y++) {
-                        for (int x = 20; x < 900; x++) {
-                            if (imgUnsel.getRGB(x, y) != imgSel.getRGB(x, y)) {
-                                leftoverFragments++;
+                        int leftoverFragments = 0;
+                        for (int y = 0; y < lineH; y++) {
+                            for (int x = (int) Math.ceil(16 * scale); x < maxScanX; x++) {
+                                if (imgUnsel.getRGB(x, y) != imgSel.getRGB(x, y)) {
+                                    leftoverFragments++;
+                                }
                             }
                         }
+                        assertEquals(0, leftoverFragments,
+                                "Unselecting text must not leave shifted glyph fragments behind (scale=" + scale
+                                        + ", wrap=" + wrap + ")");
+                    } catch (Exception e) {
+                        fail(e);
                     }
-                    assertEquals(0, leftoverFragments,
-                            "Unselecting text must not leave shifted glyph fragments behind (wrap=" + wrap + ")");
-                } catch (Exception e) {
-                    fail(e);
-                }
-            });
+                });
 
-            SwingUtilities.invokeAndWait(() -> {
-                if (frameHolder[0] != null) {
-                    frameHolder[0].dispose();
-                }
-            });
-            editor.dispose();
+                SwingUtilities.invokeAndWait(() -> {
+                    if (frameHolder[0] != null) {
+                        frameHolder[0].dispose();
+                    }
+                });
+                editor.dispose();
+            }
         }
     }
 }
