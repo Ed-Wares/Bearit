@@ -5,6 +5,9 @@ setlocal
 @REM and installs it if not already present.
 
 set "current_dir=%~dp0"
+set "PSModulePath="
+set "ps_exe=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%ps_exe%" set "ps_exe=powershell"
 set "cer_file=%current_dir%distribution_payload\windows\bearit-codesign.cer"
 if not exist "%cer_file%" (
     if exist "%current_dir%bearit-codesign.cer" (
@@ -16,8 +19,9 @@ if not exist "%cer_file%" (
 )
 
 echo Checking Bearit code-signing certificate in Current User stores...
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+"%ps_exe%" -NoProfile -ExecutionPolicy Bypass -Command ^
     "$ErrorActionPreference = 'Stop'; " ^
+    "Import-Module Microsoft.PowerShell.Security, PKI -ErrorAction Stop; " ^
     "$cerPath = (Resolve-Path -LiteralPath '%cer_file%').Path; " ^
     "$cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($cerPath); " ^
     "Write-Host ('Certificate: ' + $cert.Subject + ' (Thumbprint: ' + $cert.Thumbprint + ')'); " ^

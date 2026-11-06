@@ -11,6 +11,63 @@ setlocal
 set "current_dir=%~dp0"
 set "wix_dir=%current_dir%wix314-binaries"
 set "path=%path%;%wix_dir%"
+set "PSModulePath="
+set "ps_exe=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%ps_exe%" set "ps_exe=powershell"
+
+if exist "%wix_dir%\candle.exe" if exist "%wix_dir%\light.exe" goto :wix_ready
+
+echo Required WiX Toolset binaries (candle.exe, light.exe) were not found in "%wix_dir%".
+set "download_wix="
+set /p "download_wix=Would you like to download WiX 3.14.1 binaries to %wix_dir% now? (Y/N): "
+if /i "%download_wix%"=="Y" goto :download_wix
+if /i "%download_wix%"=="YES" goto :download_wix
+
+where candle.exe >nul 2>&1
+if not errorlevel 1 (
+    where light.exe >nul 2>&1
+    if not errorlevel 1 (
+        echo Continuing using WiX binaries found in system PATH...
+        goto :wix_ready
+    )
+)
+echo Aborting build: WiX Toolset binaries (candle.exe, light.exe) are required by jpackage.
+exit /b 1
+
+:download_wix
+echo Downloading and extracting WiX 3.14.1 binaries...
+set "wix_zip=%current_dir%wix314-binaries.zip"
+"%ps_exe%" -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$ErrorActionPreference = 'Stop'; " ^
+    "$ProgressPreference = 'SilentlyContinue'; " ^
+    "Import-Module Microsoft.PowerShell.Archive -ErrorAction Stop; " ^
+    "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; " ^
+    "$zipPath = '%wix_zip%'; " ^
+    "$destDir = '%wix_dir%'; " ^
+    "try { " ^
+    "    Write-Host 'Downloading https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip ...'; " ^
+    "    Invoke-WebRequest -Uri 'https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip' -OutFile $zipPath -UseBasicParsing; " ^
+    "    Write-Host ('Extracting to ' + $destDir + ' ...'); " ^
+    "    Expand-Archive -LiteralPath $zipPath -DestinationPath $destDir -Force; " ^
+    "} finally { " ^
+    "    Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue; " ^
+    "}"
+if errorlevel 1 (
+    echo ERROR: Failed to download or extract WiX 3.14.1 binaries.
+    exit /b 1
+)
+if not exist "%wix_dir%\candle.exe" (
+    echo ERROR: WiX binaries were extracted, but candle.exe was not found in "%wix_dir%".
+    exit /b 1
+)
+if not exist "%wix_dir%\light.exe" (
+    echo ERROR: WiX binaries were extracted, but light.exe was not found in "%wix_dir%".
+    exit /b 1
+)
+echo WiX 3.14.1 binaries installed to "%wix_dir%".
+echo.
+
+:wix_ready
 
 echo [1/6] Building Maven project...
 call mvn clean package
@@ -46,11 +103,12 @@ if exist "%exe_installer%" del /f /q "%exe_installer%"
 
 echo.
 echo [2/6] Preparing self-signed code-signing certificate and Windows trust store...
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+"%ps_exe%" -NoProfile -ExecutionPolicy Bypass -Command ^
     "$ErrorActionPreference = 'Stop'; " ^
+    "Import-Module Microsoft.PowerShell.Security, PKI -ErrorAction Stop; " ^
     "$subject = '%cert_subject%'; " ^
     "$cerPath = '%cer_file%'; " ^
-    "$cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | Where-Object { $_.Subject -eq $subject -and $_.NotAfter -gt (Get-Date) } | Sort-Object NotAfter -Descending | Select-Object -First 1; " ^
+    "$cert = Get-ChildItem -Path Cert:\CurrentUser\My | Where-Object { $_.Subject -eq $subject -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date) } | Sort-Object NotAfter -Descending | Select-Object -First 1; " ^
     "if (-not $cert) { " ^
     "    Write-Host 'Generating new self-signed code-signing certificate: ' $subject; " ^
     "    $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $subject -TextExtension @('2.5.29.17={text}email=%cert_email%') -FriendlyName 'Bearit Self-Signed Code Signing' -CertStoreLocation 'Cert:\CurrentUser\My' -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -KeyExportPolicy Exportable -NotAfter (Get-Date).AddYears(10); " ^
@@ -87,12 +145,13 @@ if errorlevel 1 (
 echo.
 echo [4/6] Signing inner application binary (bearit.exe)...
 attrib -R "%app_image_dir%\bearit\bearit.exe"
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+"%ps_exe%" -NoProfile -ExecutionPolicy Bypass -Command ^
     "$ErrorActionPreference = 'Stop'; " ^
+    "Import-Module Microsoft.PowerShell.Security, PKI -ErrorAction Stop; " ^
     "$subject = '%cert_subject%'; " ^
     "$appExe = '%app_image_dir%\bearit\bearit.exe'; " ^
     "Set-ItemProperty -LiteralPath $appExe -Name IsReadOnly -Value $false; " ^
-    "$cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | Where-Object { $_.Subject -eq $subject -and $_.NotAfter -gt (Get-Date) } | Sort-Object NotAfter -Descending | Select-Object -First 1; " ^
+    "$cert = Get-ChildItem -Path Cert:\CurrentUser\My | Where-Object { $_.Subject -eq $subject -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date) } | Sort-Object NotAfter -Descending | Select-Object -First 1; " ^
     "if (-not $cert) { throw 'Code-signing certificate not found in Cert:\CurrentUser\My' }; " ^
     "$sig = $null; " ^
     "for ($attempt = 1; $attempt -le 5; $attempt++) { " ^
@@ -130,12 +189,13 @@ if exist "%app_image_dir%" rmdir /s /q "%app_image_dir%"
 echo.
 echo [6/6] Signing Windows EXE installer (%exe_installer%)...
 attrib -R "%exe_installer%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+"%ps_exe%" -NoProfile -ExecutionPolicy Bypass -Command ^
     "$ErrorActionPreference = 'Stop'; " ^
+    "Import-Module Microsoft.PowerShell.Security, PKI -ErrorAction Stop; " ^
     "$subject = '%cert_subject%'; " ^
     "$installerExe = '%exe_installer%'; " ^
     "Set-ItemProperty -LiteralPath $installerExe -Name IsReadOnly -Value $false; " ^
-    "$cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | Where-Object { $_.Subject -eq $subject -and $_.NotAfter -gt (Get-Date) } | Sort-Object NotAfter -Descending | Select-Object -First 1; " ^
+    "$cert = Get-ChildItem -Path Cert:\CurrentUser\My | Where-Object { $_.Subject -eq $subject -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date) } | Sort-Object NotAfter -Descending | Select-Object -First 1; " ^
     "if (-not $cert) { throw 'Code-signing certificate not found in Cert:\CurrentUser\My' }; " ^
     "$sig = $null; " ^
     "for ($attempt = 1; $attempt -le 5; $attempt++) { " ^

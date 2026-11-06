@@ -4,8 +4,12 @@ setlocal
 @REM Current User certificate stores (TrustedPublisher, Root, and Personal/My).
 
 echo Removing Bearit self-signed code-signing certificates from Current User stores...
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+set "PSModulePath="
+set "ps_exe=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%ps_exe%" set "ps_exe=powershell"
+"%ps_exe%" -NoProfile -ExecutionPolicy Bypass -Command ^
     "$ErrorActionPreference = 'Stop'; " ^
+    "Import-Module Microsoft.PowerShell.Security -ErrorAction Stop; " ^
     "$removedCount = 0; " ^
     "foreach ($storeName in @('TrustedPublisher', 'Root', 'My')) { " ^
     "    $storePath = 'Cert:\CurrentUser\' + $storeName; " ^
