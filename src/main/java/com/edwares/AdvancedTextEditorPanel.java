@@ -417,6 +417,8 @@ public class AdvancedTextEditorPanel extends JPanel {
                     FontMetrics baseFm = g2.getFontMetrics(baseFont);
                     int ascent = baseFm.getAscent();
                     int charW = baseFm.charWidth(' ');
+                    java.awt.font.FontRenderContext baseFrc = baseFm.getFontRenderContext();
+                    float charWFloat = Math.max(1f, (float) baseFont.getStringBounds(" ", baseFrc).getWidth());
 
                     FontMetrics wsFm = g2.getFontMetrics(whitespaceFont);
                     int spaceSymbolW = wsFm.stringWidth("·");
@@ -439,6 +441,14 @@ public class AdvancedTextEditorPanel extends JPanel {
                         }
                         Document doc = getDocument();
                         if (!getLineWrap()) {
+                            // Advance X with the FastPlainView's own width table / tab stops so the symbols land in
+                            // exactly the same cells as the drawn text (also for proportional fonts and non-ASCII).
+                            FastPlainView fastView = null;
+                            javax.swing.text.View rootView = getUI().getRootView(this);
+                            if (rootView != null && rootView.getViewCount() > 0
+                                    && rootView.getView(0) instanceof FastPlainView) {
+                                fastView = (FastPlainView) rootView.getView(0);
+                            }
                             Element root = doc.getDefaultRootElement();
                             int elemCount = root.getElementCount();
                             int startLineIdx = Math.max(0,
@@ -472,7 +482,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                                     continue;
                                 }
                                 doc.getText(visStart, visEnd - visStart, seg);
-                                int curX = modelToView2D(visStart).getBounds().x;
+                                float curX = (float) modelToView2D(visStart).getX();
                                 char[] arr = seg.array;
                                 int off = seg.offset;
                                 int cnt = seg.count;
@@ -482,25 +492,33 @@ public class AdvancedTextEditorPanel extends JPanel {
                                         continue;
                                     }
                                     if (c == ' ') {
-                                        if (showWhitespace && curX + charW >= paintClip.x && curX <= clipRightX) {
+                                        float spaceW = (fastView != null)
+                                                ? fastView.advanceX(arr, off + i, off, off + cnt, curX, visStart + i) - curX
+                                                : charWFloat;
+                                        if (showWhitespace && curX + spaceW >= paintClip.x && curX <= clipRightX) {
                                             g2.setFont(whitespaceFont);
-                                            g2.drawString("·", curX + (charW - spaceSymbolW) / 2, lineY + ascent);
+                                            g2.drawString("·", curX + (spaceW - spaceSymbolW) * 0.5f, (float) (lineY + ascent));
                                         }
-                                        curX += charW;
+                                        curX += spaceW;
                                     } else if (c == '\t') {
-                                        Rectangle rNext = modelToView2D(Math.min(docLen, visStart + i + 1)).getBounds();
-                                        int tabW = (rNext != null && rNext.y == lineY && rNext.x > curX)
-                                                ? (rNext.x - curX)
-                                                : (charW * textArea.getTabSize());
+                                        float tabW;
+                                        if (fastView != null) {
+                                            tabW = fastView.advanceX(arr, off + i, off, off + cnt, curX, visStart + i) - curX;
+                                        } else {
+                                            java.awt.geom.Rectangle2D rNext = modelToView2D(Math.min(docLen, visStart + i + 1));
+                                            tabW = (rNext != null && (int) rNext.getY() == lineY && (float) rNext.getX() > curX)
+                                                    ? ((float) rNext.getX() - curX)
+                                                    : (charWFloat * textArea.getTabSize());
+                                        }
                                         if (showWhitespace && curX + tabW >= paintClip.x && curX <= clipRightX) {
                                             g2.setFont(whitespaceFont);
-                                            g2.drawString("→", curX + (tabW - tabSymbolW) / 2, lineY + ascent);
+                                            g2.drawString("→", curX + (tabW - tabSymbolW) * 0.5f, (float) (lineY + ascent));
                                         }
                                         curX += tabW;
                                     } else if (c == '\r') {
                                         if (showEol && curX <= clipRightX) {
                                             g2.setFont(eolFont);
-                                            g2.drawString(CR_SYMBOL, curX + charW / 2, lineY + ascent);
+                                            g2.drawString(CR_SYMBOL, curX + charWFloat * 0.5f, (float) (lineY + ascent));
                                         }
                                     } else if (c == '\n') {
                                         if (showEol && curX <= clipRightX) {
@@ -513,13 +531,15 @@ public class AdvancedTextEditorPanel extends JPanel {
                                             if (!prevSoft) {
                                                 g2.setFont(eolFont);
                                                 int offsetX = (i > 0 && arr[off + i - 1] == '\r') ? (crSymbolW + 4) : 0;
-                                                g2.drawString(LF_SYMBOL, curX + charW / 2 + offsetX, lineY + ascent);
+                                                g2.drawString(LF_SYMBOL, curX + charWFloat * 0.5f + offsetX, (float) (lineY + ascent));
                                             }
                                         }
+                                    } else if (fastView != null) {
+                                        curX = fastView.advanceX(arr, off + i, off, off + cnt, curX, visStart + i);
                                     } else {
-                                        curX += baseFm.charWidth(c);
+                                        curX += (float) baseFont.getStringBounds(arr, off + i, off + i + 1, baseFrc).getWidth();
                                     }
-                                    if (curX > clipRightX + charW * 4) {
+                                    if (curX > clipRightX + charWFloat * 4) {
                                         break;
                                     }
                                 }
@@ -532,32 +552,38 @@ public class AdvancedTextEditorPanel extends JPanel {
                                 String text = doc.getText(startOffset, endOffset - startOffset);
                                 for (int i = 0; i < text.length(); i++) {
                                     char c = text.charAt(i);
+                                    // Use the view's fractional X positions (not truncated Rectangle bounds) so symbols
+                                    // stay centered in their cells on HiDPI scaling and with proportional fonts.
                                     if (showWhitespace && c == ' ') {
                                         g2.setFont(whitespaceFont);
-                                        Rectangle r = modelToView2D(startOffset + i).getBounds();
-                                        g2.drawString("·", r.x + (charW - spaceSymbolW) / 2, r.y + ascent);
+                                        java.awt.geom.Rectangle2D r = modelToView2D(startOffset + i);
+                                        g2.drawString("·", (float) r.getX() + (charWFloat - spaceSymbolW) * 0.5f,
+                                                (float) (r.getY() + ascent));
                                     } else if (showWhitespace && c == '\t') {
                                         g2.setFont(whitespaceFont);
-                                        Rectangle r = modelToView2D(startOffset + i).getBounds();
-                                        Rectangle rNext = modelToView2D(startOffset + i + 1).getBounds();
-                                        int tabW = (rNext != null && rNext.y == r.y && rNext.x > r.x) ? (rNext.x - r.x)
-                                                : (charW * textArea.getTabSize());
-                                        g2.drawString("→", r.x + (tabW - tabSymbolW) / 2, r.y + ascent);
+                                        java.awt.geom.Rectangle2D r = modelToView2D(startOffset + i);
+                                        java.awt.geom.Rectangle2D rNext = modelToView2D(startOffset + i + 1);
+                                        float tabW = (rNext != null && (int) rNext.getY() == (int) r.getY() && rNext.getX() > r.getX())
+                                                ? (float) (rNext.getX() - r.getX())
+                                                : (charWFloat * textArea.getTabSize());
+                                        g2.drawString("→", (float) r.getX() + (tabW - tabSymbolW) * 0.5f,
+                                                (float) (r.getY() + ascent));
                                     } else if (showEol && c == '\r') {
                                         g2.setFont(eolFont);
-                                        Rectangle r = modelToView2D(startOffset + i).getBounds();
-                                        g2.drawString(CR_SYMBOL, r.x + charW / 2, r.y + ascent);
+                                        java.awt.geom.Rectangle2D r = modelToView2D(startOffset + i);
+                                        g2.drawString(CR_SYMBOL, (float) r.getX() + charWFloat * 0.5f, (float) (r.getY() + ascent));
                                     } else if (showEol && c == '\n') {
                                         if (i > 0 && text.charAt(i - 1) == SOFT_WRAP) {
                                             continue;
                                         }
                                         g2.setFont(eolFont);
-                                        Rectangle r = modelToView2D(startOffset + i).getBounds();
+                                        java.awt.geom.Rectangle2D r = modelToView2D(startOffset + i);
                                         int offsetX = 0;
                                         if (i > 0 && text.charAt(i - 1) == '\r') {
                                             offsetX = crSymbolW + 4;
                                         }
-                                        g2.drawString(LF_SYMBOL, r.x + charW / 2 + offsetX, r.y + ascent);
+                                        g2.drawString(LF_SYMBOL, (float) r.getX() + charWFloat * 0.5f + offsetX,
+                                                (float) (r.getY() + ascent));
                                     }
                                 }
                             }
@@ -4262,11 +4288,12 @@ public class AdvancedTextEditorPanel extends JPanel {
     private static class FastPlainView extends javax.swing.text.PlainView {
         private static final char SOFT_WRAP_CHAR = 0x200B;
         private Font cachedFont;
-        private int[] cachedWidths;
-        private int cachedCharW;
+        private java.awt.font.FontRenderContext cachedFrc;
+        private double[] cachedFloatWidths;
+        private double cachedCharW;
         private int cachedMinCharW;
         private boolean isMonospacedAscii;
-        private float cachedTabSize;
+        private double cachedTabSize;
         private int tabBase;
         private Element longestLine;
         private int maxLineWidth = -1;
@@ -4276,36 +4303,127 @@ public class AdvancedTextEditorPanel extends JPanel {
             super(elem);
         }
 
+        private void rebuildFontMetricsCache(Font f, FontMetrics fm, java.awt.font.FontRenderContext frc) {
+            cachedFont = f;
+            metrics = fm;
+            cachedFrc = frc;
+            double[] fWidths = new double[256];
+            char[] singleChar = new char[1];
+            for (int c = 0; c < 256; c++) {
+                if (c == '\r' || c == '\n' || c == SOFT_WRAP_CHAR) {
+                    fWidths[c] = 0.0;
+                } else {
+                    singleChar[0] = (char) c;
+                    fWidths[c] = f.getStringBounds(singleChar, 0, 1, frc).getWidth();
+                }
+            }
+            cachedFloatWidths = fWidths;
+            cachedCharW = Math.max(1.0, fWidths['m']);
+            double minW = cachedCharW;
+            boolean mono = true;
+            for (int c = 32; c < 127; c++) {
+                double w = fWidths[c];
+                if (Math.abs(w - cachedCharW) > 1e-4) {
+                    mono = false;
+                }
+                if (w > 0.0 && w < minW) {
+                    minW = w;
+                }
+            }
+            cachedMinCharW = Math.max(1, (int) Math.floor(minW));
+            isMonospacedAscii = mono;
+            cachedTabSize = getTabSize() * cachedCharW;
+            recalculateLongestLineFast();
+        }
+
         @Override
         protected void updateMetrics() {
             Component host = getContainer();
             if (host != null) {
                 Font f = host.getFont();
-                if (f != cachedFont || metrics == null) {
-                    cachedFont = f;
-                    metrics = host.getFontMetrics(f);
-                    cachedWidths = metrics.getWidths();
-                    cachedCharW = Math.max(1, metrics.charWidth('m'));
-                    int minW = cachedCharW;
-                    boolean mono = true;
-                    if (cachedWidths != null && cachedWidths.length >= 127) {
-                        for (int c = 32; c < 127; c++) {
-                            int w = cachedWidths[c];
-                            if (w != cachedCharW) {
-                                mono = false;
-                            }
-                            if (w > 0 && w < minW) {
-                                minW = w;
-                            }
-                        }
-                    } else {
-                        mono = false;
-                    }
-                    cachedMinCharW = Math.max(1, minW);
-                    isMonospacedAscii = mono;
-                    cachedTabSize = getTabSize() * cachedCharW;
-                    recalculateLongestLineFast();
+                FontMetrics hostFm = host.getFontMetrics(f);
+                java.awt.font.FontRenderContext hostFrc = hostFm.getFontRenderContext();
+                if (f != cachedFont || metrics == null || cachedFrc == null) {
+                    rebuildFontMetricsCache(f, hostFm, hostFrc);
+                } else if (!hostFrc.equals(cachedFrc) && (hostFrc.isTransformed() || !cachedFrc.isTransformed())) {
+                    rebuildFontMetricsCache(f, hostFm, hostFrc);
                 }
+            }
+        }
+
+        private double getCharWidthFloat(char ch) {
+            if (ch == SOFT_WRAP_CHAR || ch == '\r' || ch == '\n') {
+                return 0.0;
+            }
+            if (isMonospacedAscii && ch >= 32 && ch < 127) {
+                return cachedCharW;
+            }
+            if (ch < 256 && cachedFloatWidths != null) {
+                return cachedFloatWidths[ch];
+            }
+            if (cachedFont != null && cachedFrc != null) {
+                return cachedFont.getStringBounds(new char[] { ch }, 0, 1, cachedFrc).getWidth();
+            }
+            return (metrics != null) ? metrics.charWidth(ch) : cachedCharW;
+        }
+
+        // Zero-width characters (variation selectors such as U+FE0F and Unicode FORMAT characters such as
+        // zero-width joiners / BOM) are measured as 0 and never drawn, matching how Java2D shapes them in runs.
+        private static boolean isZeroWidthChar(char ch) {
+            return (ch >= 0xFE00 && ch <= 0xFE0F) || Character.getType(ch) == Character.FORMAT;
+        }
+
+        // Advance width of a non-Latin-1 character at arr[idx] (bounded by [begin, end)). Surrogate pairs are
+        // measured as one glyph (low surrogate = 0) so caret/selection/whitespace-symbol positions match the
+        // glyphs drawn individually by drawClippedText() for emoji and other supplementary characters.
+        private double getComplexCharWidth(char[] arr, int idx, int begin, int end) {
+            char ch = arr[idx];
+            if (Character.isHighSurrogate(ch)) {
+                if (idx + 1 < end && Character.isLowSurrogate(arr[idx + 1]) && cachedFont != null && cachedFrc != null) {
+                    return cachedFont.getStringBounds(arr, idx, idx + 2, cachedFrc).getWidth();
+                }
+            } else if (Character.isLowSurrogate(ch)) {
+                if (idx > begin && Character.isHighSurrogate(arr[idx - 1])) {
+                    return 0.0;
+                }
+            }
+            if (isZeroWidthChar(ch)) {
+                return 0.0;
+            }
+            return getCharWidthFloat(ch);
+        }
+
+        // Returns the X coordinate after the character at arr[idx] using exactly the same widths, tab stops and
+        // zero-width rules as painting/measurement. Used by the whitespace/EOL symbol overlay so symbols are
+        // positioned in the same cells as the drawn text for monospaced and proportional fonts alike.
+        float advanceX(char[] arr, int idx, int begin, int end, float x, int docOffset) {
+            char ch = arr[idx];
+            if (ch == SOFT_WRAP_CHAR || ch == '\r' || ch == '\n') {
+                return x;
+            }
+            if (ch == '\t') {
+                return nextTabStop(x, docOffset);
+            }
+            if (cachedFloatWidths == null) {
+                updateMetrics();
+                if (cachedFloatWidths == null) {
+                    return x;
+                }
+            }
+            if (ch >= 32 && ch < 127) {
+                return (float) (x + (isMonospacedAscii ? cachedCharW : cachedFloatWidths[ch]));
+            }
+            if (ch < 256) {
+                return (float) (x + cachedFloatWidths[ch]);
+            }
+            return (float) (x + getComplexCharWidth(arr, idx, begin, end));
+        }
+
+        private static void drawCharRun(Graphics g, char[] arr, int runStart, int runLen, float runX, float y) {
+            if (g instanceof Graphics2D) {
+                ((Graphics2D) g).drawString(new String(arr, runStart, runLen), runX, y);
+            } else {
+                g.drawChars(arr, runStart, runLen, Math.round(runX), Math.round(y));
             }
         }
 
@@ -4335,7 +4453,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             if (p1 <= p0) {
                 return 0;
             }
-            return (int) measureSpan(p0, p1, tabBase);
+            return (int) Math.ceil(measureSpan(p0, p1, tabBase));
         }
 
         private float measureSpan(int p0, int p1, float startX) {
@@ -4353,10 +4471,10 @@ public class AdvancedTextEditorPanel extends JPanel {
                 char[] arr = measureSegment.array;
                 int off = measureSegment.offset;
                 int count = measureSegment.count;
-                int[] widths = cachedWidths;
+                double[] widths = cachedFloatWidths;
                 boolean mono = isMonospacedAscii;
-                int charW = cachedCharW;
-                float x = startX;
+                double charW = cachedCharW;
+                double x = startX;
                 for (int i = 0; i < count; i++) {
                     char ch = arr[off + i];
                     if (ch >= 32 && ch < 127) {
@@ -4367,14 +4485,14 @@ public class AdvancedTextEditorPanel extends JPanel {
                         continue;
                     }
                     if (ch == '\t') {
-                        x = nextTabStop(x, p0 + i);
+                        x = nextTabStop((float) x, p0 + i);
                     } else if (ch < 256 && widths != null) {
                         x += widths[ch];
                     } else {
-                        x += metrics.charWidth(ch);
+                        x += getComplexCharWidth(arr, off + i, off, off + count);
                     }
                 }
-                return x - startX;
+                return (float) (x - startX);
             } catch (BadLocationException e) {
                 return 0f;
             }
@@ -4400,6 +4518,17 @@ public class AdvancedTextEditorPanel extends JPanel {
         public void paint(Graphics g, Shape a) {
             if (a != null) {
                 tabBase = a.getBounds().x;
+            }
+            Component host = getContainer();
+            if (g != null && host != null) {
+                Font f = host.getFont();
+                FontMetrics gFm = g.getFontMetrics(f);
+                if (gFm != null) {
+                    java.awt.font.FontRenderContext gFrc = gFm.getFontRenderContext();
+                    if (f != cachedFont || metrics == null || cachedFrc == null || !gFrc.equals(cachedFrc)) {
+                        rebuildFontMetricsCache(f, gFm, gFrc);
+                    }
+                }
             }
             super.paint(g, a);
         }
@@ -4480,30 +4609,27 @@ public class AdvancedTextEditorPanel extends JPanel {
             char[] arr = segment.array;
             int start = segment.offset;
             int count = segment.count;
-            int[] widths = cachedWidths;
+            double[] widths = cachedFloatWidths;
             boolean mono = isMonospacedAscii;
-            int charW = cachedCharW;
+            double charW = cachedCharW;
 
-            float curX = x;
+            double curX = x;
             int i = 0;
             if (mono && curX < clipLeft) {
-                int icurX = (int) curX;
-                while (i < count && icurX + charW < clipLeft) {
+                while (i < count && curX + charW < clipLeft) {
                     char ch = arr[start + i];
                     if (ch >= 32 && ch < 127) {
-                        icurX += charW;
+                        curX += charW;
                         i++;
                     } else {
                         break;
                     }
                 }
-                curX = icurX;
             }
 
             int runStart = -1;
             int runLen = 0;
-            float runX = curX;
-            int iy = (int) y;
+            float runX = (float) curX;
 
             for (; i < count; i++) {
                 if (curX > clipRight) {
@@ -4512,11 +4638,11 @@ public class AdvancedTextEditorPanel extends JPanel {
                 int idx = start + i;
                 char ch = arr[idx];
                 if (ch >= 32 && ch < 127) {
-                    int cw = mono ? charW : widths[ch];
+                    double cw = mono ? charW : widths[ch];
                     if (curX + cw >= clipLeft) {
                         if (runLen == 0) {
                             runStart = idx;
-                            runX = curX;
+                            runX = (float) curX;
                         }
                         runLen++;
                     }
@@ -4525,7 +4651,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                 }
                 if (ch == SOFT_WRAP_CHAR || ch == '\r' || ch == '\n') {
                     if (runLen > 0) {
-                        g.drawChars(arr, runStart, runLen, (int) runX, iy);
+                        drawCharRun(g, arr, runStart, runLen, runX, y);
                         runLen = 0;
                         runStart = -1;
                     }
@@ -4533,27 +4659,50 @@ public class AdvancedTextEditorPanel extends JPanel {
                 }
                 if (ch == '\t') {
                     if (runLen > 0) {
-                        g.drawChars(arr, runStart, runLen, (int) runX, iy);
+                        drawCharRun(g, arr, runStart, runLen, runX, y);
                         runLen = 0;
                         runStart = -1;
                     }
-                    curX = nextTabStop(curX, p0 + i);
+                    curX = nextTabStop((float) curX, p0 + i);
                     continue;
                 }
-                int cw = (ch < 256 && widths != null) ? widths[ch] : metrics.charWidth(ch);
+                if (ch >= 256) {
+                    // Draw non-Latin-1 characters (CJK, emoji surrogate pairs, symbols) individually at their
+                    // measured X so font fallback/shaping inside a run can never shift the following glyphs away
+                    // from the caret, selection and whitespace-symbol positions.
+                    if (runLen > 0) {
+                        drawCharRun(g, arr, runStart, runLen, runX, y);
+                        runLen = 0;
+                        runStart = -1;
+                    }
+                    double cw = getComplexCharWidth(arr, idx, start, start + count);
+                    int glyphLen = (Character.isHighSurrogate(ch) && i + 1 < count
+                            && Character.isLowSurrogate(arr[idx + 1])) ? 2 : 1;
+                    if (curX + cw >= clipLeft && !isZeroWidthChar(ch)
+                            && !(Character.isLowSurrogate(ch) && cw == 0.0)) {
+                        drawCharRun(g, arr, idx, glyphLen, (float) curX, y);
+                    }
+                    curX += cw;
+                    i += glyphLen - 1;
+                    continue;
+                }
+                double cw = (widths != null) ? widths[ch] : getCharWidthFloat(ch);
                 if (curX + cw >= clipLeft) {
                     if (runLen == 0) {
                         runStart = idx;
-                        runX = curX;
+                        runX = (float) curX;
                     }
                     runLen++;
                 }
                 curX += cw;
             }
             if (runLen > 0) {
-                g.drawChars(arr, runStart, runLen, (int) runX, iy);
+                drawCharRun(g, arr, runStart, runLen, runX, y);
             }
-            return curX;
+            if (reqLen < p1 - p0 && curX <= clipRight) {
+                curX = clipRight + 1.0;
+            }
+            return (float) curX;
         }
 
         @Override
@@ -4568,12 +4717,27 @@ public class AdvancedTextEditorPanel extends JPanel {
             Element line = root.getElement(lineIndex);
             int p0 = line.getStartOffset();
             if (pos <= p0) {
-                lineArea.width = 1;
-                return lineArea;
+                return new java.awt.geom.Rectangle2D.Float(lineArea.x, lineArea.y, 1f, lineArea.height);
             }
-            lineArea.x += (int) measureSpan(p0, pos, tabBase);
-            lineArea.width = 1;
-            return lineArea;
+            float span = measureSpan(p0, pos, tabBase);
+            return new java.awt.geom.Rectangle2D.Float(lineArea.x + span, lineArea.y, 1f, lineArea.height);
+        }
+
+        private int clampLineEndOffset(Document doc, int p0, int p1) {
+            if (p1 <= p0) {
+                return p0;
+            }
+            try {
+                doc.getText(p1 - 1, 1, measureSegment);
+                if (measureSegment.count > 0) {
+                    char lastCh = measureSegment.array[measureSegment.offset];
+                    if (lastCh == SOFT_WRAP_CHAR || lastCh == '\r') {
+                        return Math.max(p0, p1 - 1);
+                    }
+                }
+            } catch (BadLocationException e) {
+            }
+            return p1;
         }
 
         @Override
@@ -4599,16 +4763,13 @@ public class AdvancedTextEditorPanel extends JPanel {
                 return Math.max(0, getEndOffset() - 1);
             }
             Element line = root.getElement(lineIndex);
-            if (fx <= alloc.x) {
-                return line.getStartOffset();
-            }
-            if (fx > alloc.x + alloc.width) {
-                return Math.max(line.getStartOffset(), line.getEndOffset() - 1);
-            }
             int p0 = line.getStartOffset();
             int p1 = line.getEndOffset() - 1;
-            if (p1 <= p0) {
+            if (fx <= alloc.x || p1 <= p0) {
                 return p0;
+            }
+            if (fx > alloc.x + alloc.width) {
+                return clampLineEndOffset(doc, p0, p1);
             }
             try {
                 int reqLen = p1 - p0;
@@ -4622,16 +4783,16 @@ public class AdvancedTextEditorPanel extends JPanel {
                 char[] arr = measureSegment.array;
                 int off = measureSegment.offset;
                 int count = measureSegment.count;
-                int[] widths = cachedWidths;
+                double[] widths = cachedFloatWidths;
                 boolean mono = isMonospacedAscii;
-                int charW = cachedCharW;
+                double charW = cachedCharW;
                 tabBase = alloc.x;
-                float curX = alloc.x;
+                double curX = alloc.x;
                 for (int i = 0; i < count; i++) {
                     char ch = arr[off + i];
                     if (ch >= 32 && ch < 127) {
-                        float nextX = curX + (mono ? charW : widths[ch]);
-                        if (fx < (curX + nextX) * 0.5f) {
+                        double nextX = curX + (mono ? charW : widths[ch]);
+                        if (fx < (curX + nextX) * 0.5) {
                             return p0 + i;
                         }
                         curX = nextX;
@@ -4640,20 +4801,24 @@ public class AdvancedTextEditorPanel extends JPanel {
                     if (ch == SOFT_WRAP_CHAR || ch == '\r' || ch == '\n') {
                         continue;
                     }
-                    float nextX;
+                    double nextX;
                     if (ch == '\t') {
-                        nextX = nextTabStop(curX, p0 + i);
+                        nextX = nextTabStop((float) curX, p0 + i);
                     } else {
-                        int cw = (ch < 256 && widths != null) ? widths[ch] : metrics.charWidth(ch);
+                        double cw = (ch < 256 && widths != null) ? widths[ch]
+                                : getComplexCharWidth(arr, off + i, off, off + count);
                         nextX = curX + cw;
                     }
-                    if (fx < (curX + nextX) * 0.5f) {
+                    if (fx < (curX + nextX) * 0.5) {
                         return p0 + i;
                     }
                     curX = nextX;
                 }
-                if (reqLen == p1 - p0 && count > 0 && arr[off + count - 1] == SOFT_WRAP_CHAR) {
-                    return Math.max(p0, p1 - 1);
+                if (reqLen == p1 - p0 && count > 0) {
+                    char lastCh = arr[off + count - 1];
+                    if (lastCh == SOFT_WRAP_CHAR || lastCh == '\r') {
+                        return Math.max(p0, p1 - 1);
+                    }
                 }
                 return Math.min(p1, p0 + reqLen);
             } catch (BadLocationException e) {
@@ -4663,14 +4828,14 @@ public class AdvancedTextEditorPanel extends JPanel {
 
         @Override
         public float nextTabStop(float x, int tabOffset) {
-            if (cachedTabSize <= 0f) {
+            if (cachedTabSize <= 0.0) {
                 updateMetrics();
-                if (cachedTabSize <= 0f) {
+                if (cachedTabSize <= 0.0) {
                     return x;
                 }
             }
             int ntabs = (int) ((x - tabBase) / cachedTabSize);
-            return tabBase + (ntabs + 1) * cachedTabSize;
+            return (float) (tabBase + (ntabs + 1) * cachedTabSize);
         }
 
         @Override
@@ -4738,15 +4903,63 @@ public class AdvancedTextEditorPanel extends JPanel {
     // Optimization: Custom WrappedPlainView that bounds calculateBreakPosition() to the characters
     // that fit within the viewport width instead of measuring entire 15,000-character lines per wrap row.
     private static class FastWrappedPlainView extends WrappedPlainView {
+        private static final char SOFT_WRAP_CHAR = 0x200B;
         private final boolean wrapStyleWord;
         private Font cachedFont;
+        private java.awt.font.FontRenderContext cachedFrc;
         private FontMetrics cachedMetrics;
-        private int cachedCharW;
-        private int[] cachedWidths;
+        private double cachedCharW;
+        private double[] cachedFloatWidths;
 
         FastWrappedPlainView(Element elem, boolean wrapStyleWord) {
             super(elem, wrapStyleWord);
             this.wrapStyleWord = wrapStyleWord;
+        }
+
+        private void rebuildWrappedFontMetrics(Font f, FontMetrics fm, java.awt.font.FontRenderContext frc) {
+            cachedFont = f;
+            cachedMetrics = fm;
+            cachedFrc = frc;
+            double[] fWidths = new double[256];
+            char[] singleChar = new char[1];
+            for (int ch = 0; ch < 256; ch++) {
+                if (ch == '\r' || ch == '\n' || ch == SOFT_WRAP_CHAR) {
+                    fWidths[ch] = 0.0;
+                } else {
+                    singleChar[0] = (char) ch;
+                    fWidths[ch] = f.getStringBounds(singleChar, 0, 1, frc).getWidth();
+                }
+            }
+            cachedFloatWidths = fWidths;
+            cachedCharW = Math.max(1.0, fWidths['m']);
+        }
+
+        @Override
+        protected void paintChild(Graphics g, Rectangle alloc, int index) {
+            Container c = getContainer();
+            if (g != null && c != null) {
+                Font f = c.getFont();
+                FontMetrics gFm = g.getFontMetrics(f);
+                if (gFm != null) {
+                    java.awt.font.FontRenderContext gFrc = gFm.getFontRenderContext();
+                    if (f != cachedFont || cachedMetrics == null || cachedFrc == null || !gFrc.equals(cachedFrc)) {
+                        rebuildWrappedFontMetrics(f, gFm, gFrc);
+                    }
+                }
+            }
+            super.paintChild(g, alloc, index);
+        }
+
+        @Override
+        protected float drawUnselectedText(Graphics2D g, float x, float y, int p0, int p1)
+                throws BadLocationException {
+            return super.drawUnselectedText(g, x, y, p0, p1);
+        }
+
+        @Override
+        protected float drawSelectedText(Graphics2D g, float x, float y, int p0, int p1)
+                throws BadLocationException {
+            return super.drawSelectedText(g, x, y, p0, p1);
         }
 
         @Override
@@ -4771,11 +4984,12 @@ public class AdvancedTextEditorPanel extends JPanel {
                     }
                 }
                 Font f = c.getFont();
-                if (f != cachedFont || cachedMetrics == null) {
-                    cachedFont = f;
-                    cachedMetrics = c.getFontMetrics(f);
-                    cachedCharW = cachedMetrics.charWidth('m');
-                    cachedWidths = cachedMetrics.getWidths();
+                FontMetrics hostFm = c.getFontMetrics(f);
+                java.awt.font.FontRenderContext hostFrc = hostFm.getFontRenderContext();
+                if (f != cachedFont || cachedMetrics == null || cachedFrc == null) {
+                    rebuildWrappedFontMetrics(f, hostFm, hostFrc);
+                } else if (!hostFrc.equals(cachedFrc) && (hostFrc.isTransformed() || !cachedFrc.isTransformed())) {
+                    rebuildWrappedFontMetrics(f, hostFm, hostFrc);
                 }
             }
             if (cachedMetrics == null) {
@@ -4784,7 +4998,8 @@ public class AdvancedTextEditorPanel extends JPanel {
             int len = p1 - p0;
             try {
                 Segment segment = getLineBuffer();
-                int maxCheck = (cachedCharW > 0) ? Math.min(len, (width / cachedCharW) * 2 + 64) : len;
+                int minCharW = Math.max(1, (int) Math.floor(cachedCharW));
+                int maxCheck = Math.min(len, (width / minCharW) * 2 + 64);
                 getDocument().getText(p0, maxCheck, segment);
                 int breakPos = findBreak(segment, p0, width);
                 if (breakPos >= 0) {
@@ -4804,21 +5019,25 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
 
         private int findBreak(Segment segment, int p0, int width) {
-            int x = 0;
+            double x = 0.0;
             int lastBreakOffset = -1;
             char[] arr = segment.array;
             int start = segment.offset;
             int count = segment.count;
-            int[] widths = cachedWidths;
+            double[] widths = cachedFloatWidths;
             for (int i = 0; i < count; i++) {
                 char ch = arr[start + i];
-                int cw;
+                if (ch == '\r' || ch == '\n' || ch == SOFT_WRAP_CHAR) {
+                    continue;
+                }
+                double cw;
                 if (ch == '\t') {
-                    cw = (int) nextTabStop((float) x, p0 + i) - x;
+                    cw = nextTabStop((float) x, p0 + i) - x;
                 } else if (ch < 256 && widths != null) {
                     cw = widths[ch];
                 } else {
-                    cw = cachedMetrics.charWidth(ch);
+                    cw = cachedFont.getStringBounds(arr, start + i, start + i + 1,
+                            cachedMetrics.getFontRenderContext()).getWidth();
                 }
                 if (x + cw > width) {
                     if (wrapStyleWord) {
