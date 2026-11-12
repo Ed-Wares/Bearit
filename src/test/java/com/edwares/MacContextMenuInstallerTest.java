@@ -75,5 +75,24 @@ public class MacContextMenuInstallerTest {
         assertTrue(Arrays.asList(DefaultEditorManager.MAC_TEXT_UTIS).contains("public.text"));
         assertTrue(Arrays.asList(DefaultEditorManager.MAC_TEXT_UTIS).contains("public.source-code"));
     }
+
+    @Test
+    public void testIsSameFilePathDetection(@TempDir Path tempDir) throws Exception {
+        Path fileA = tempDir.resolve("sample.txt");
+        Path fileB = tempDir.resolve("other.txt");
+        Files.write(fileA, "hello".getBytes(StandardCharsets.UTF_8));
+        Files.write(fileB, "world".getBytes(StandardCharsets.UTF_8));
+
+        // Exact same File reference
+        assertTrue(BearitFrame.isSameFilePath(fileA.toFile(), new File(fileA.toFile().getAbsolutePath())));
+
+        // Redundant ./ path segment pointing to the same file
+        File redundantPath = new File(tempDir.toFile(), "./sample.txt");
+        assertTrue(BearitFrame.isSameFilePath(fileA.toFile(), redundantPath));
+
+        // Different file
+        assertFalse(BearitFrame.isSameFilePath(fileA.toFile(), fileB.toFile()));
+        assertFalse(BearitFrame.isSameFilePath(fileA.toFile(), null));
+    }
 }
 

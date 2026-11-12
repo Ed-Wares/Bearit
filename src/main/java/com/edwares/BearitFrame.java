@@ -284,7 +284,7 @@ public class BearitFrame extends JFrame {
                     addNewTab(null, tab.position, untitledId);
                 } else {
                     File f = new File(tab.path);
-                    if (f.exists()) {
+                    if (f.exists() && findOpenTabIndexForFile(f) < 0) {
                         addNewTab(f, tab.position, null);
                     }
                 }
@@ -858,6 +858,17 @@ public class BearitFrame extends JFrame {
     }
 
     private void openFileInTab(File file) {
+        if (file == null) {
+            return;
+        }
+
+        // If this exact file path is already open in a tab, activate that tab instead of opening a new one
+        int existingIdx = findOpenTabIndexForFile(file);
+        if (existingIdx >= 0) {
+            activateExistingTab(existingIdx, file);
+            return;
+        }
+
         if (!file.exists()) {
             int result = DialogUtil.showConfirmDialog(this,
                     "The file '" + file.getName() + "' does not exist.\n\nWould you like to create a new file?",
@@ -876,6 +887,13 @@ public class BearitFrame extends JFrame {
                 return;
             }
         }
+
+        // Re-check after potential file creation so canonical paths resolve identically
+        existingIdx = findOpenTabIndexForFile(file);
+        if (existingIdx >= 0) {
+            activateExistingTab(existingIdx, file);
+            return;
+        }
         
         AdvancedTextEditorPanel active = getActiveEditor();
         if (active != null && !active.hasUnsavedChanges() && !active.hasActiveFile()) {
@@ -883,6 +901,71 @@ public class BearitFrame extends JFrame {
             BearitProperties.getInstance().addRecentFile(file.getAbsolutePath());
         } else {
             addNewTab(file);
+        }
+    }
+
+    private void activateExistingTab(int tabIndex, File file) {
+        if (tabIndex < 0 || tabIndex >= tabbedPane.getTabCount() - 1) {
+            return;
+        }
+        tabbedPane.setSelectedIndex(tabIndex);
+        BearitProperties.getInstance().addRecentFile(file.getAbsolutePath());
+        updateFrameTitle();
+        if (tabbedPane.getUI() instanceof ThemedTabbedPaneUI) {
+            ((ThemedTabbedPaneUI) tabbedPane.getUI()).syncCustomTabHeaderStyles();
+        }
+        SwingUtilities.invokeLater(() -> {
+            if (tabIndex >= 0 && tabIndex < tabbedPane.getTabCount() - 1) {
+                Rectangle bounds = tabbedPane.getBoundsAt(tabIndex);
+                Component tabHeader = tabbedPane.getTabComponentAt(tabIndex);
+                JViewport vp = tabHeader != null
+                        ? (JViewport) SwingUtilities.getAncestorOfClass(JViewport.class, tabHeader)
+                        : null;
+                if (bounds != null && vp != null && vp.getView() instanceof JComponent) {
+                    ((JComponent) vp.getView()).scrollRectToVisible(bounds);
+                }
+            }
+        });
+    }
+
+    int findOpenTabIndexForFile(File file) {
+        if (file == null || tabbedPane == null) {
+            return -1;
+        }
+        for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            AdvancedTextEditorPanel editor = null;
+            if (c instanceof AdvancedTextEditorPanel) {
+                editor = (AdvancedTextEditorPanel) c;
+            } else if (c instanceof BearitTextHexWrapper) {
+                editor = ((BearitTextHexWrapper) c).getHiddenTextEditor();
+            }
+            if (editor != null && !editor.isTransient() && editor.hasActiveFile()) {
+                if (isSameFilePath(file, editor.getActiveFile())) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
+    static boolean isSameFilePath(File f1, File f2) {
+        if (f1 == null || f2 == null) {
+            return false;
+        }
+        String p1 = normalizeFilePath(f1);
+        String p2 = normalizeFilePath(f2);
+        if (System.getProperty("os.name").toLowerCase().contains("win")) {
+            return p1.equalsIgnoreCase(p2);
+        }
+        return p1.equals(p2);
+    }
+
+    private static String normalizeFilePath(File file) {
+        try {
+            return file.getCanonicalPath();
+        } catch (Exception e) {
+            return file.toPath().toAbsolutePath().normalize().toString();
         }
     }
 
