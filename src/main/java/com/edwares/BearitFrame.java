@@ -41,6 +41,7 @@ public class BearitFrame extends JFrame {
     private JCheckBoxMenuItem whitespaceMenuItem;
     private JCheckBoxMenuItem eolMenuItem;
     private JCheckBoxMenuItem oneBasedColumnMenuItem;
+    private JCheckBoxMenuItem columnRulerMenuItem;
     private JCheckBoxMenuItem readOnlyMenuItem;
     private JRadioButtonMenuItem lightThemeItem;
     private JRadioButtonMenuItem darkThemeItem;
@@ -458,6 +459,7 @@ public class BearitFrame extends JFrame {
             editor.setShowWhitespace(props.isShowWhitespace());
             editor.setShowEol(props.isShowEol());
             editor.setOneBasedColumnIndex(props.isOneBasedColumnIndex());
+            editor.setShowColumnRuler(props.isShowColumnRuler());
             editor.setReadOnlyMode(props.isReadOnlyMode());
             editor.setEditorMaxLineLength(props.getMaxLineLength());
             
@@ -1169,6 +1171,18 @@ public class BearitFrame extends JFrame {
                 ((AdvancedTextEditorPanel) c).setOneBasedColumnIndex(oneBasedColumn);
             } else if (c instanceof BearitTextHexWrapper) {
                 ((BearitTextHexWrapper) c).setOneBasedColumnIndex(oneBasedColumn);
+            }
+        }
+    }
+
+    private void setGlobalColumnRuler(boolean showColumnRuler) {
+        BearitProperties.getInstance().setShowColumnRuler(showColumnRuler);
+        for (int i = 0; i < tabbedPane.getTabCount() - 1; i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            if (c instanceof AdvancedTextEditorPanel) {
+                ((AdvancedTextEditorPanel) c).setShowColumnRuler(showColumnRuler);
+            } else if (c instanceof BearitTextHexWrapper) {
+                ((BearitTextHexWrapper) c).getHiddenTextEditor().setShowColumnRuler(showColumnRuler);
             }
         }
     }
@@ -2174,6 +2188,10 @@ public class BearitFrame extends JFrame {
         oneBasedColumnMenuItem.setSelected(props.isOneBasedColumnIndex());
         oneBasedColumnMenuItem.addActionListener(e -> setGlobalOneBasedColumn(oneBasedColumnMenuItem.isSelected()));
 
+        columnRulerMenuItem = new JCheckBoxMenuItem("Column Ruler");
+        columnRulerMenuItem.setSelected(props.isShowColumnRuler());
+        columnRulerMenuItem.addActionListener(e -> setGlobalColumnRuler(columnRulerMenuItem.isSelected()));
+
         readOnlyMenuItem = new JCheckBoxMenuItem("Read-Only Mode");
         readOnlyMenuItem.setSelected(props.isReadOnlyMode());
         readOnlyMenuItem.addActionListener(e -> setGlobalReadOnlyMode(readOnlyMenuItem.isSelected()));
@@ -2190,6 +2208,7 @@ public class BearitFrame extends JFrame {
         viewMenu.add(whitespaceMenuItem);
         viewMenu.add(eolMenuItem);
         viewMenu.add(oneBasedColumnMenuItem);
+        viewMenu.add(columnRulerMenuItem);
         viewMenu.addSeparator();
         viewMenu.add(readOnlyMenuItem);
         

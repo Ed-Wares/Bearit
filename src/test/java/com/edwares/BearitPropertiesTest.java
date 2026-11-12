@@ -55,4 +55,17 @@ public class BearitPropertiesTest {
         assertEquals(2, recentFiles.size(), "Duplicates should be removed, leaving only unique entries");
         assertEquals("C:\\logs\\active.log", recentFiles.get(0), "Duplicate entry should be moved to the top");
     }
+
+    @Test
+    void testColumnRulerPropertyPersistence() {
+        boolean original = properties.isShowColumnRuler();
+        try {
+            properties.setShowColumnRuler(true);
+            assertTrue(properties.isShowColumnRuler(), "Column ruler property should be true after enabling");
+            properties.setShowColumnRuler(false);
+            assertFalse(properties.isShowColumnRuler(), "Column ruler property should be false after disabling");
+        } finally {
+            properties.setShowColumnRuler(original);
+        }
+    }
 }

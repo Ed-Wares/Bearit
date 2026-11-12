@@ -51,6 +51,8 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     private final JTextArea textArea;
     private final LineNumberPanel lineNumberPanel;
+    private final ColumnRulerPanel columnRulerPanel;
+    private final JPanel columnRulerCorner;
     private final JScrollPane scrollPane;
 
     private final JTextField lblStatus;
@@ -112,6 +114,7 @@ public class AdvancedTextEditorPanel extends JPanel {
     private boolean showWhitespace = false;
     private boolean showEol = false;
     private boolean oneBasedColumnIndex = false;
+    private boolean showColumnRuler = false;
     private boolean readOnlyMode = false;
     private String currentTheme = "Light";
     private boolean autoFillSearch = true;
@@ -187,6 +190,9 @@ public class AdvancedTextEditorPanel extends JPanel {
                 setUnsavedChanges(true); // Flag the entire file as unsaved
             }
             lineNumberPanel.adjustMetricSizing();
+            if (showColumnRuler && columnRulerPanel != null) {
+                columnRulerPanel.repaint();
+            }
             if (!isNavigating)
                 syncLocalToGlobalScroll();
         }
@@ -919,6 +925,10 @@ public class AdvancedTextEditorPanel extends JPanel {
         lblCursorInfo = newLabelTextField("| Line: 1 | Pos: 0");
 
         lineNumberPanel = new LineNumberPanel(this, textArea);
+        columnRulerPanel = new ColumnRulerPanel(this, textArea);
+        columnRulerCorner = new JPanel();
+        columnRulerCorner.setBackground(new Color(245, 245, 245));
+        columnRulerCorner.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 1, Color.LIGHT_GRAY));
 
         // Caret Listener Sync ---
         textArea.addCaretListener(e -> {
@@ -969,6 +979,9 @@ public class AdvancedTextEditorPanel extends JPanel {
             if (currentHighlightText != null) {
                 highlightDebounceTimer.restart();
             }
+            if (showColumnRuler && columnRulerPanel != null) {
+                columnRulerPanel.repaint();
+            }
         });
 
         // Initialize with local defaults. The parent frame will push saved user
@@ -978,6 +991,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         setShowWhitespace(this.showWhitespace);
         setShowEol(this.showEol);
         setOneBasedColumnIndex(this.oneBasedColumnIndex);
+        setShowColumnRuler(this.showColumnRuler);
         setReadOnlyMode(this.readOnlyMode);
         applyTheme(this.currentTheme);
 
@@ -1432,6 +1446,10 @@ public class AdvancedTextEditorPanel extends JPanel {
                 lineNumberPanel.setFont(lineNumberPanel.getFont().deriveFont(font.getSize2D()));
                 lineNumberPanel.adjustMetricSizing();
             }
+            if (columnRulerPanel != null) {
+                columnRulerPanel.revalidate();
+                columnRulerPanel.repaint();
+            }
             if (lblFontInfo != null) {
                 lblFontInfo.setText(" | Font: " + font.getName() + " " + font.getSize() + "pt ");
             }
@@ -1478,6 +1496,10 @@ public class AdvancedTextEditorPanel extends JPanel {
                 wrap ? JScrollPane.HORIZONTAL_SCROLLBAR_NEVER : JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
         lineNumberPanel.revalidate();
         lineNumberPanel.repaint();
+        if (columnRulerPanel != null) {
+            columnRulerPanel.revalidate();
+            columnRulerPanel.repaint();
+        }
     }
 
     public void setShowWhitespace(boolean show) {
@@ -1488,6 +1510,33 @@ public class AdvancedTextEditorPanel extends JPanel {
     public void setShowEol(boolean show) {
         this.showEol = show;
         textArea.repaint();
+    }
+
+    public void setShowColumnRuler(boolean show) {
+        this.showColumnRuler = show;
+        if (show) {
+            scrollPane.setColumnHeaderView(columnRulerPanel);
+            scrollPane.setCorner(JScrollPane.UPPER_LEFT_CORNER, columnRulerCorner);
+            if (scrollPane.getColumnHeader() != null) {
+                scrollPane.getColumnHeader().setBackground(columnRulerPanel.getBackground());
+            }
+            columnRulerPanel.revalidate();
+            columnRulerPanel.repaint();
+        } else {
+            scrollPane.setColumnHeaderView(null);
+            scrollPane.setColumnHeader(null);
+            scrollPane.setCorner(JScrollPane.UPPER_LEFT_CORNER, null);
+        }
+        scrollPane.revalidate();
+        scrollPane.repaint();
+    }
+
+    public boolean isShowColumnRuler() {
+        return showColumnRuler;
+    }
+
+    ColumnRulerPanel getColumnRulerPanel() {
+        return columnRulerPanel;
     }
 
     public void setOneBasedColumnIndex(boolean oneBasedColumn) {
@@ -1549,14 +1598,27 @@ public class AdvancedTextEditorPanel extends JPanel {
             textArea.setCaretColor(Color.WHITE);
             lineNumberPanel.setBackground(new Color(49, 51, 53));
             lineNumberPanel.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, new Color(80, 80, 80)));
+            columnRulerPanel.setBackground(new Color(49, 51, 53));
+            columnRulerPanel.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(80, 80, 80)));
+            columnRulerCorner.setBackground(new Color(49, 51, 53));
+            columnRulerCorner.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 1, new Color(80, 80, 80)));
         } else {
             textArea.setBackground(Color.WHITE);
             textArea.setForeground(Color.BLACK);
             textArea.setCaretColor(Color.BLACK);
             lineNumberPanel.setBackground(new Color(245, 245, 245));
             lineNumberPanel.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, Color.LIGHT_GRAY));
+            columnRulerPanel.setBackground(new Color(245, 245, 245));
+            columnRulerPanel.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Color.LIGHT_GRAY));
+            columnRulerCorner.setBackground(new Color(245, 245, 245));
+            columnRulerCorner.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 1, Color.LIGHT_GRAY));
+        }
+        if (scrollPane.getColumnHeader() != null) {
+            scrollPane.getColumnHeader().setBackground(columnRulerPanel.getBackground());
         }
         lineNumberPanel.repaint();
+        columnRulerPanel.repaint();
+        columnRulerCorner.repaint();
         DialogUtil.themePopupMenu(editorContextMenu);
         // --- Pass the theme value directly into the custom UI! ---
         scrollPane.getVerticalScrollBar().setUI(new ThemedScrollBarUI(theme));
@@ -1693,6 +1755,9 @@ public class AdvancedTextEditorPanel extends JPanel {
                 
                 lblCursorInfo.setText(String.format("| Line: %d | Col: %d - %d | Sel: %d - %d (width: %d)", absoluteLine, startCol, endCol,
                         selStart, selEnd, width));
+            }
+            if (showColumnRuler && columnRulerPanel != null) {
+                columnRulerPanel.repaint();
             }
         } catch (Exception e) {
         }
@@ -5477,6 +5542,395 @@ public class AdvancedTextEditorPanel extends JPanel {
                     }
                 }
             } catch (Exception e) {
+            }
+        }
+    }
+
+    static class ColumnRulerPanel extends JPanel {
+        private static final char SOFT_WRAP_CHAR = 0x200B;
+        private final AdvancedTextEditorPanel parent;
+        private final JTextArea textArea;
+        private final Segment lineSegment = new Segment();
+        private Font cachedFont;
+        private java.awt.font.FontRenderContext cachedFrc;
+        private double[] cachedFloatWidths;
+        private double cachedCharW = 8.0;
+        private double cachedDefaultColW = 8.0;
+        private boolean isMonospacedAscii = true;
+
+        public ColumnRulerPanel(AdvancedTextEditorPanel parent, JTextArea textArea) {
+            this.parent = parent;
+            this.textArea = textArea;
+            setOpaque(true);
+            setBackground(new Color(245, 245, 245));
+            setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Color.LIGHT_GRAY));
+
+            textArea.addComponentListener(new ComponentAdapter() {
+                @Override
+                public void componentResized(ComponentEvent e) {
+                    if (parent.showColumnRuler) {
+                        revalidate();
+                        repaint();
+                    }
+                }
+            });
+        }
+
+        private static Font getLabelFont(Font baseFont, int style) {
+            float baseSize = (baseFont != null) ? baseFont.getSize2D() : 14f;
+            float labelSize = Math.max(9f, Math.round(baseSize * 0.8f));
+            return (baseFont != null ? baseFont : new Font("Monospaced", Font.PLAIN, 14)).deriveFont(style, labelSize);
+        }
+
+        private void ensureMetricsCache(Font f, java.awt.font.FontRenderContext frc) {
+            if (f == null) {
+                f = textArea.getFont();
+            }
+            if (frc == null) {
+                frc = textArea.getFontMetrics(f).getFontRenderContext();
+            }
+            if (f == cachedFont && cachedFrc != null && cachedFrc.equals(frc) && cachedFloatWidths != null) {
+                return;
+            }
+            cachedFont = f;
+            cachedFrc = frc;
+            double[] fWidths = new double[256];
+            char[] singleChar = new char[1];
+            for (int c = 0; c < 256; c++) {
+                if (c == '\r' || c == '\n' || c == SOFT_WRAP_CHAR) {
+                    fWidths[c] = 0.0;
+                } else {
+                    singleChar[0] = (char) c;
+                    fWidths[c] = f.getStringBounds(singleChar, 0, 1, frc).getWidth();
+                }
+            }
+            cachedFloatWidths = fWidths;
+            cachedCharW = Math.max(1.0, fWidths['m']);
+            boolean mono = true;
+            for (int c = 32; c < 127; c++) {
+                if (Math.abs(fWidths[c] - cachedCharW) > 1e-4) {
+                    mono = false;
+                    break;
+                }
+            }
+            isMonospacedAscii = mono;
+            cachedDefaultColW = (!mono && fWidths['0'] > 1.0) ? fWidths['0'] : cachedCharW;
+        }
+
+        private static boolean isZeroWidthChar(char ch) {
+            return (ch >= 0xFE00 && ch <= 0xFE0F) || Character.getType(ch) == Character.FORMAT;
+        }
+
+        private double getComplexCharWidth(char[] arr, int idx, int begin, int end) {
+            char ch = arr[idx];
+            if (Character.isHighSurrogate(ch)) {
+                if (idx + 1 < end && Character.isLowSurrogate(arr[idx + 1]) && cachedFont != null && cachedFrc != null) {
+                    return cachedFont.getStringBounds(arr, idx, idx + 2, cachedFrc).getWidth();
+                }
+            } else if (Character.isLowSurrogate(ch)) {
+                if (idx > begin && Character.isHighSurrogate(arr[idx - 1])) {
+                    return 0.0;
+                }
+            }
+            if (isZeroWidthChar(ch)) {
+                return 0.0;
+            }
+            if (cachedFont != null && cachedFrc != null) {
+                return cachedFont.getStringBounds(arr, idx, idx + 1, cachedFrc).getWidth();
+            }
+            return cachedCharW;
+        }
+
+        private double advanceColumnX(char[] arr, int idx, int begin, int end, double curX, int leftInset) {
+            char ch = arr[idx];
+            if (ch >= 32 && ch < 127) {
+                return curX + (isMonospacedAscii ? cachedCharW : cachedFloatWidths[ch]);
+            }
+            if (ch == SOFT_WRAP_CHAR || ch == '\r' || ch == '\n') {
+                return curX;
+            }
+            if (ch == '\t') {
+                double tabSize = Math.max(1, textArea.getTabSize()) * cachedCharW;
+                int ntabs = (int) (((float) curX - leftInset) / tabSize);
+                return leftInset + (ntabs + 1) * tabSize;
+            }
+            if (ch < 256 && cachedFloatWidths != null) {
+                return curX + cachedFloatWidths[ch];
+            }
+            return curX + getComplexCharWidth(arr, idx, begin, end);
+        }
+
+        // Populates lineSegment with the current caret line's characters and returns
+        // [rowStartCol, rowEndCol, curColOffsetFromLineStart].
+        private int[] loadCurrentLineBounds(int leftInset) {
+            int rowStartCol = 0;
+            int rowEndCol = 0;
+            int curColOffset = 0;
+            try {
+                Document doc = textArea.getDocument();
+                int docLen = doc.getLength();
+                int dot = (textArea.getCaret() != null) ? Math.max(0, Math.min(docLen, textArea.getCaret().getDot())) : 0;
+                Element root = doc.getDefaultRootElement();
+                int lineIdx = root.getElementIndex(dot);
+                Element lineElem = root.getElement(lineIdx);
+                int lineStart = lineElem.getStartOffset();
+                int lineEnd = Math.min(docLen, lineElem.getEndOffset());
+                doc.getText(lineStart, Math.max(0, lineEnd - lineStart), lineSegment);
+                int count = lineSegment.count;
+                char[] arr = lineSegment.array;
+                int off = lineSegment.offset;
+                while (count > 0) {
+                    char last = arr[off + count - 1];
+                    if (last == '\n' || last == '\r' || last == SOFT_WRAP_CHAR) {
+                        count--;
+                    } else {
+                        break;
+                    }
+                }
+                lineSegment.count = count;
+                curColOffset = Math.max(0, Math.min(count, dot - lineStart));
+                rowEndCol = count;
+
+                if (textArea.getLineWrap() && textArea.getWidth() > 0 && count > 0) {
+                    java.awt.geom.Rectangle2D dotRect = textArea.modelToView2D(dot);
+                    java.awt.geom.Rectangle2D startRect = textArea.modelToView2D(lineStart);
+                    if (dotRect != null && startRect != null && Math.abs(dotRect.getY() - startRect.getY()) > 1.0) {
+                        int rowY = (int) Math.round(dotRect.getY() + dotRect.getHeight() * 0.5);
+                        int vStart = textArea.viewToModel2D(new Point(leftInset, rowY));
+                        int vEnd = textArea.viewToModel2D(new Point(textArea.getWidth(), rowY));
+                        if (vStart >= lineStart && vStart <= lineStart + count) {
+                            rowStartCol = vStart - lineStart;
+                        }
+                        if (vEnd >= lineStart + rowStartCol && vEnd <= lineStart + count) {
+                            rowEndCol = vEnd - lineStart;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                lineSegment.count = 0;
+            }
+            return new int[] { rowStartCol, rowEndCol, curColOffset };
+        }
+
+        int getRegularTickHeight() {
+            Font baseFont = textArea.getFont();
+            FontMetrics fm = textArea.getFontMetrics(getLabelFont(baseFont, Font.BOLD));
+            return Math.max(4, (int) Math.round(fm.getHeight() * 0.28));
+        }
+
+        int getFifthTickHeight() {
+            Font baseFont = textArea.getFont();
+            FontMetrics fm = textArea.getFontMetrics(getLabelFont(baseFont, Font.BOLD));
+            return Math.max(7, (int) Math.round(fm.getHeight() * 0.48));
+        }
+
+        int getTenthTickHeight() {
+            Font baseFont = textArea.getFont();
+            FontMetrics fm = textArea.getFontMetrics(getLabelFont(baseFont, Font.BOLD));
+            return Math.max(8, (int) Math.round(fm.getHeight() * 0.56));
+        }
+
+        double getCharAdvanceWidth(java.awt.font.FontRenderContext frc) {
+            ensureMetricsCache(textArea.getFont(), frc);
+            return cachedCharW;
+        }
+
+        int getTickXForColumnOffset(int colOffsetFromLineStart, java.awt.font.FontRenderContext frc) {
+            ensureMetricsCache(textArea.getFont(), frc);
+            Insets ins = textArea.getInsets();
+            int leftInset = (ins != null) ? ins.left : 0;
+            int[] bounds = loadCurrentLineBounds(leftInset);
+            int rowStartCol = bounds[0];
+            int rowEndCol = bounds[1];
+            char[] arr = lineSegment.array;
+            int off = lineSegment.offset;
+
+            double curX = leftInset;
+            int startCol = Math.min(rowStartCol, Math.max(0, colOffsetFromLineStart));
+            for (int c = startCol; c < colOffsetFromLineStart; c++) {
+                if (c < rowEndCol) {
+                    curX = advanceColumnX(arr, off + c, off, off + rowEndCol, curX, leftInset);
+                } else {
+                    curX += cachedDefaultColW;
+                }
+            }
+            return (int) (leftInset + (float) (curX - leftInset));
+        }
+
+        int getCurrentCursorColumnOffset(java.awt.font.FontRenderContext frc) {
+            if (textArea == null) {
+                return 0;
+            }
+            Insets ins = textArea.getInsets();
+            int leftInset = (ins != null) ? ins.left : 0;
+            int[] bounds = loadCurrentLineBounds(leftInset);
+            return bounds[2];
+        }
+
+        int getCurrentCursorDisplayColumn() {
+            int colBase = parent.oneBasedColumnIndex ? 1 : 0;
+            return getCurrentCursorColumnOffset(null) + colBase;
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            Font baseFont = textArea.getFont();
+            Font boldLabelFont = getLabelFont(baseFont, Font.BOLD);
+            FontMetrics fm = textArea.getFontMetrics(boldLabelFont);
+            int tenthTickH = getTenthTickHeight();
+            int height = fm.getAscent() + fm.getDescent() + tenthTickH + 6;
+            int width = textArea.getWidth();
+            if (parent.scrollPane != null && parent.scrollPane.getViewport() != null) {
+                width = Math.max(width, parent.scrollPane.getViewport().getWidth());
+            }
+            if (width <= 0) {
+                width = 800;
+            }
+            return new Dimension(width, height);
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+
+            Font baseFont = textArea.getFont();
+            FontMetrics editorFm = g.getFontMetrics(baseFont);
+            java.awt.font.FontRenderContext frc = (editorFm != null)
+                    ? editorFm.getFontRenderContext()
+                    : textArea.getFontMetrics(baseFont).getFontRenderContext();
+            ensureMetricsCache(baseFont, frc);
+
+            Insets ins = textArea.getInsets();
+            int leftInset = (ins != null) ? ins.left : 0;
+
+            int mainScrollX = (parent.scrollPane != null && parent.scrollPane.getViewport() != null)
+                    ? parent.scrollPane.getViewport().getViewPosition().x
+                    : 0;
+            int headerScrollX = (getParent() instanceof JViewport)
+                    ? ((JViewport) getParent()).getViewPosition().x
+                    : 0;
+            int scrollDelta = mainScrollX - headerScrollX;
+
+            Rectangle clip = g.getClipBounds();
+            Rectangle vis = getVisibleRect();
+            int viewLeftInRuler;
+            int viewRightInRuler;
+            if (vis != null && vis.width > 0) {
+                viewLeftInRuler = vis.x;
+                viewRightInRuler = vis.x + vis.width;
+                if (clip != null && clip.width > 0) {
+                    viewLeftInRuler = Math.max(viewLeftInRuler, clip.x);
+                    viewRightInRuler = Math.min(viewRightInRuler, clip.x + clip.width);
+                }
+            } else if (clip != null && clip.width > 0) {
+                viewLeftInRuler = clip.x;
+                viewRightInRuler = clip.x + clip.width;
+            } else {
+                viewLeftInRuler = 0;
+                viewRightInRuler = Math.max(getWidth(), 800);
+            }
+
+            int textAreaLeft = viewLeftInRuler + scrollDelta - 80;
+            int textAreaRight = viewRightInRuler + scrollDelta + 80;
+
+            Font plainLabelFont = getLabelFont(baseFont, Font.PLAIN);
+            Font boldLabelFont = getLabelFont(baseFont, Font.BOLD);
+            FontMetrics plainFm = g.getFontMetrics(plainLabelFont);
+            FontMetrics boldFm = g.getFontMetrics(boldLabelFont);
+
+            boolean isDark = "Dark".equals(parent.currentTheme);
+            Color normalColor = isDark ? new Color(125, 125, 125) : new Color(120, 120, 120);
+            Color activeColor = isDark ? new Color(240, 240, 240) : new Color(15, 15, 15);
+
+            int h = getHeight();
+            int tickBottomY = Math.max(1, h - 2);
+            int regTickH = getRegularTickHeight();
+            int fifthTickH = getFifthTickHeight();
+            int tenthTickH = getTenthTickHeight();
+            int labelBaselineY = Math.max(boldFm.getAscent(), tickBottomY - tenthTickH - 2);
+
+            int[] bounds = loadCurrentLineBounds(leftInset);
+            int rowStartCol = bounds[0];
+            int rowEndCol = bounds[1];
+            int curColOffset = bounds[2];
+            char[] arr = lineSegment.array;
+            int off = lineSegment.offset;
+
+            int colBase = parent.oneBasedColumnIndex ? 1 : 0;
+            int curDisplayCol = curColOffset + colBase;
+
+            // Pre-compute the current cursor column's X coordinate so we can prevent label collisions
+            double scanX = leftInset;
+            for (int c = rowStartCol; c < curColOffset; c++) {
+                if (c < rowEndCol) {
+                    scanX = advanceColumnX(arr, off + c, off, off + rowEndCol, scanX, leftInset);
+                } else {
+                    scanX += cachedDefaultColW;
+                }
+            }
+            int curTickRulerX = (int) (leftInset + (float) (scanX - leftInset)) - scrollDelta;
+            String curLabel = String.valueOf(curDisplayCol);
+            int curLabelW = boldFm.stringWidth(curLabel);
+            int curLabelX = Math.max(1, curTickRulerX - (curLabelW / 2));
+            int curLabelLeftPad = curLabelX - 2;
+            int curLabelRightPad = curLabelX + curLabelW + 2;
+
+            // 1. Walk columns along the current line, drawing regular, 5th, and 10th ticks and 10th labels
+            g.setColor(normalColor);
+            g.setFont(plainLabelFont);
+            double curX = leftInset;
+            int lastLabelRight = Integer.MIN_VALUE;
+            boolean curTickInVisibleRange = false;
+
+            for (int k = rowStartCol;; k++) {
+                int tickTextAreaX = (int) (leftInset + (float) (curX - leftInset));
+                if (tickTextAreaX > textAreaRight) {
+                    break;
+                }
+                if (tickTextAreaX >= textAreaLeft) {
+                    int displayCol = k + colBase;
+                    int tickRulerX = tickTextAreaX - scrollDelta;
+
+                    int tickH;
+                    if (displayCol % 10 == 0) {
+                        tickH = tenthTickH;
+                    } else if (displayCol % 5 == 0) {
+                        tickH = fifthTickH;
+                    } else {
+                        tickH = regTickH;
+                    }
+
+                    if (k == curColOffset) {
+                        curTickInVisibleRange = true;
+                    } else {
+                        g.drawLine(tickRulerX, tickBottomY - tickH + 1, tickRulerX, tickBottomY);
+                    }
+
+                    if (displayCol % 10 == 0 && k != curColOffset) {
+                        String label = String.valueOf(displayCol);
+                        int labelW = plainFm.stringWidth(label);
+                        int labelX = Math.max(1, tickRulerX - (labelW / 2));
+                        if ((labelX + labelW < curLabelLeftPad || labelX > curLabelRightPad)
+                                && labelX >= lastLabelRight + 2) {
+                            g.drawString(label, labelX, labelBaselineY);
+                            lastLabelRight = labelX + labelW;
+                        }
+                    }
+                }
+
+                if (k < rowEndCol) {
+                    curX = advanceColumnX(arr, off + k, off, off + rowEndCol, curX, leftInset);
+                } else {
+                    curX += cachedDefaultColW;
+                }
+            }
+
+            // 2. Draw the active cursor column tick and its column index number in bold and darker/pronounced color
+            if (curTickInVisibleRange) {
+                g.setColor(activeColor);
+                g.setFont(boldLabelFont);
+                g.fillRect(curTickRulerX, tickBottomY - tenthTickH + 1, 2, tenthTickH);
+                g.drawString(curLabel, curLabelX, labelBaselineY);
             }
         }
     }

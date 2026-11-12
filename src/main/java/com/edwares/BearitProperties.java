@@ -28,6 +28,7 @@ public class BearitProperties {
     private boolean showWhitespace = false;
     private boolean showEol = false;
     private boolean oneBasedColumnIndex = false;
+    private boolean showColumnRuler = false;
     private boolean readOnlyMode = false;
 
     // --- Search Settings ---
@@ -110,6 +111,7 @@ public class BearitProperties {
             showWhitespace = Boolean.parseBoolean(props.getProperty("show.whitespace", "false"));
             showEol = Boolean.parseBoolean(props.getProperty("show.eol", "false"));
             oneBasedColumnIndex = Boolean.parseBoolean(props.getProperty("one.based.column", "false"));
+            showColumnRuler = Boolean.parseBoolean(props.getProperty("show.column.ruler", "false"));
             readOnlyMode = Boolean.parseBoolean(props.getProperty("read.only.mode", "false"));
             searchCaseInsensitive = Boolean.parseBoolean(props.getProperty("search.caseInsensitive", "false"));
             searchRegex = Boolean.parseBoolean(props.getProperty("search.regex", "false"));
@@ -149,6 +151,7 @@ public class BearitProperties {
         props.setProperty("show.whitespace", String.valueOf(showWhitespace));
         props.setProperty("show.eol", String.valueOf(showEol));
         props.setProperty("one.based.column", String.valueOf(oneBasedColumnIndex));
+        props.setProperty("show.column.ruler", String.valueOf(showColumnRuler));
         props.setProperty("read.only.mode", String.valueOf(readOnlyMode));
         props.setProperty("search.caseInsensitive", String.valueOf(searchCaseInsensitive));
         props.setProperty("search.regex", String.valueOf(searchRegex));
@@ -260,6 +263,8 @@ public class BearitProperties {
     public void setShowEol(boolean showEol) { this.showEol = showEol; }
     public boolean isOneBasedColumnIndex() { return oneBasedColumnIndex; }
     public void setOneBasedColumnIndex(boolean oneBasedColumnIndex) { this.oneBasedColumnIndex = oneBasedColumnIndex; }
+    public boolean isShowColumnRuler() { return showColumnRuler; }
+    public void setShowColumnRuler(boolean showColumnRuler) { this.showColumnRuler = showColumnRuler; }
     public boolean isReadOnlyMode() { return readOnlyMode; }
     public void setReadOnlyMode(boolean readOnlyMode) { this.readOnlyMode = readOnlyMode; }
 

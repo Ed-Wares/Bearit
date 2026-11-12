@@ -418,4 +418,153 @@ public class EncodingAndLineEndingTest {
             }
         }
     }
+
+    @Test
+    void testColumnRulerTicksNumbersScrollingAndCurrentColumnHighlight() throws Exception {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 300; i++) {
+            sb.append((char) ('A' + (i % 26)));
+        }
+        File testFile = new File(tempDir, "column_ruler.txt");
+        Files.write(testFile.toPath(), sb.toString().getBytes(StandardCharsets.UTF_8));
+
+        AdvancedTextEditorPanel[] editorHolder = new AdvancedTextEditorPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            editorHolder[0] = new AdvancedTextEditorPanel();
+            assertFalse(editorHolder[0].isShowColumnRuler(), "Column ruler should be disabled by default");
+        });
+        AdvancedTextEditorPanel editor = editorHolder[0];
+
+        editor.loadFile(testFile);
+        waitForUI();
+
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                // Enable Column Ruler
+                editor.setShowColumnRuler(true);
+                assertTrue(editor.isShowColumnRuler(), "Column ruler should be enabled");
+                AdvancedTextEditorPanel.ColumnRulerPanel ruler = editor.getColumnRulerPanel();
+                assertNotNull(ruler, "ColumnRulerPanel must exist");
+
+                javax.swing.JTextArea ta = editor.getTextArea();
+                ta.setSize(2400, 200);
+                ruler.setSize(2400, ruler.getPreferredSize().height);
+
+                // 1. Verify tick X coordinates align with cursor X coordinates for columns 0..50
+                java.awt.font.FontRenderContext frc = ta.getFontMetrics(ta.getFont()).getFontRenderContext();
+                for (int col = 0; col <= 50; col++) {
+                    int expectedCaretX = ta.modelToView2D(col).getBounds().x;
+                    int rulerTickX = ruler.getTickXForColumnOffset(col, frc);
+                    assertEquals(expectedCaretX, rulerTickX,
+                            "Column ruler tick must align vertically with cursor X at column " + col);
+                }
+
+                // 2. Verify every 5th tick is larger than regular ticks and 10th tick is >= 5th tick
+                assertTrue(ruler.getFifthTickHeight() > ruler.getRegularTickHeight(),
+                        "Every 5th column tick must be larger than regular column ticks");
+                assertTrue(ruler.getTenthTickHeight() >= ruler.getFifthTickHeight(),
+                        "Every 10th column tick must be at least as large as 5th column ticks");
+
+                // 3. Verify current cursor column index tracking (0-based and 1-based)
+                ta.setCaretPosition(7);
+                editor.setOneBasedColumnIndex(false);
+                assertEquals(7, ruler.getCurrentCursorDisplayColumn(), "0-based current column should be 7");
+                editor.setOneBasedColumnIndex(true);
+                assertEquals(8, ruler.getCurrentCursorDisplayColumn(), "1-based current column should be 8");
+                editor.setOneBasedColumnIndex(false);
+
+                // 4. Verify painting highlights current cursor column tick with darker/more pronounced color
+                int rulerH = ruler.getPreferredSize().height;
+                java.awt.image.BufferedImage imgAtCol7 = new java.awt.image.BufferedImage(
+                        600, rulerH, java.awt.image.BufferedImage.TYPE_INT_RGB);
+                java.awt.Graphics2D g7 = imgAtCol7.createGraphics();
+                g7.setClip(0, 0, 600, rulerH);
+                ruler.paint(g7);
+                g7.dispose();
+
+                int tick7X = ruler.getTickXForColumnOffset(7, frc);
+                int tick3X = ruler.getTickXForColumnOffset(3, frc);
+                int tickSampleY = rulerH - 3;
+                java.awt.Color activeTickColor = new java.awt.Color(imgAtCol7.getRGB(tick7X, tickSampleY));
+                java.awt.Color normalTickColor = new java.awt.Color(imgAtCol7.getRGB(tick3X, tickSampleY));
+                assertTrue(activeTickColor.getRed() < normalTickColor.getRed(),
+                        "Active cursor column tick must be darker/more pronounced than normal column ticks in Light theme");
+
+                // Disable Column Ruler
+                editor.setShowColumnRuler(false);
+                assertFalse(editor.isShowColumnRuler(), "Column ruler should be disabled after toggling off");
+            } catch (Exception e) {
+                fail(e);
+            }
+        });
+        editor.dispose();
+    }
+
+    @Test
+    void testColumnRulerDynamicLineSpacingWithProportionalFonts() throws Exception {
+        String content = "iiiiilllll.....iiiiilllll\n"
+                + "WWWWWMMMMMWWWWWMMMMMWWWWW\n"
+                + "Mixed proportional line\twith tab and 1234567890\n";
+        File testFile = new File(tempDir, "column_ruler_proportional.txt");
+        Files.write(testFile.toPath(), content.getBytes(StandardCharsets.UTF_8));
+
+        AdvancedTextEditorPanel[] editorHolder = new AdvancedTextEditorPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            editorHolder[0] = new AdvancedTextEditorPanel();
+            editorHolder[0].setFont(new java.awt.Font("SansSerif", java.awt.Font.PLAIN, 16));
+            editorHolder[0].setShowColumnRuler(true);
+        });
+        AdvancedTextEditorPanel editor = editorHolder[0];
+
+        editor.loadFile(testFile);
+        waitForUI();
+
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                javax.swing.JTextArea ta = editor.getTextArea();
+                AdvancedTextEditorPanel.ColumnRulerPanel ruler = editor.getColumnRulerPanel();
+                ta.setSize(2000, 300);
+                ruler.setSize(2000, ruler.getPreferredSize().height);
+                java.awt.font.FontRenderContext frc = ta.getFontMetrics(ta.getFont()).getFontRenderContext();
+
+                // Line 0: narrow characters ("iiiiilllll.....iiiiilllll")
+                int line0Start = ta.getLineStartOffset(0);
+                ta.setCaretPosition(line0Start + 5);
+                int line0Col10X = ruler.getTickXForColumnOffset(10, frc);
+                for (int col = 0; col <= 25; col++) {
+                    int expectedCaretX = ta.modelToView2D(line0Start + col).getBounds().x;
+                    int rulerTickX = ruler.getTickXForColumnOffset(col, frc);
+                    assertEquals(expectedCaretX, rulerTickX,
+                            "Proportional font (line 0): tick X must match cursor X at column " + col);
+                }
+
+                // Line 1: wide characters ("WWWWWMMMMMWWWWWMMMMMWWWWW")
+                int line1Start = ta.getLineStartOffset(1);
+                ta.setCaretPosition(line1Start + 5);
+                int line1Col10X = ruler.getTickXForColumnOffset(10, frc);
+                for (int col = 0; col <= 25; col++) {
+                    int expectedCaretX = ta.modelToView2D(line1Start + col).getBounds().x;
+                    int rulerTickX = ruler.getTickXForColumnOffset(col, frc);
+                    assertEquals(expectedCaretX, rulerTickX,
+                            "Proportional font (line 1): tick X must match cursor X at column " + col);
+                }
+
+                assertTrue(line1Col10X > line0Col10X,
+                        "Column 10 tick on wide-character line ('W'/'M') must be wider than on narrow-character line ('i'/'l')");
+
+                // Line 2: mixed proportional characters with a tab
+                int line2Start = ta.getLineStartOffset(2);
+                ta.setCaretPosition(line2Start + 10);
+                for (int col = 0; col <= 35; col++) {
+                    int expectedCaretX = ta.modelToView2D(line2Start + col).getBounds().x;
+                    int rulerTickX = ruler.getTickXForColumnOffset(col, frc);
+                    assertEquals(expectedCaretX, rulerTickX,
+                            "Proportional font with tab (line 2): tick X must match cursor X at column " + col);
+                }
+            } catch (Exception e) {
+                fail(e);
+            }
+        });
+        editor.dispose();
+    }
 }
