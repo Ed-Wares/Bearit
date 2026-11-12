@@ -2,16 +2,65 @@ package com.edwares;
 
 import javax.swing.*;
 import java.awt.*;
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.InputStreamReader;
 import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.stream.Stream;
 
 public class ContextMenuInstaller {
+
+    private static final String LSREGISTER_PATH =
+            "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+    private static final String PBS_PATH = "/System/Library/CoreServices/pbs";
+    private static final String MAC_WORKFLOW_NAME = "Edit with Bearit.workflow";
+
+    private static final String MAC_DOCUMENT_TYPES_XML =
+            "<array>" +
+            "<dict>" +
+            "<key>CFBundleTypeName</key><string>Text Document</string>" +
+            "<key>CFBundleTypeRole</key><string>Editor</string>" +
+            "<key>LSHandlerRank</key><string>Default</string>" +
+            "<key>CFBundleTypeIconFile</key><string>bearit.icns</string>" +
+            "<key>LSItemContentTypes</key>" +
+            "<array>" +
+            "<string>public.plain-text</string>" +
+            "<string>public.utf8-plain-text</string>" +
+            "<string>public.text</string>" +
+            "<string>public.source-code</string>" +
+            "<string>public.script</string>" +
+            "<string>public.shell-script</string>" +
+            "<string>public.xml</string>" +
+            "<string>public.json</string>" +
+            "<string>public.yaml</string>" +
+            "<string>public.comma-separated-values-text</string>" +
+            "<string>public.log</string>" +
+            "<string>com.apple.log</string>" +
+            "<string>com.apple.property-list</string>" +
+            "</array>" +
+            "</dict>" +
+            "<dict>" +
+            "<key>CFBundleTypeName</key><string>All Files</string>" +
+            "<key>CFBundleTypeRole</key><string>Editor</string>" +
+            "<key>LSHandlerRank</key><string>Alternate</string>" +
+            "<key>CFBundleTypeIconFile</key><string>bearit.icns</string>" +
+            "<key>LSItemContentTypes</key>" +
+            "<array>" +
+            "<string>public.data</string>" +
+            "<string>public.content</string>" +
+            "<string>public.item</string>" +
+            "</array>" +
+            "</dict>" +
+            "</array>";
 
     public static void install(Component parent) {
         String os = System.getProperty("os.name").toLowerCase();
@@ -25,7 +74,8 @@ public class ContextMenuInstaller {
                 String javaPath = System.getProperty("java.home") + File.separator + "bin" + File.separator + "java";
                 installForUbuntu(parent, javaPath, jarPath);
             } else if (os.contains("mac")) {
-                showMacNotice(parent);
+                String javaPath = System.getProperty("java.home") + File.separator + "bin" + File.separator + "java";
+                installForMac(parent, javaPath, jarPath);
             } else {
                 //JOptionPane.showMessageDialog(parent, "Unsupported operating system.", "Install Failed", JOptionPane.ERROR_MESSAGE);
                 DialogUtil.showMessageDialog(parent, "Unsupported operating system.", "Install Failed", JOptionPane.ERROR_MESSAGE);
@@ -47,7 +97,7 @@ public class ContextMenuInstaller {
             } else if (os.contains("nix") || os.contains("nux") || os.contains("aix")) {
                 uninstallForUbuntu(parent);
             } else if (os.contains("mac")) {
-                showMacNotice(parent);
+                uninstallForMac(parent, jarPath);
             } else {
                 //JOptionPane.showMessageDialog(parent, "Unsupported operating system.", "Uninstall Failed", JOptionPane.ERROR_MESSAGE);
                 DialogUtil.showMessageDialog(parent, "Unsupported operating system.", "Uninstall Failed", JOptionPane.ERROR_MESSAGE);
@@ -334,15 +384,484 @@ public class ContextMenuInstaller {
         Files.setPosixFilePermissions(scriptPath, perms);
     }
 
-    // --- macOS Notice ---
+    // --- macOS Implementation ---
 
-    private static void showMacNotice(Component parent) {
-        String message = "macOS restricts automatic context menu modifications for security reasons.\n\n" +
-                         "To add Bearit to your right-click menu, you must either:\n" +
-                         "1. Package Bearit as a native macOS .app bundle using a tool like 'jpackage'.\n" +
-                         "2. Create an Automator 'Quick Action' that passes the file input to your java -jar command.";
-        
-        //JOptionPane.showMessageDialog(parent, message, "macOS Notice", JOptionPane.INFORMATION_MESSAGE);
-        DialogUtil.showMessageDialog(parent, message, "macOS Notice", JOptionPane.INFORMATION_MESSAGE);
+    private static void installForMac(Component parent, String javaPath, String jarPath) throws Exception {
+        File appBundle = findMacAppBundle(jarPath);
+        boolean registeredAppBundle = false;
+        boolean defaultEditorSet = false;
+
+        if (appBundle != null && appBundle.exists()) {
+            String bundleId = extractMacBundleId(appBundle);
+            registeredAppBundle = registerMacAppDocumentTypes(appBundle);
+            defaultEditorSet = DefaultEditorManager.setMacDefault(bundleId);
+        }
+
+        // Install Finder Quick Action (~/Library/Services/Edit with Bearit.workflow)
+        boolean quickActionInstalled = installMacQuickAction(appBundle, javaPath, jarPath);
+
+        StringBuilder msg = new StringBuilder("Context menu installed successfully!\n\n");
+        if (registeredAppBundle) {
+            msg.append("• Control+Click any file in Finder and select 'Open With -> ")
+               .append(appBundle.getName().replace(".app", ""))
+               .append("' to open it in Bearit.\n");
+        }
+        if (quickActionInstalled) {
+            msg.append("• 'Edit with Bearit' is also available under Finder's Control+Click -> Quick Actions menu.\n");
+        }
+        if (defaultEditorSet) {
+            msg.append("• Bearit is now set as your default text editor when double-clicking text files in Finder.");
+        } else if (appBundle == null) {
+            msg.append("\nNote: Install the jpackage-built Bearit.app into /Applications to also register Bearit in 'Open With' and as the default text editor.");
+        }
+
+        DialogUtil.showMessageDialog(parent, msg.toString().trim(), "Success", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private static void uninstallForMac(Component parent, String jarPath) throws Exception {
+        boolean removedAnything = false;
+
+        // 1. Remove the Finder Quick Action workflow
+        String userHome = System.getProperty("user.home");
+        Path workflowPath = Paths.get(userHome, "Library", "Services", MAC_WORKFLOW_NAME);
+        if (Files.exists(workflowPath)) {
+            deleteDirectoryRecursively(workflowPath);
+            removedAnything = true;
+            refreshMacServices();
+        }
+
+        // 2. Remove custom CFBundleDocumentTypes from the app bundle and refresh LaunchServices
+        File appBundle = findMacAppBundle(jarPath);
+        if (appBundle != null && appBundle.exists()) {
+            if (unregisterMacAppDocumentTypes(appBundle)) {
+                removedAnything = true;
+            }
+        }
+
+        // 3. Check if a previous default editor was saved
+        String prevDefault = BearitProperties.getInstance().getProperty("previous_default_editor", "");
+        if (prevDefault != null && !prevDefault.isEmpty()) {
+            removedAnything = true;
+        }
+
+        if (removedAnything) {
+            DialogUtil.showMessageDialog(parent,
+                    "Context menu integrations removed successfully!\n\n" +
+                    "macOS has reverted back to its previous default text editor.",
+                    "Success", JOptionPane.INFORMATION_MESSAGE);
+        } else {
+            DialogUtil.showMessageDialog(parent,
+                    "No context menu integrations were found to remove.",
+                    "Info", JOptionPane.INFORMATION_MESSAGE);
+        }
+    }
+
+    static File findMacAppBundle(String jarPath) {
+        if (jarPath != null) {
+            File current = new File(jarPath).getAbsoluteFile();
+            while (current != null) {
+                if (current.getName().toLowerCase().endsWith(".app")) {
+                    File infoPlist = new File(current, "Contents/Info.plist");
+                    if (infoPlist.exists()) {
+                        return current;
+                    }
+                }
+                current = current.getParentFile();
+            }
+        }
+
+        String userHome = System.getProperty("user.home");
+        File[] candidates = new File[]{
+            new File("/Applications/bearit.app"),
+            new File("/Applications/Bearit.app"),
+            new File(userHome, "Applications/bearit.app"),
+            new File(userHome, "Applications/Bearit.app")
+        };
+
+        for (File candidate : candidates) {
+            if (candidate.exists() && new File(candidate, "Contents/Info.plist").exists()) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    static String extractMacBundleId(File appBundle) {
+        File infoPlist = new File(appBundle, "Contents/Info.plist");
+        if (infoPlist.exists()) {
+            String output = runProcessAndRead("/usr/bin/plutil", "-extract", "CFBundleIdentifier", "raw", "-o", "-", infoPlist.getAbsolutePath());
+            if (output != null && !output.trim().isEmpty()) {
+                return output.trim();
+            }
+        }
+        return DefaultEditorManager.DEFAULT_MAC_BUNDLE_ID;
+    }
+
+    private static boolean registerMacAppDocumentTypes(File appBundle) {
+        File infoPlist = new File(appBundle, "Contents/Info.plist");
+        if (!infoPlist.exists()) {
+            return false;
+        }
+
+        try {
+            // Check if CFBundleDocumentTypes already exists with All Files & Text Document
+            String existingTypes = runProcessAndRead("/usr/bin/plutil", "-extract", "CFBundleDocumentTypes", "xml1", "-o", "-", infoPlist.getAbsolutePath());
+            boolean needsPlistUpdate = existingTypes == null || !existingTypes.contains("public.plain-text") || !existingTypes.contains("public.item");
+
+            if (needsPlistUpdate && infoPlist.canWrite()) {
+                runProcess("/usr/bin/plutil", "-replace", "CFBundleDocumentTypes", "-xml", MAC_DOCUMENT_TYPES_XML, infoPlist.getAbsolutePath());
+                resignMacAppBundleIfAdhoc(appBundle);
+            }
+
+            if (new File(LSREGISTER_PATH).exists()) {
+                runProcess(LSREGISTER_PATH, "-f", appBundle.getAbsolutePath());
+            }
+            return true;
+        } catch (Exception e) {
+            System.err.println("Failed to register macOS app document types: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private static boolean unregisterMacAppDocumentTypes(File appBundle) {
+        File infoPlist = new File(appBundle, "Contents/Info.plist");
+        if (!infoPlist.exists() || !infoPlist.canWrite()) {
+            return false;
+        }
+
+        try {
+            String existingTypes = runProcessAndRead("/usr/bin/plutil", "-extract", "CFBundleDocumentTypes", "xml1", "-o", "-", infoPlist.getAbsolutePath());
+            if (existingTypes != null && existingTypes.contains("<array>")) {
+                runProcess("/usr/bin/plutil", "-remove", "CFBundleDocumentTypes", infoPlist.getAbsolutePath());
+                resignMacAppBundleIfAdhoc(appBundle);
+                if (new File(LSREGISTER_PATH).exists()) {
+                    runProcess(LSREGISTER_PATH, "-f", appBundle.getAbsolutePath());
+                }
+                return true;
+            }
+        } catch (Exception e) {
+            System.err.println("Failed to unregister macOS app document types: " + e.getMessage());
+        }
+        return false;
+    }
+
+    private static void resignMacAppBundleIfAdhoc(File appBundle) {
+        try {
+            String sigInfo = runProcessAndReadStderr("/usr/bin/codesign", "-dv", appBundle.getAbsolutePath());
+            if (sigInfo != null && sigInfo.contains("Signature=adhoc")) {
+                // Unlink and recreate the launcher executable inode before re-signing so an
+                // actively running launcher process never has its mapped Mach-O vnode modified in-place.
+                File macosDir = new File(appBundle, "Contents/MacOS");
+                File[] binaries = macosDir.listFiles();
+                if (binaries != null) {
+                    for (File bin : binaries) {
+                        if (bin.isFile()) {
+                            Path binPath = bin.toPath();
+                            Path tmpPath = macosDir.toPath().resolve(bin.getName() + ".tmp");
+                            Files.copy(binPath, tmpPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
+                            Files.move(tmpPath, binPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                        }
+                    }
+                }
+                runProcess("/usr/bin/codesign", "--force", "--sign", "-", appBundle.getAbsolutePath());
+            }
+        } catch (Exception e) {
+            System.err.println("Failed to re-sign macOS app bundle: " + e.getMessage());
+        }
+    }
+
+    static boolean installMacQuickAction(File appBundle, String javaPath, String jarPath) {
+        try {
+            String userHome = System.getProperty("user.home");
+            Path contentsDir = Paths.get(userHome, "Library", "Services", MAC_WORKFLOW_NAME, "Contents");
+            Files.createDirectories(contentsDir);
+
+            String commandString;
+            if (appBundle != null && appBundle.exists()) {
+                String escapedApp = appBundle.getAbsolutePath().replace("\"", "\\\"");
+                commandString = "for f in \"$@\"; do\n    open -a \"" + escapedApp + "\" \"$f\"\ndone";
+            } else {
+                String escapedJava = javaPath.replace("\"", "\\\"");
+                String escapedJar = jarPath.replace("\"", "\\\"");
+                commandString = "for f in \"$@\"; do\n    \"" + escapedJava + "\" -jar \"" + escapedJar + "\" \"$f\" &\ndone";
+            }
+
+            String infoPlistContent = buildMacWorkflowInfoPlist();
+            String documentWflowContent = buildMacWorkflowDocument(commandString);
+
+            Files.write(contentsDir.resolve("Info.plist"), infoPlistContent.getBytes(StandardCharsets.UTF_8));
+            Files.write(contentsDir.resolve("document.wflow"), documentWflowContent.getBytes(StandardCharsets.UTF_8));
+
+            refreshMacServices();
+            return true;
+        } catch (Exception e) {
+            System.err.println("Failed to install macOS Finder Quick Action: " + e.getMessage());
+            return false;
+        }
+    }
+
+    static String buildMacWorkflowInfoPlist() {
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+               "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n" +
+               "<plist version=\"1.0\">\n" +
+               "<dict>\n" +
+               "\t<key>CFBundleDevelopmentRegion</key>\n" +
+               "\t<string>en_US</string>\n" +
+               "\t<key>CFBundleIdentifier</key>\n" +
+               "\t<string>com.edwares.bearit.QuickAction</string>\n" +
+               "\t<key>CFBundleName</key>\n" +
+               "\t<string>Edit with Bearit</string>\n" +
+               "\t<key>CFBundleShortVersionString</key>\n" +
+               "\t<string>1.0</string>\n" +
+               "\t<key>NSServices</key>\n" +
+               "\t<array>\n" +
+               "\t\t<dict>\n" +
+               "\t\t\t<key>NSMenuItem</key>\n" +
+               "\t\t\t<dict>\n" +
+               "\t\t\t\t<key>default</key>\n" +
+               "\t\t\t\t<string>Edit with Bearit</string>\n" +
+               "\t\t\t</dict>\n" +
+               "\t\t\t<key>NSMessage</key>\n" +
+               "\t\t\t<string>runWorkflowAsService</string>\n" +
+               "\t\t\t<key>NSRequiredContext</key>\n" +
+               "\t\t\t<dict>\n" +
+               "\t\t\t\t<key>NSApplicationIdentifier</key>\n" +
+               "\t\t\t\t<string>com.apple.finder</string>\n" +
+               "\t\t\t</dict>\n" +
+               "\t\t\t<key>NSSendFileTypes</key>\n" +
+               "\t\t\t<array>\n" +
+               "\t\t\t\t<string>public.item</string>\n" +
+               "\t\t\t\t<string>public.data</string>\n" +
+               "\t\t\t\t<string>public.content</string>\n" +
+               "\t\t\t</array>\n" +
+               "\t\t</dict>\n" +
+               "\t</array>\n" +
+               "</dict>\n" +
+               "</plist>\n";
+    }
+
+    static String buildMacWorkflowDocument(String shellCommand) {
+        String escapedCommand = shellCommand
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
+
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+               "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n" +
+               "<plist version=\"1.0\">\n" +
+               "<dict>\n" +
+               "\t<key>AMApplicationBuild</key>\n" +
+               "\t<string>523</string>\n" +
+               "\t<key>AMApplicationVersion</key>\n" +
+               "\t<string>2.10</string>\n" +
+               "\t<key>AMDocumentVersion</key>\n" +
+               "\t<string>2</string>\n" +
+               "\t<key>actions</key>\n" +
+               "\t<array>\n" +
+               "\t\t<dict>\n" +
+               "\t\t\t<key>action</key>\n" +
+               "\t\t\t<dict>\n" +
+               "\t\t\t\t<key>AMAccepts</key>\n" +
+               "\t\t\t\t<dict>\n" +
+               "\t\t\t\t\t<key>Container</key>\n" +
+               "\t\t\t\t\t<string>List</string>\n" +
+               "\t\t\t\t\t<key>Optional</key>\n" +
+               "\t\t\t\t\t<true/>\n" +
+               "\t\t\t\t\t<key>Types</key>\n" +
+               "\t\t\t\t\t<array>\n" +
+               "\t\t\t\t\t\t<string>com.apple.cocoa.string</string>\n" +
+               "\t\t\t\t\t</array>\n" +
+               "\t\t\t\t</dict>\n" +
+               "\t\t\t\t<key>AMActionVersion</key>\n" +
+               "\t\t\t\t<string>2.0.3</string>\n" +
+               "\t\t\t\t<key>AMApplication</key>\n" +
+               "\t\t\t\t<array>\n" +
+               "\t\t\t\t\t<string>Automator</string>\n" +
+               "\t\t\t\t</array>\n" +
+               "\t\t\t\t<key>AMParameterProperties</key>\n" +
+               "\t\t\t\t<dict>\n" +
+               "\t\t\t\t\t<key>COMMAND_STRING</key>\n" +
+               "\t\t\t\t\t<dict/>\n" +
+               "\t\t\t\t\t<key>CheckedForUserDefaultShell</key>\n" +
+               "\t\t\t\t\t<dict/>\n" +
+               "\t\t\t\t\t<key>inputMethod</key>\n" +
+               "\t\t\t\t\t<dict/>\n" +
+               "\t\t\t\t\t<key>shell</key>\n" +
+               "\t\t\t\t\t<dict/>\n" +
+               "\t\t\t\t\t<key>source</key>\n" +
+               "\t\t\t\t\t<dict/>\n" +
+               "\t\t\t\t</dict>\n" +
+               "\t\t\t\t<key>AMProvides</key>\n" +
+               "\t\t\t\t<dict>\n" +
+               "\t\t\t\t\t<key>Container</key>\n" +
+               "\t\t\t\t\t<string>List</string>\n" +
+               "\t\t\t\t\t<key>Types</key>\n" +
+               "\t\t\t\t\t<array>\n" +
+               "\t\t\t\t\t\t<string>com.apple.cocoa.string</string>\n" +
+               "\t\t\t\t\t</array>\n" +
+               "\t\t\t\t</dict>\n" +
+               "\t\t\t\t<key>ActionBundlePath</key>\n" +
+               "\t\t\t\t<string>/System/Library/Automator/Run Shell Script.action</string>\n" +
+               "\t\t\t\t<key>ActionName</key>\n" +
+               "\t\t\t\t<string>Run Shell Script</string>\n" +
+               "\t\t\t\t<key>ActionParameters</key>\n" +
+               "\t\t\t\t<dict>\n" +
+               "\t\t\t\t\t<key>COMMAND_STRING</key>\n" +
+               "\t\t\t\t\t<string>" + escapedCommand + "</string>\n" +
+               "\t\t\t\t\t<key>CheckedForUserDefaultShell</key>\n" +
+               "\t\t\t\t\t<true/>\n" +
+               "\t\t\t\t\t<key>inputMethod</key>\n" +
+               "\t\t\t\t\t<integer>1</integer>\n" +
+               "\t\t\t\t\t<key>shell</key>\n" +
+               "\t\t\t\t\t<string>/bin/sh</string>\n" +
+               "\t\t\t\t\t<key>source</key>\n" +
+               "\t\t\t\t\t<string></string>\n" +
+               "\t\t\t\t</dict>\n" +
+               "\t\t\t\t<key>BundleIdentifier</key>\n" +
+               "\t\t\t\t<string>com.apple.RunShellScript</string>\n" +
+               "\t\t\t\t<key>CFBundleVersion</key>\n" +
+               "\t\t\t\t<string>2.0.3</string>\n" +
+               "\t\t\t\t<key>CanShowSelectedItemsWhenRun</key>\n" +
+               "\t\t\t\t<false/>\n" +
+               "\t\t\t\t<key>CanShowWhenRun</key>\n" +
+               "\t\t\t\t<true/>\n" +
+               "\t\t\t\t<key>Category</key>\n" +
+               "\t\t\t\t<array>\n" +
+               "\t\t\t\t\t<string>AMCategoryUtilities</string>\n" +
+               "\t\t\t\t</array>\n" +
+               "\t\t\t\t<key>Class Name</key>\n" +
+               "\t\t\t\t<string>RunShellScriptAction</string>\n" +
+               "\t\t\t\t<key>InputUUID</key>\n" +
+               "\t\t\t\t<string>A890A485-7D24-4A31-B53E-96B29C3258A0</string>\n" +
+               "\t\t\t\t<key>Keywords</key>\n" +
+               "\t\t\t\t<array>\n" +
+               "\t\t\t\t\t<string>Shell</string>\n" +
+               "\t\t\t\t\t<string>Script</string>\n" +
+               "\t\t\t\t\t<string>Command</string>\n" +
+               "\t\t\t\t\t<string>Run</string>\n" +
+               "\t\t\t\t\t<string>Unix</string>\n" +
+               "\t\t\t\t</array>\n" +
+               "\t\t\t\t<key>OutputUUID</key>\n" +
+               "\t\t\t\t<string>59C9C1F5-89A1-443A-A394-12F66E892D7B</string>\n" +
+               "\t\t\t\t<key>UUID</key>\n" +
+               "\t\t\t\t<string>2F1E0E70-50E3-4E0E-99BA-45DE9813F101</string>\n" +
+               "\t\t\t\t<key>UnlocalizedApplications</key>\n" +
+               "\t\t\t\t<array>\n" +
+               "\t\t\t\t\t<string>Automator</string>\n" +
+               "\t\t\t\t</array>\n" +
+               "\t\t\t</dict>\n" +
+               "\t\t</dict>\n" +
+               "\t</array>\n" +
+               "\t<key>connectors</key>\n" +
+               "\t<dict/>\n" +
+               "\t<key>workflowMetaData</key>\n" +
+               "\t<dict>\n" +
+               "\t\t<key>applicationBundleID</key>\n" +
+               "\t\t<string>com.apple.finder</string>\n" +
+               "\t\t<key>applicationBundleIDsByPath</key>\n" +
+               "\t\t<dict>\n" +
+               "\t\t\t<key>/System/Library/CoreServices/Finder.app</key>\n" +
+               "\t\t\t<string>com.apple.finder</string>\n" +
+               "\t\t</dict>\n" +
+               "\t\t<key>applicationPath</key>\n" +
+               "\t\t<string>/System/Library/CoreServices/Finder.app</string>\n" +
+               "\t\t<key>applicationPaths</key>\n" +
+               "\t\t<array>\n" +
+               "\t\t\t<string>/System/Library/CoreServices/Finder.app</string>\n" +
+               "\t\t</array>\n" +
+               "\t\t<key>inputTypeIdentifier</key>\n" +
+               "\t\t<string>com.apple.Automator.fileSystemObject</string>\n" +
+               "\t\t<key>outputTypeIdentifier</key>\n" +
+               "\t\t<string>com.apple.Automator.nothing</string>\n" +
+               "\t\t<key>presentationMode</key>\n" +
+               "\t\t<integer>15</integer>\n" +
+               "\t\t<key>processesInput</key>\n" +
+               "\t\t<integer>0</integer>\n" +
+               "\t\t<key>serviceApplicationBundleID</key>\n" +
+               "\t\t<string>com.apple.finder</string>\n" +
+               "\t\t<key>serviceApplicationPath</key>\n" +
+               "\t\t<string>/System/Library/CoreServices/Finder.app</string>\n" +
+               "\t\t<key>serviceInputTypeIdentifier</key>\n" +
+               "\t\t<string>com.apple.Automator.fileSystemObject</string>\n" +
+               "\t\t<key>serviceOutputTypeIdentifier</key>\n" +
+               "\t\t<string>com.apple.Automator.nothing</string>\n" +
+               "\t\t<key>serviceProcessesInput</key>\n" +
+               "\t\t<integer>0</integer>\n" +
+               "\t\t<key>systemImageName</key>\n" +
+               "\t\t<string>NSActionTemplate</string>\n" +
+               "\t\t<key>useAutomaticInputType</key>\n" +
+               "\t\t<integer>0</integer>\n" +
+               "\t\t<key>workflowTypeIdentifier</key>\n" +
+               "\t\t<string>com.apple.Automator.servicesMenu</string>\n" +
+               "\t</dict>\n" +
+               "</dict>\n" +
+               "</plist>\n";
+    }
+
+    private static void refreshMacServices() {
+        if (new File(PBS_PATH).exists()) {
+            runProcess(PBS_PATH, "-flush");
+            runProcess(PBS_PATH, "-update");
+        }
+    }
+
+    private static void deleteDirectoryRecursively(Path dir) throws Exception {
+        if (!Files.exists(dir)) return;
+        try (Stream<Path> walk = Files.walk(dir)) {
+            walk.sorted(Comparator.reverseOrder())
+                .forEach(p -> {
+                    try {
+                        Files.deleteIfExists(p);
+                    } catch (Exception ignored) {}
+                });
+        }
+    }
+
+    private static int runProcess(String... command) {
+        try {
+            // nosemgrep: java.lang.security.audit.command-injection-process-builder.command-injection-process-builder
+            Process p = new ProcessBuilder(java.util.Arrays.asList(command)).start();
+            return p.waitFor();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    private static String runProcessAndRead(String... command) {
+        try {
+            // nosemgrep: java.lang.security.audit.command-injection-process-builder.command-injection-process-builder
+            Process p = new ProcessBuilder(java.util.Arrays.asList(command)).start();
+            StringBuilder sb = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    sb.append(line).append("\n");
+                }
+            }
+            int code = p.waitFor();
+            return code == 0 ? sb.toString() : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String runProcessAndReadStderr(String... command) {
+        try {
+            // nosemgrep: java.lang.security.audit.command-injection-process-builder.command-injection-process-builder
+            ProcessBuilder pb = new ProcessBuilder(java.util.Arrays.asList(command));
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            StringBuilder sb = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    sb.append(line).append("\n");
+                }
+            }
+            p.waitFor();
+            return sb.toString();
+        } catch (Exception e) {
+            return null;
+        }
     }
 }
