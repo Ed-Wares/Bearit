@@ -2628,113 +2628,13 @@ public class BearitFrame extends JFrame {
 
     private void showFontPickerDialog() {
         BearitProperties props = BearitProperties.getInstance();
-        String currentName = props.getFontName();
-        int currentSize = props.getFontSize();
-
-        JPanel panel = new JPanel(new BorderLayout(15, 15));
-        panel.setOpaque(false);
-        Font dialogFont = new Font(Font.DIALOG, Font.PLAIN, 14);
-        // Font Family List
-        GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
-        String[] fontNames = ge.getAvailableFontFamilyNames();
-        JList<String> fontList = new JList<>(fontNames);
-        fontList.setFont(dialogFont);
-        fontList.setSelectedValue(currentName, true);
-        
-        // Explicitly forces high-contrast foreground/background colors for both Light and Dark themes
-        boolean isDark = "Dark".equals(props.getTheme());
-        Color selBg = isDark ? new Color(85, 85, 85) : new Color(200, 220, 255); // Nice visible blue highlight for light mode
-        Color selFg = isDark ? Color.WHITE : Color.BLACK;
-        Color normalBg = isDark ? new Color(40, 40, 40) : Color.WHITE;
-        Color normalFg = isDark ? new Color(200, 200, 200) : Color.BLACK;
-        fontList.setCellRenderer(new DefaultListCellRenderer() {
-            @Override
-            public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
-                Component c = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
-                c.setBackground(isSelected ? selBg : normalBg);
-                c.setForeground(isSelected ? selFg : normalFg);
-                return c;
-            }
-        });
-
-        JScrollPane fontScroll = new JScrollPane(fontList);
-        fontScroll.setPreferredSize(new Dimension(270, 200));
-
-        // Font Size Spinner
-        JSpinner sizeSpinner = new JSpinner(new SpinnerNumberModel(currentSize, 6, 80, 1));
-        sizeSpinner.setFont(dialogFont);
-        
-        // Explicitly increase the width of the spinner, and lock its height to 30px
-        sizeSpinner.setPreferredSize(new Dimension(80, 30));
-
-        // --- Editable Preview Section ---
-        JPanel previewPanel = new JPanel(new BorderLayout(3,3));
-        previewPanel.setOpaque(false);
-        
-        JLabel previewLabel = new JLabel("Preview:");
-        previewLabel.setFont(dialogFont);
-        
-        JTextField previewField = new JTextField("The quick brown fox jumps over the lazy dog");
-        previewField.setHorizontalAlignment(JTextField.CENTER);
-        previewField.setFont(new Font(currentName, Font.PLAIN, currentSize));
-        // Give the preview a fixed height so the dialog doesn't bounce around as font sizes change
-        previewField.setPreferredSize(new Dimension(300, 80)); 
-        JPanel spacePreview = new JPanel();
-        spacePreview.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 25));
-        JPanel spacePreview2 = new JPanel();
-        spacePreview2.setPreferredSize(new Dimension(1, 10));
-        //spacePreview2.setBorder(BorderFactory.createEmptyBorder(0, 0, 1, 0));
-
-        previewPanel.add(previewLabel, BorderLayout.NORTH);
-        previewPanel.add(previewField, BorderLayout.CENTER);
-        previewPanel.add(spacePreview, BorderLayout.EAST);
-        previewPanel.add(spacePreview2, BorderLayout.SOUTH);
-
-        // Listeners to update the editable preview in real-time
-        fontList.addListSelectionListener(e -> {
-            if (!e.getValueIsAdjusting() && fontList.getSelectedValue() != null) {
-                previewField.setFont(new Font(fontList.getSelectedValue(), Font.PLAIN, (Integer) sizeSpinner.getValue()));
-            }
-        });
-        sizeSpinner.addChangeListener(e -> {
-            if (fontList.getSelectedValue() != null) {
-                previewField.setFont(new Font(fontList.getSelectedValue(), Font.PLAIN, (Integer) sizeSpinner.getValue()));
-            }
-        });
-
-        // --- Layout Assembly ---
-        JPanel topPanel = new JPanel(new BorderLayout(15, 15));
-        TitledBorder border = BorderFactory.createTitledBorder("Font Selection:");
-        border.setTitleFont(dialogFont);
-        topPanel.setBorder(border);
-        topPanel.setOpaque(false);
-        topPanel.add(fontScroll, BorderLayout.CENTER);
-
-        // Build the components for the right side
-        JPanel rightPanel = new JPanel(new BorderLayout(5, 5));
-        rightPanel.setOpaque(false);
-        rightPanel.add(new JLabel("Size:"), BorderLayout.WEST);
-        rightPanel.add(sizeSpinner, BorderLayout.CENTER);
-        
-        // The Anchor Wrapper
-        // By putting 'rightPanel' in the NORTH slot of a new wrapper, 
-        // it refuses to stretch vertically, absorbing the leftover space cleanly!
-        JPanel rightWrapper = new JPanel(new BorderLayout());
-        rightWrapper.setOpaque(false);
-        rightWrapper.add(rightPanel, BorderLayout.NORTH);
-
-        topPanel.add(rightWrapper, BorderLayout.EAST);
-        panel.add(topPanel, BorderLayout.CENTER);
-        JPanel spacePanel = new JPanel();
-        spacePanel.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 25));
-        panel.add(spacePanel, BorderLayout.EAST);
-        
-        // Add the new Preview Panel to the bottom
-        panel.add(previewPanel, BorderLayout.SOUTH);
-
-        int result = DialogUtil.showConfirmDialog(this, panel, "Choose Font", JOptionPane.OK_CANCEL_OPTION);
-        if (result == JOptionPane.OK_OPTION && fontList.getSelectedValue() != null) {
-            updateGlobalFont(fontList.getSelectedValue(), (Integer) sizeSpinner.getValue());
-        }
+        FontPickerDialog dialog = new FontPickerDialog(
+                this,
+                props.getFontName(),
+                props.getFontSize(),
+                props.getTheme(),
+                this::updateGlobalFont
+        );
+        dialog.setVisible(true);
     }
 }
