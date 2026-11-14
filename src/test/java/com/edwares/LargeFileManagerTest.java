@@ -324,4 +324,100 @@ public class LargeFileManagerTest {
             LargeFileManager.CHUNK_SIZE = originalChunkSize;
         }
     }
+
+    @Test
+    void testBridgedLineDisplaysCompleteLineAtChunkEndAndBeginningWithoutDuplicationOnSave(@TempDir Path tempDir)
+            throws Exception {
+        int originalChunkSize = LargeFileManager.CHUNK_SIZE;
+        LargeFileManager.CHUNK_SIZE = 600 * 1024;
+        try {
+            final int lineLen = 111;
+            // Build a 2-chunk file with no line endings where each logical "line" is 111 characters long,
+            // and the unaligned hard cut (CHUNK_SIZE + 500 KB = 1,126,400) would split line 10148 at column 83.
+            int totalRecords = 11_000;
+            StringBuilder sb = new StringBuilder(totalRecords * lineLen);
+            for (int i = 1; i <= totalRecords; i++) {
+                String rec = String.format(
+                        "Bearit Test String. Line padding block designed to generate volume safely and efficiently. %-20d",
+                        i);
+                assertEquals(lineLen, rec.length());
+                sb.append(rec);
+            }
+            String originalContent = sb.toString();
+
+            File testFile = tempDir.resolve("nolines_111.txt").toFile();
+            Files.writeString(testFile.toPath(), originalContent);
+
+            AdvancedTextEditorPanel[] panelHolder = new AdvancedTextEditorPanel[1];
+            javax.swing.SwingUtilities.invokeAndWait(() -> {
+                AdvancedTextEditorPanel panel = new AdvancedTextEditorPanel();
+                panel.setEditorMaxLineLength(lineLen);
+                panel.loadFile(testFile);
+                panelHolder[0] = panel;
+            });
+            AdvancedTextEditorPanel panel = panelHolder[0];
+
+            // Verify chunk 0 ends with a complete 111-char line (record 10148)
+            final String[] chunk0LastLine = new String[1];
+            final String[] chunk0FirstLine = new String[1];
+            javax.swing.SwingUtilities.invokeAndWait(() -> {
+                String[] lines0 = panel.getTextArea().getText().split("\u200B\n", -1);
+                chunk0FirstLine[0] = lines0[0];
+                chunk0LastLine[0] = lines0[lines0.length - 1];
+                assertEquals(lineLen, chunk0FirstLine[0].length(),
+                        "Beginning of chunk 0 must be a complete 111-character line");
+                assertEquals(lineLen, chunk0LastLine[0].length(),
+                        "Ending of chunk 0 must be a complete 111-character line (not cut off mid-line)");
+                assertTrue(chunk0LastLine[0].startsWith("Bearit Test String.")
+                        && chunk0LastLine[0].contains("and efficiently. 10148"),
+                        "Ending of chunk 0 must contain the complete record 10148");
+            });
+
+            // Navigate to chunk 1 and verify its beginning is the next complete 111-char line (record 10149)
+            // with no duplicate of record 10148
+            javax.swing.SwingUtilities.invokeAndWait(() -> panel.triggerAsyncLoad(1, 1, -1, false, null));
+            long deadline = System.currentTimeMillis() + 10_000;
+            while (System.currentTimeMillis() < deadline) {
+                if (panel.getLoadedChunkIndex() == 1 && panel.getTextArea().isEnabled()) {
+                    break;
+                }
+                Thread.sleep(20);
+            }
+
+            javax.swing.SwingUtilities.invokeAndWait(() -> {
+                assertEquals(1, panel.getLoadedChunkIndex());
+                String[] lines1 = panel.getTextArea().getText().split("\u200B\n", -1);
+                String chunk1FirstLine = lines1[0];
+                String chunk1LastLine = lines1[lines1.length - 1];
+                assertEquals(lineLen, chunk1FirstLine.length(),
+                        "Beginning of chunk 1 must be a complete 111-character line");
+                assertEquals(lineLen, chunk1LastLine.length(),
+                        "Ending of chunk 1 must be a complete 111-character line");
+                assertTrue(chunk1FirstLine.startsWith("Bearit Test String.")
+                        && chunk1FirstLine.contains("and efficiently. 10149"),
+                        "Beginning of chunk 1 must start with complete record 10149 without duplicating 10148");
+                assertNotEquals(chunk0LastLine[0], chunk1FirstLine,
+                        "The boundary line must not be duplicated between chunk 0 and chunk 1");
+            });
+
+            // Edit chunk 1 and save; verify no duplicate lines or corrupted bytes on disk
+            javax.swing.SwingUtilities.invokeAndWait(() -> {
+                panel.getTextArea().replaceRange("BEARIT", 0, 6);
+                assertTrue(panel.saveSynchronously(), "Save must succeed");
+            });
+
+            String savedContent = Files.readString(testFile.toPath());
+            assertEquals(originalContent.length(), savedContent.length(),
+                    "Saved file length must exactly match original file length without duplicated boundary characters");
+            int seamOffset = 10148 * lineLen;
+            String expectedSaved = originalContent.substring(0, seamOffset)
+                    + "BEARIT" + originalContent.substring(seamOffset + 6);
+            assertEquals(expectedSaved, savedContent,
+                    "Saved file content must match the exact edit with zero boundary duplication");
+
+            panel.getFileManager().stopIndexer();
+        } finally {
+            LargeFileManager.CHUNK_SIZE = originalChunkSize;
+        }
+    }
 }

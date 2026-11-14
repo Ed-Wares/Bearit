@@ -1134,12 +1134,45 @@ public class AdvancedTextEditorPanel extends JPanel {
     public void setEditorMaxLineLength(int maxLineLength) {
         int clamped = BearitProperties.clampMaxLineLength(maxLineLength);
         if (clamped == this.editorMaxLineLength) {
+            fileManager.setMaxLineLength(clamped, hasUnsavedChanges());
             return;
         }
         this.editorMaxLineLength = clamped;
         // Every cached chunk document was wrapped with the old length; rebuild them on demand
         documentCache.clear();
-        rewrapCurrentDocument();
+        if (activeFile != null && activeFile.exists() && !hasUnsavedChanges() && !isBinaryMode()
+                && fileManager.getTotalChunks() > 1) {
+            long[] oldBounds = null;
+            try {
+                oldBounds = fileManager.getChunkBoundaries(loadedChunkIndex);
+            } catch (Exception ignored) {
+            }
+            if (deferredIndexerTimer != null && deferredIndexerTimer.isRunning()) {
+                deferredIndexerTimer.stop();
+            }
+            fileManager.setMaxLineLength(clamped, false);
+            long[] newBounds = null;
+            try {
+                newBounds = fileManager.getChunkBoundaries(loadedChunkIndex);
+            } catch (Exception ignored) {
+            }
+            rewrapCurrentDocument();
+            if (oldBounds != null && newBounds != null
+                    && (oldBounds[0] != newBounds[0] || oldBounds[1] != newBounds[1])) {
+                int currentChunk = loadedChunkIndex;
+                JScrollBar localBar = scrollPane.getVerticalScrollBar();
+                double localMax = localBar.getMaximum() - localBar.getVisibleAmount();
+                double localPercent = localMax <= 0 ? 0.0 : (localBar.getValue() / localMax);
+                loadedChunkIndex = -1;
+                isDirty = false;
+                triggerAsyncLoad(currentChunk, 0, localPercent, false, this::restartBackgroundIndexer);
+            } else {
+                restartBackgroundIndexer();
+            }
+        } else {
+            fileManager.setMaxLineLength(clamped, hasUnsavedChanges());
+            rewrapCurrentDocument();
+        }
     }
 
     /**
@@ -2587,6 +2620,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         fileManager.stopIndexer();
 
         this.activeFile = file;
+        fileManager.setMaxLineLength(editorMaxLineLength, false);
         fileManager.setFile(file);
         this.lastKnownModifiedTime = file.lastModified();
         lblIndexingStatus.setText("⚙ Indexing lines: 0%");

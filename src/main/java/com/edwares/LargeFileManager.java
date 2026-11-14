@@ -29,6 +29,29 @@ public class LargeFileManager {
     private boolean isBinaryMode = false;
     private String detectedEncoding = "UTF-8";
     private String detectedLineEndings = "N/A";
+    private int maxLineLength = BearitProperties.DEFAULT_MAX_LINE_LENGTH;
+    private int boundaryMaxLineLength = BearitProperties.DEFAULT_MAX_LINE_LENGTH;
+
+    public int getMaxLineLength() {
+        return maxLineLength;
+    }
+
+    public void setMaxLineLength(int maxLineLength) {
+        setMaxLineLength(maxLineLength, false);
+    }
+
+    public void setMaxLineLength(int maxLineLength, boolean hasUnsavedEditorChanges) {
+        int clamped = BearitProperties.clampMaxLineLength(maxLineLength);
+        this.maxLineLength = clamped;
+        if (dirtyChunks.isEmpty() && !hasUnsavedEditorChanges) {
+            if (this.boundaryMaxLineLength != clamped) {
+                this.boundaryMaxLineLength = clamped;
+                stopIndexer();
+                preloadCache.clear();
+                clearIndexCaches();
+            }
+        }
+    }
 
     public void setDetectedEncodingAndCharset(String enc, Charset charset) {
         this.detectedEncoding = enc;
@@ -1153,20 +1176,7 @@ public class LargeFileManager {
                 long[] cachedBounds = boundaryCache.get(index);
                 absoluteStartOffset = (cachedBounds != null) ? cachedBounds[0] : ((long) index * CHUNK_SIZE);
             } else {
-                long[] boundaries;
-                if (isPreview) {
-                    long[] cachedBounds = boundaryCache.get(index);
-                    if (cachedBounds != null) {
-                        boundaries = cachedBounds;
-                    } else {
-                        long fileLen = currentFile.length();
-                        long approxStart = Math.min((long) index * CHUNK_SIZE, fileLen);
-                        long approxEnd = Math.min(approxStart + CHUNK_SIZE, fileLen);
-                        boundaries = new long[]{approxStart, approxEnd};
-                    }
-                } else {
-                    boundaries = getChunkBoundaries(index);
-                }
+                long[] boundaries = getChunkBoundaries(index);
                 absoluteStartOffset = boundaries[0]; 
                 long bytesToRead = boundaries[1] - boundaries[0];
 
@@ -1207,66 +1217,295 @@ public class LargeFileManager {
     }
 
     // --- Ultra-fast buffered scanner to eliminate byte-by-byte IO overhead ---
-    private long fastFindNewline(java.io.RandomAccessFile raf, long start, long limit) throws IOException {
+    // Scans [start, limit) for '\n'. Returns {1, newlineEndByteOffset, 0, 0} if a newline is found,
+    // or {0, currentOffset, displayedCharCount, allSingleByteAscii ? 1 : 0} if the hard-cut limit is reached.
+    private long[] scanForNewlineOrCountChars(java.io.RandomAccessFile raf, long start, long limit, boolean utf8)
+            throws IOException {
         raf.seek(start);
         byte[] buf = new byte[16384]; // 16KB Buffer
         long current = start;
+        long chars = 0;
+        boolean allSingleByte = true;
         while (current < limit) {
             if (Thread.currentThread().isInterrupted()) break;
             int toRead = (int) Math.min(buf.length, limit - current);
             int read = raf.read(buf, 0, toRead);
             if (read == -1) break;
             for (int i = 0; i < read; i++) {
-                if (buf[i] == '\n') return current + i + 1;
+                byte b = buf[i];
+                if (b == '\n') {
+                    return new long[]{1, current + i + 1, 0, 0};
+                }
+                int w = displayedCharWeight(b, utf8);
+                chars += w;
+                if (w != 1) {
+                    allSingleByte = false;
+                }
             }
             current += read;
         }
-        return current; // If no newline is found, execute the hard-cut Failsafe
+        return new long[]{0, current, chars, allSingleByte ? 1 : 0};
+    }
+
+    /**
+     * Resolves the byte offset of seam {@code seamIndex} (the boundary between chunk {@code seamIndex - 1}
+     * and chunk {@code seamIndex}). When a newline is found within the 500 KB scan window, cuts immediately
+     * after the newline. When no newline is found (e.g. files without line endings or lines exceeding 500 KB),
+     * aligns the hard cut to the end of the current soft-wrapped {@code boundaryMaxLineLength} "line" so both
+     * the ending of chunk {@code seamIndex - 1} and the beginning of chunk {@code seamIndex} display complete
+     * lines without duplicating characters across chunks.
+     */
+    private long resolveSeamBoundary(java.io.RandomAccessFile raf, int seamIndex, long fileLen) throws IOException {
+        long nominal = (long) seamIndex * CHUNK_SIZE;
+        if (nominal <= 0) return 0;
+        if (nominal >= fileLen) return fileLen;
+
+        final long MAX_SCAN_DISTANCE = 500 * 1024; // 500 KB Failsafe
+        long scanLimit = Math.min(nominal + MAX_SCAN_DISTANCE, fileLen);
+        Charset cs = getActiveCharset();
+        boolean utf8 = isUtf8(cs);
+
+        long[] scan = scanForNewlineOrCountChars(raf, nominal, scanLimit, utf8);
+        if (scan[0] == 1) {
+            long nlAfter = scan[1];
+            if (dirtyChunks.isEmpty()) {
+                chunkStartColumnCache.put(seamIndex, 0L);
+            }
+            return nlAfter;
+        }
+
+        long cutPos = scan[1];
+        if (cutPos >= fileLen) return fileLen;
+
+        int wrapLen = this.boundaryMaxLineLength;
+        if (wrapLen <= 1 || wrapLen > CHUNK_SIZE || !isAsciiCompatible(cs)) {
+            return cutPos;
+        }
+
+        long charsInForwardScan = scan[2];
+        boolean allSingleByteForward = (scan[3] == 1);
+
+        // If cutPos landed on a UTF-8 continuation byte, advance to the end of that multi-byte character
+        if (utf8) {
+            raf.seek(cutPos);
+            int maxPeek = (int) Math.min(4, fileLen - cutPos);
+            byte[] peek = new byte[maxPeek];
+            int peekRead = raf.read(peek, 0, maxPeek);
+            int p = 0;
+            while (p < peekRead && (peek[p] & 0xC0) == 0x80) {
+                p++;
+            }
+            cutPos += p;
+            if (cutPos >= fileLen) return fileLen;
+        }
+
+        long colAtCutPos = computeColumnBeforeNominal(raf, seamIndex, nominal, utf8, allSingleByteForward)
+                + charsInForwardScan;
+        int rem = (int) (colAtCutPos % wrapLen);
+        if (rem == 0) {
+            if (dirtyChunks.isEmpty()) {
+                chunkStartColumnCache.put(seamIndex, colAtCutPos);
+            }
+            return cutPos;
+        }
+
+        int need = wrapLen - rem;
+        int maxBytes = (int) Math.min(fileLen - cutPos, (long) need * 4L + 16L);
+        byte[] tailBuf = new byte[maxBytes];
+        raf.seek(cutPos);
+        int tailRead = raf.read(tailBuf, 0, maxBytes);
+        if (tailRead <= 0) {
+            return cutPos;
+        }
+
+        int charsAdded = 0;
+        int i = 0;
+        while (i < tailRead) {
+            byte b = tailBuf[i];
+            if (b == '\n') {
+                if (dirtyChunks.isEmpty()) {
+                    chunkStartColumnCache.put(seamIndex, 0L);
+                }
+                return cutPos + i + 1;
+            }
+            int w = displayedCharWeight(b, utf8);
+            if (charsAdded + w > need) {
+                break;
+            }
+            charsAdded += w;
+            i++;
+            if (charsAdded >= need) {
+                if (utf8) {
+                    while (i < tailRead && (tailBuf[i] & 0xC0) == 0x80) {
+                        i++;
+                    }
+                }
+                break;
+            }
+        }
+
+        long alignedPos = cutPos + i;
+        if (charsAdded >= need && alignedPos < fileLen) {
+            if (dirtyChunks.isEmpty()) {
+                chunkStartColumnCache.put(seamIndex, colAtCutPos + charsAdded);
+            }
+            return alignedPos;
+        }
+        return cutPos;
+    }
+
+    private long computeColumnBeforeNominal(java.io.RandomAccessFile raf, int seamIndex, long nominal,
+            boolean utf8, boolean allSingleByteForward) throws IOException {
+        if (nominal <= 0) return 0;
+        final long MAX_BACK_WINDOW = 500 * 1024;
+        long windowStart = Math.max(0, nominal - MAX_BACK_WINDOW);
+        byte[] buf = new byte[65536];
+        long pos = nominal;
+        long chars = 0;
+        boolean allSingleByteBackward = true;
+
+        while (pos > windowStart) {
+            if (Thread.currentThread().isInterrupted()) break;
+            int len = (int) Math.min(buf.length, pos - windowStart);
+            pos -= len;
+            raf.seek(pos);
+            raf.readFully(buf, 0, len);
+            for (int i = len - 1; i >= 0; i--) {
+                byte b = buf[i];
+                if (b == '\n') {
+                    return chars;
+                }
+                int w = displayedCharWeight(b, utf8);
+                chars += w;
+                if (w != 1) {
+                    allSingleByteBackward = false;
+                }
+            }
+        }
+
+        if (windowStart == 0) {
+            if (utf8 && hasFileUtf8Bom(raf)) {
+                chars--;
+            }
+            return Math.max(0, chars);
+        }
+
+        // Fast O(1) path for files without line endings where characters map 1-to-1 with bytes
+        if ("N/A".equals(detectedLineEndings) && allSingleByteForward && allSingleByteBackward) {
+            long bomBytes = (utf8 && hasFileUtf8Bom(raf)) ? 3L : 0L;
+            return Math.max(0, nominal - bomBytes);
+        }
+
+        long[] prevBounds = (seamIndex > 0 && dirtyChunks.isEmpty()) ? boundaryCache.get(seamIndex - 1) : null;
+        Long prevStartCol = (seamIndex > 0 && dirtyChunks.isEmpty()) ? chunkStartColumnCache.get(seamIndex - 1) : null;
+        long stopAt = (prevBounds != null && prevStartCol != null && prevBounds[0] <= pos) ? prevBounds[0] : 0L;
+
+        byte[] largeBuf = new byte[256 * 1024];
+        while (pos > stopAt) {
+            if (Thread.currentThread().isInterrupted()) break;
+            int len = (int) Math.min(largeBuf.length, pos - stopAt);
+            pos -= len;
+            raf.seek(pos);
+            raf.readFully(largeBuf, 0, len);
+            for (int i = len - 1; i >= 0; i--) {
+                byte b = largeBuf[i];
+                if (b == '\n') {
+                    return chars;
+                }
+                chars += displayedCharWeight(b, utf8);
+            }
+        }
+
+        if (stopAt > 0 && prevStartCol != null) {
+            return prevStartCol + chars;
+        }
+        if (utf8 && hasFileUtf8Bom(raf)) {
+            chars--;
+        }
+        return Math.max(0, chars);
+    }
+
+    private boolean hasFileUtf8Bom(java.io.RandomAccessFile raf) throws IOException {
+        if ("UTF-8 BOM".equals(detectedEncoding)) return true;
+        if (raf.length() < 3) return false;
+        byte[] head = new byte[3];
+        raf.seek(0);
+        int n = raf.read(head, 0, 3);
+        return hasUtf8Bom(head, n);
     }
 
     public long[] getChunkBoundaries(int index) throws IOException {
         return getChunkBoundaries(index, null);
     }
 
-    // Optimization: Accepts an optional open RandomAccessFile handle and reuses the previous
-    // chunk's end boundary (prevBounds[1]) as the current chunk's start offset, eliminating
-    // redundant file opens and duplicate 500 KB boundary scans during sequential indexing.
+    // Optimization: Accepts an optional open RandomAccessFile handle and reuses adjacent
+    // cached seam boundaries so chunk boundaries always form a contiguous non-overlapping partition.
     private long[] getChunkBoundaries(int index, java.io.RandomAccessFile existingRaf) throws IOException {
+        if (index < 0) return new long[]{0, 0};
         long[] cached = boundaryCache.get(index);
         if (cached != null) return cached;
         if (currentFile == null) return new long[]{0, 0};
 
         long fileLen = currentFile.length();
-        long start = (long) index * CHUNK_SIZE; 
-        long end = Math.min(start + CHUNK_SIZE, fileLen);
+        if (fileLen <= 0) {
+            long[] empty = new long[]{0, 0};
+            boundaryCache.put(index, empty);
+            return empty;
+        }
 
-        // ONLY scan for newlines if we are in Text Mode
-        if (!isBinaryMode) {
-            final long MAX_SCAN_DISTANCE = 500 * 1024; // 500 KB Failsafe
-            long[] prevBounds = (index > 0) ? boundaryCache.get(index - 1) : null;
-            if (existingRaf != null) {
-                if (prevBounds != null) {
-                    start = prevBounds[1];
-                } else if (start > 0 && start < fileLen) {
-                    start = fastFindNewline(existingRaf, start, Math.min(start + MAX_SCAN_DISTANCE, fileLen));
-                }
-                if (end < fileLen) {
-                    end = fastFindNewline(existingRaf, end, Math.min(end + MAX_SCAN_DISTANCE, fileLen));
-                }
+        if (isBinaryMode) {
+            long start = Math.min((long) index * CHUNK_SIZE, fileLen);
+            long end = Math.min(start + CHUNK_SIZE, fileLen);
+            long[] bounds = new long[]{start, end};
+            boundaryCache.put(index, bounds);
+            return bounds;
+        }
+
+        long start;
+        long end;
+        long[] prevBounds = (index > 0) ? boundaryCache.get(index - 1) : null;
+        long[] nextBounds = boundaryCache.get(index + 1);
+        int total = getTotalChunks();
+
+        if (existingRaf != null) {
+            if (index == 0) {
+                start = 0;
+            } else if (prevBounds != null) {
+                start = prevBounds[1];
             } else {
-                try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(currentFile, "r")) {
-                    if (prevBounds != null) {
-                        start = prevBounds[1];
-                    } else if (start > 0 && start < fileLen) {
-                        start = fastFindNewline(raf, start, Math.min(start + MAX_SCAN_DISTANCE, fileLen));
-                    }
-                    if (end < fileLen) {
-                        end = fastFindNewline(raf, end, Math.min(end + MAX_SCAN_DISTANCE, fileLen));
-                    }
+                start = resolveSeamBoundary(existingRaf, index, fileLen);
+            }
+
+            if (index >= total - 1 || (long) (index + 1) * CHUNK_SIZE >= fileLen) {
+                end = fileLen;
+            } else if (nextBounds != null) {
+                end = nextBounds[0];
+            } else {
+                end = resolveSeamBoundary(existingRaf, index + 1, fileLen);
+            }
+        } else {
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(currentFile, "r")) {
+                if (index == 0) {
+                    start = 0;
+                } else if (prevBounds != null) {
+                    start = prevBounds[1];
+                } else {
+                    start = resolveSeamBoundary(raf, index, fileLen);
+                }
+
+                if (index >= total - 1 || (long) (index + 1) * CHUNK_SIZE >= fileLen) {
+                    end = fileLen;
+                } else if (nextBounds != null) {
+                    end = nextBounds[0];
+                } else {
+                    end = resolveSeamBoundary(raf, index + 1, fileLen);
                 }
             }
         }
-        
+
+        if (end < start) {
+            end = start;
+        }
         long[] bounds = new long[]{start, end};
         boundaryCache.put(index, bounds);
         return bounds;
@@ -1561,6 +1800,7 @@ public class LargeFileManager {
     private void clearDirtyChunks() {
         dirtyChunks.values().forEach(File::delete);
         dirtyChunks.clear();
+        this.boundaryMaxLineLength = this.maxLineLength;
     }
 
     public void exportUnsavedContent(String currentText, File destFile) throws IOException {
