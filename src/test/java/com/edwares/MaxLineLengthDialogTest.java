@@ -183,5 +183,134 @@ public class MaxLineLengthDialogTest {
             assertEquals(0, panel.getLineColumnShift(0), "Chunks starting on a new line have no shift");
         });
     }
+
+    @Test
+    void testMaxLineLengthMenuLabelFormatting() {
+        assertEquals("Set Max Line Length (15,000)...", BearitFrame.formatMaxLineLengthMenuText(15000));
+        assertEquals("Set Max Line Length (111)...", BearitFrame.formatMaxLineLengthMenuText(111));
+        assertEquals("Set Max Line Length (15,001)...", BearitFrame.formatMaxLineLengthMenuText(15001));
+        assertEquals("Set Max Line Length (1)...", BearitFrame.formatMaxLineLengthMenuText(0));
+    }
+
+    @Test
+    void testLineStatusLabelDisplaysTotalLinesInNoNewlineMultiChunkFileWhenMaxLineLengthSet(@TempDir Path tempDir)
+            throws Exception {
+        int originalChunkSize = LargeFileManager.CHUNK_SIZE;
+        LargeFileManager.CHUNK_SIZE = 600 * 1024;
+        try {
+            final int lineLen = 111;
+            final int totalRecords = 11_000;
+            StringBuilder sb = new StringBuilder(totalRecords * lineLen);
+            for (int i = 1; i <= totalRecords; i++) {
+                String rec = String.format(
+                        "Bearit Test String. Line padding block designed to generate volume safely and efficiently. %-20d",
+                        i);
+                assertEquals(lineLen, rec.length());
+                sb.append(rec);
+            }
+            File testFile = tempDir.resolve("nolines_status_111.txt").toFile();
+            Files.writeString(testFile.toPath(), sb.toString(), StandardCharsets.UTF_8);
+
+            AdvancedTextEditorPanel[] panelHolder = new AdvancedTextEditorPanel[1];
+            SwingUtilities.invokeAndWait(() -> {
+                AdvancedTextEditorPanel panel = new AdvancedTextEditorPanel();
+                panel.setEditorMaxLineLength(15000);
+                panel.loadFile(testFile);
+                panelHolder[0] = panel;
+            });
+            AdvancedTextEditorPanel panel = panelHolder[0];
+
+            // Scenario: Scroll to the last chunk (chunk 1) and place caret at the end of the file first,
+            // then set max line length to 111.
+            SwingUtilities.invokeAndWait(() -> panel.triggerAsyncLoad(1, -1, -1, false, null));
+            long deadline = System.currentTimeMillis() + 10_000;
+            while (System.currentTimeMillis() < deadline) {
+                if (panel.getLoadedChunkIndex() == 1 && panel.getTextArea().isEnabled()) {
+                    break;
+                }
+                Thread.sleep(20);
+            }
+
+            SwingUtilities.invokeAndWait(() -> {
+                panel.getTextArea().setCaretPosition(panel.getTextArea().getDocument().getLength());
+                panel.setEditorMaxLineLength(lineLen);
+            });
+
+            // Wait for any boundary-alignment chunk reload and background indexer to finish
+            deadline = System.currentTimeMillis() + 10_000;
+            while (System.currentTimeMillis() < deadline) {
+                if (panel.getLoadedChunkIndex() == 1 && panel.getTextArea().isEnabled()
+                        && panel.getFileManager().getExactLineOffset(1) == 10149L) {
+                    break;
+                }
+                Thread.sleep(20);
+            }
+
+            SwingUtilities.invokeAndWait(() -> {
+                panel.getTextArea().setCaretPosition(panel.getTextArea().getDocument().getLength());
+                assertEquals(10149L, panel.getFileManager().getExactLineOffset(1),
+                        "Chunk 1 must start at soft-wrapped line 10149 (after 10148 lines in chunk 0)");
+                assertTrue(panel.getCursorInfoText().startsWith("| Line: " + totalRecords + " |"),
+                        "Bottom line status label at end of file must show total lines (" + totalRecords
+                                + "), not local chunk lines, but was: " + panel.getCursorInfoText());
+            });
+
+            panel.getFileManager().stopIndexer();
+        } finally {
+            LargeFileManager.CHUNK_SIZE = originalChunkSize;
+        }
+    }
+
+    @Test
+    void testLineStatusLabelPreservesNewlineLineCountWhenLinesBelowMaxLineLength(@TempDir Path tempDir)
+            throws Exception {
+        int originalChunkSize = LargeFileManager.CHUNK_SIZE;
+        LargeFileManager.CHUNK_SIZE = 100 * 1024;
+        try {
+            final int totalLines = 2500;
+            StringBuilder sb = new StringBuilder();
+            for (int i = 1; i <= totalLines; i++) {
+                sb.append(String.format("Standard newline-delimited record number %06d with normal length.%n", i));
+            }
+            File testFile = tempDir.resolve("newlines_status.txt").toFile();
+            Files.writeString(testFile.toPath(), sb.toString(), StandardCharsets.UTF_8);
+
+            AdvancedTextEditorPanel[] panelHolder = new AdvancedTextEditorPanel[1];
+            SwingUtilities.invokeAndWait(() -> {
+                AdvancedTextEditorPanel panel = new AdvancedTextEditorPanel();
+                panel.setEditorMaxLineLength(15000);
+                panel.loadFile(testFile);
+                panelHolder[0] = panel;
+            });
+            AdvancedTextEditorPanel panel = panelHolder[0];
+
+            int lastChunk = panel.getFileManager().getTotalChunks() - 1;
+            assertTrue(lastChunk >= 1, "Test file should span multiple chunks");
+
+            SwingUtilities.invokeAndWait(() -> panel.triggerAsyncLoad(lastChunk, -1, -1, false, null));
+            long deadline = System.currentTimeMillis() + 10_000;
+            while (System.currentTimeMillis() < deadline) {
+                if (panel.getLoadedChunkIndex() == lastChunk && panel.getTextArea().isEnabled()
+                        && panel.getFileManager().getExactLineOffset(lastChunk) > 1) {
+                    break;
+                }
+                Thread.sleep(20);
+            }
+
+            SwingUtilities.invokeAndWait(() -> {
+                // Place caret on the last non-empty record line (before the trailing newline)
+                int docLen = panel.getTextArea().getDocument().getLength();
+                int caretPos = (docLen > 0 && panel.getTextArea().getText().endsWith("\n")) ? docLen - 1 : docLen;
+                panel.getTextArea().setCaretPosition(caretPos);
+                assertTrue(panel.getCursorInfoText().startsWith("| Line: " + totalLines + " |"),
+                        "Bottom line status label on last record of newline file must show " + totalLines
+                                + ", but was: " + panel.getCursorInfoText());
+            });
+
+            panel.getFileManager().stopIndexer();
+        } finally {
+            LargeFileManager.CHUNK_SIZE = originalChunkSize;
+        }
+    }
 }
 

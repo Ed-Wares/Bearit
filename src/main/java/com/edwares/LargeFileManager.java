@@ -109,7 +109,7 @@ public class LargeFileManager {
             char c = input.charAt(i);
             if (c == '\n') {
                 currentLineLength = 0;
-            } else {
+            } else if (c != '\r') {
                 if (currentLineLength >= maxLength) {
                     if (sb == null) {
                         sb = new StringBuilder(len + (len / maxLength) * 3);
@@ -377,8 +377,18 @@ public class LargeFileManager {
     }
 
     public long getExactLineOffset(int index) {
-        if (index == 0) return 1;
-        return lineOffsetCache.getOrDefault(index, -1L);
+        if (index <= 0) return 1;
+        Long cached = lineOffsetCache.get(index);
+        if (cached == null) return -1L;
+        long baseLine = cached;
+        for (int i = 0; i < index; i++) {
+            baseLine += chunkLineDeltas.getOrDefault(i, 0L);
+        }
+        return baseLine;
+    }
+
+    public long getStartLineForChunk(int index) {
+        return computeAbsoluteLineOffsetLazy(index);
     }
 
     private void updateFileMetrics() {
@@ -415,10 +425,37 @@ public class LargeFileManager {
         // --- Calculate Line Delta for instant UI updates ---
         if (lineOffsetCache.containsKey(currentChunkIndex) && lineOffsetCache.containsKey(currentChunkIndex + 1)) {
             long originalLines = lineOffsetCache.get(currentChunkIndex + 1) - lineOffsetCache.get(currentChunkIndex);
-            // Ultra-fast character stream filter to count newlines
-            long newLines = text.chars().filter(ch -> ch == '\n').count();
+            long newLines = countEditorLinesInString(text);
             chunkLineDeltas.put(currentChunkIndex, newLines - originalLines);
         }
+    }
+
+    private long countEditorLinesInString(String text) {
+        if (text == null || text.isEmpty()) return 0;
+        int wrapLen = (!isBinaryMode && boundaryMaxLineLength > 0) ? boundaryMaxLineLength : 0;
+        long lines = 0;
+        int col = 0;
+        int len = text.length();
+        for (int i = 0; i < len; i++) {
+            char c = text.charAt(i);
+            if (c == '\n') {
+                lines++;
+                col = 0;
+            } else if (c != '\r') {
+                int w = displayedCharWeight(c);
+                if (w > 0) {
+                    if (wrapLen > 0 && col >= wrapLen) {
+                        lines++;
+                        col = 0;
+                    }
+                    col += w;
+                }
+            }
+        }
+        if (text.charAt(len - 1) != '\n') {
+            lines++;
+        }
+        return lines;
     }
 
     private void clearIndexCaches() {
@@ -466,7 +503,9 @@ public class LargeFileManager {
                 java.util.concurrent.atomic.AtomicBoolean uiUpdatePending = new java.util.concurrent.atomic.AtomicBoolean(false);
                 // Track the running logical column so each chunk's start column is known without extra I/O
                 final boolean utf8 = isUtf8(charset);
-                final boolean trackColumns = !isBinaryMode && isAsciiCompatible(charset) && dirtyChunks.isEmpty();
+                final boolean countSoftWraps = !isBinaryMode && isAsciiCompatible(charset);
+                final boolean trackColumns = countSoftWraps && dirtyChunks.isEmpty();
+                final int wrapLen = (countSoftWraps && boundaryMaxLineLength > 0) ? boundaryMaxLineLength : 0;
                 long runningColumn = 0;
                 
                 for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
@@ -487,6 +526,10 @@ public class LargeFileManager {
                     long linesInChunk = 0;
                     boolean previewBuilt = false;
                     boolean bomChecked = (chunkIdx != 0 || !utf8);
+                    int chunkCol = (countSoftWraps && wrapLen > 0 && runningColumn > 0)
+                            ? (int) (runningColumn % wrapLen)
+                            : 0;
+                    byte lastByte = '\n';
                     
                     while (bytesRead < chunkLen) {
                         if (Thread.currentThread().isInterrupted()) return;
@@ -502,20 +545,37 @@ public class LargeFileManager {
                             previewCache.put(chunkIdx, previewStr);
                             previewBuilt = true;
                         }
-                        if (trackColumns) {
+                        if (countSoftWraps) {
+                            int startByteIdx = 0;
                             if (!bomChecked) {
                                 bomChecked = true;
                                 if (start == 0 && hasUtf8Bom(buffer, read)) {
-                                    runningColumn = -1; // The BOM is not displayed in the editor
+                                    startByteIdx = 3; // The BOM is not displayed in the editor
                                 }
                             }
-                            for (int i = 0; i < read; i++) {
+                            if (startByteIdx < read) {
+                                lastByte = buffer[read - 1];
+                            }
+                            for (int i = startByteIdx; i < read; i++) {
                                 byte b = buffer[i];
                                 if (b == '\n') {
                                     linesInChunk++;
                                     runningColumn = 0;
-                                } else {
-                                    runningColumn += displayedCharWeight(b, utf8);
+                                    chunkCol = 0;
+                                } else if (b != '\r') {
+                                    int w = displayedCharWeight(b, utf8);
+                                    if (w > 0) {
+                                        if (wrapLen > 0 && chunkCol >= wrapLen) {
+                                            linesInChunk++;
+                                            chunkCol = 0;
+                                        }
+                                        chunkCol += w;
+                                        if (wrapLen > 0 && chunkCol > wrapLen) {
+                                            linesInChunk++;
+                                            chunkCol -= wrapLen;
+                                        }
+                                        runningColumn += w;
+                                    }
                                 }
                             }
                         } else {
@@ -524,6 +584,9 @@ public class LargeFileManager {
                             }
                         }
                         bytesRead += read;
+                    }
+                    if (countSoftWraps && chunkLen > 0 && lastByte != '\n') {
+                        linesInChunk++;
                     }
                     if (!previewBuilt) {
                         previewCache.put(chunkIdx, "");
@@ -584,7 +647,17 @@ public class LargeFileManager {
 
     public ChunkState loadCurrentChunk(boolean requestPreview) throws IOException {
         if (!requestPreview && preloadCache.containsKey(currentChunkIndex)) {
-            return preloadCache.get(currentChunkIndex);
+            ChunkState cached = preloadCache.get(currentChunkIndex);
+            if (cached != null) {
+                long freshStartLine = computeAbsoluteLineOffsetLazy(currentChunkIndex);
+                if (cached.startLine() != freshStartLine) {
+                    cached = new ChunkState(cached.content(), freshStartLine, cached.startOffset(),
+                            cached.chunkIndex(), cached.totalChunks(), cached.hasPrev(), cached.hasNext(),
+                            cached.statusText(), cached.fileName(), cached.isPreview());
+                    preloadCache.put(currentChunkIndex, cached);
+                }
+                return cached;
+            }
         }
         return generateChunkState(currentChunkIndex, requestPreview);
     }
@@ -1132,7 +1205,9 @@ public class LargeFileManager {
         
         for (int i = 0; i < virtualTotalChunks; i++) {
             long linesInChunk = 0;
-            if (dirtyChunks.containsKey(i)) {
+            if (!dirtyChunks.containsKey(i) && lineOffsetCache.containsKey(i) && lineOffsetCache.containsKey(i + 1)) {
+                linesInChunk = lineOffsetCache.get(i + 1) - lineOffsetCache.get(i);
+            } else if (dirtyChunks.containsKey(i)) {
                 linesInChunk = countLinesInStream(new FileInputStream(dirtyChunks.get(i)));
             } else if (currentFile != null && currentFile.exists()) {
                 long[] boundaries = getChunkBoundaries(i);
@@ -1848,14 +1923,27 @@ public class LargeFileManager {
     }
 
     private long computeAbsoluteLineOffsetLazy(int index) {
-        if (index == 0) return 1;
+        if (index <= 0) return 1;
         long baseLine;
         
         if (lineOffsetCache.containsKey(index)) {
             baseLine = lineOffsetCache.get(index);
+        } else if (!isBinaryMode && "N/A".equals(detectedLineEndings) && boundaryMaxLineLength > 0
+                && isAsciiCompatible(getActiveCharset()) && currentFile != null && currentFile.exists()) {
+            try {
+                long startByte = getChunkBoundaries(index)[0];
+                long bomBytes = "UTF-8 BOM".equals(detectedEncoding) ? 3L : 0L;
+                long effectiveBytes = Math.max(0L, startByte - bomBytes);
+                baseLine = 1L + (effectiveBytes + boundaryMaxLineLength - 1L) / boundaryMaxLineLength;
+            } catch (IOException e) {
+                long estimatedAvgLineLength = Math.min(85L, Math.max(1L, boundaryMaxLineLength));
+                baseLine = 1L + ((long) index * CHUNK_SIZE) / estimatedAvgLineLength;
+            }
         } else {
-            long estimatedAvgLineLength = 85; 
-            baseLine = ((long) index * CHUNK_SIZE) / estimatedAvgLineLength;
+            long estimatedAvgLineLength = (!isBinaryMode && boundaryMaxLineLength > 0)
+                    ? Math.min(85L, Math.max(1L, boundaryMaxLineLength))
+                    : 85L;
+            baseLine = 1L + ((long) index * CHUNK_SIZE) / estimatedAvgLineLength;
         }
         
         // Apply any unsaved deltas from preceding dirty chunks
@@ -1867,27 +1955,59 @@ public class LargeFileManager {
     }
 
     private long countLinesInStream(InputStream in) throws IOException {
-        long count = 0;
-        try (BufferedInputStream bin = new BufferedInputStream(in)) {
-            byte[] c = new byte[16384];
-            int readChars;
-            while ((readChars = bin.read(c)) != -1) {
-                for (int i = 0; i < readChars; ++i) { if (c[i] == '\n') ++count; }
-            }
-        }
-        return count;
+        return countLinesInLimitedStream(in, Long.MAX_VALUE);
     }
 
     private long countLinesInLimitedStream(InputStream in, long limit) throws IOException {
+        Charset charset = getActiveCharset();
+        boolean utf8 = isUtf8(charset);
+        boolean countSoftWraps = !isBinaryMode && isAsciiCompatible(charset);
+        int wrapLen = (countSoftWraps && boundaryMaxLineLength > 0) ? boundaryMaxLineLength : 0;
         long count = 0;
+        int col = 0;
+        boolean anyBytes = false;
+        byte lastByte = '\n';
         try (BufferedInputStream bin = new BufferedInputStream(in)) {
             byte[] c = new byte[16384];
             long bytesReadTotal = 0;
             int readChars;
-            while (bytesReadTotal < limit && (readChars = bin.read(c, 0, (int) Math.min(c.length, limit - bytesReadTotal))) != -1) {
-                for (int i = 0; i < readChars; ++i) { if (c[i] == '\n') ++count; }
+            while (bytesReadTotal < limit
+                    && (readChars = bin.read(c, 0, (int) Math.min(c.length, limit - bytesReadTotal))) != -1) {
+                if (readChars > 0) {
+                    anyBytes = true;
+                    lastByte = c[readChars - 1];
+                }
+                if (countSoftWraps) {
+                    for (int i = 0; i < readChars; ++i) {
+                        byte b = c[i];
+                        if (b == '\n') {
+                            ++count;
+                            col = 0;
+                        } else if (b != '\r') {
+                            int w = displayedCharWeight(b, utf8);
+                            if (w > 0) {
+                                if (wrapLen > 0 && col >= wrapLen) {
+                                    ++count;
+                                    col = 0;
+                                }
+                                col += w;
+                                if (wrapLen > 0 && col > wrapLen) {
+                                    ++count;
+                                    col -= wrapLen;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    for (int i = 0; i < readChars; ++i) {
+                        if (c[i] == '\n') ++count;
+                    }
+                }
                 bytesReadTotal += readChars;
             }
+        }
+        if (countSoftWraps && anyBytes && lastByte != '\n') {
+            ++count;
         }
         return count;
     }

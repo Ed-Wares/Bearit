@@ -43,6 +43,7 @@ public class BearitFrame extends JFrame {
     private JCheckBoxMenuItem oneBasedColumnMenuItem;
     private JCheckBoxMenuItem columnRulerMenuItem;
     private JCheckBoxMenuItem readOnlyMenuItem;
+    private JMenuItem maxLineLengthMenuItem;
     private JRadioButtonMenuItem lightThemeItem;
     private JRadioButtonMenuItem darkThemeItem;
 
@@ -514,6 +515,10 @@ public class BearitFrame extends JFrame {
                     if (savedFile.getAbsolutePath().equalsIgnoreCase(propertiesFile.getAbsolutePath())) {
                         System.out.println("Properties file saved in editor. Reloading BearitProperties...");
                         BearitProperties.getInstance().load();
+                        if (maxLineLengthMenuItem != null) {
+                            maxLineLengthMenuItem.setText(
+                                    formatMaxLineLengthMenuText(BearitProperties.getInstance().getMaxLineLength()));
+                        }
                     }
                 }
             });
@@ -2209,9 +2214,20 @@ public class BearitFrame extends JFrame {
         viewMenu.add(eolMenuItem);
         viewMenu.add(oneBasedColumnMenuItem);
         viewMenu.add(columnRulerMenuItem);
-        JMenuItem maxLineLengthItem = new JMenuItem("Set Max Line Length...");
-        maxLineLengthItem.addActionListener(e -> showMaxLineLengthDialog());
-        viewMenu.add(maxLineLengthItem);
+        maxLineLengthMenuItem = new JMenuItem(formatMaxLineLengthMenuText(props.getMaxLineLength()));
+        maxLineLengthMenuItem.addActionListener(e -> showMaxLineLengthDialog());
+        viewMenu.add(maxLineLengthMenuItem);
+        viewMenu.addMenuListener(new MenuListener() {
+            @Override
+            public void menuSelected(MenuEvent e) {
+                if (maxLineLengthMenuItem != null) {
+                    maxLineLengthMenuItem.setText(
+                            formatMaxLineLengthMenuText(BearitProperties.getInstance().getMaxLineLength()));
+                }
+            }
+            @Override public void menuDeselected(MenuEvent e) {}
+            @Override public void menuCanceled(MenuEvent e) {}
+        });
         viewMenu.addSeparator();
         viewMenu.add(readOnlyMenuItem);
         
@@ -2641,6 +2657,15 @@ public class BearitFrame extends JFrame {
         dialog.setVisible(true);
     }
 
+    static String formatMaxLineLengthMenuText(int maxLineLength) {
+        return String.format(java.util.Locale.US, "Set Max Line Length (%,d)...",
+                BearitProperties.clampMaxLineLength(maxLineLength));
+    }
+
+    JMenuItem getMaxLineLengthMenuItem() {
+        return maxLineLengthMenuItem;
+    }
+
     private void showMaxLineLengthDialog() {
         MaxLineLengthDialog dialog = new MaxLineLengthDialog(
                 this,
@@ -2658,6 +2683,9 @@ public class BearitFrame extends JFrame {
         BearitProperties props = BearitProperties.getInstance();
         props.setMaxLineLength(clamped);
         props.save();
+        if (maxLineLengthMenuItem != null) {
+            maxLineLengthMenuItem.setText(formatMaxLineLengthMenuText(clamped));
+        }
 
         for (int i = 0; i < tabbedPane.getTabCount(); i++) {
             Component c = tabbedPane.getComponentAt(i);

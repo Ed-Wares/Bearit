@@ -1142,6 +1142,13 @@ public class AdvancedTextEditorPanel extends JPanel {
         documentCache.clear();
         if (activeFile != null && activeFile.exists() && !hasUnsavedChanges() && !isBinaryMode()
                 && fileManager.getTotalChunks() > 1) {
+            Document docBefore = textArea != null ? textArea.getDocument() : null;
+            final boolean caretAtEnd = docBefore != null && docBefore.getLength() > 0
+                    && textArea.getCaretPosition() >= docBefore.getLength();
+            final long savedGlobalCaretByte = (!caretAtEnd && docBefore != null && textArea.getCaretPosition() > 0)
+                    ? getGlobalCaretByteOffset()
+                    : -1L;
+
             long[] oldBounds = null;
             try {
                 oldBounds = fileManager.getChunkBoundaries(loadedChunkIndex);
@@ -1156,7 +1163,6 @@ public class AdvancedTextEditorPanel extends JPanel {
                 newBounds = fileManager.getChunkBoundaries(loadedChunkIndex);
             } catch (Exception ignored) {
             }
-            rewrapCurrentDocument();
             if (oldBounds != null && newBounds != null
                     && (oldBounds[0] != newBounds[0] || oldBounds[1] != newBounds[1])) {
                 int currentChunk = loadedChunkIndex;
@@ -1165,13 +1171,33 @@ public class AdvancedTextEditorPanel extends JPanel {
                 double localPercent = localMax <= 0 ? 0.0 : (localBar.getValue() / localMax);
                 loadedChunkIndex = -1;
                 isDirty = false;
-                triggerAsyncLoad(currentChunk, 0, localPercent, false, this::restartBackgroundIndexer);
+                triggerAsyncLoad(currentChunk, 0, localPercent, false, () -> {
+                    if (caretAtEnd && textArea.getDocument() != null) {
+                        int endPos = textArea.getDocument().getLength();
+                        textArea.setCaretPosition(endPos);
+                        lineNumberPanel.setCurrentLine(Math.max(0, textArea.getLineCount() - 1));
+                        updateCursorStatus();
+                    } else if (savedGlobalCaretByte >= 0) {
+                        setGlobalSelection(savedGlobalCaretByte, savedGlobalCaretByte);
+                        updateCursorStatus();
+                    }
+                    restartBackgroundIndexer();
+                });
             } else {
+                rewrapCurrentDocument();
+                if (lineNumberPanel != null) {
+                    lineNumberPanel.setStartLine(fileManager.getStartLineForChunk(loadedChunkIndex));
+                }
+                updateCursorStatus();
                 restartBackgroundIndexer();
             }
         } else {
             fileManager.setMaxLineLength(clamped, hasUnsavedChanges());
             rewrapCurrentDocument();
+            if (lineNumberPanel != null) {
+                lineNumberPanel.setStartLine(fileManager.getStartLineForChunk(loadedChunkIndex));
+            }
+            updateCursorStatus();
         }
     }
 
@@ -1898,6 +1924,10 @@ public class AdvancedTextEditorPanel extends JPanel {
             return text + hiddenBoundaryNewline;
         }
         return text;
+    }
+
+    String getCursorInfoText() {
+        return lblCursorInfo != null ? lblCursorInfo.getText() : "";
     }
 
     private void updateCursorStatus() {
@@ -3773,7 +3803,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
         chunkLoadProgressBar.setVisible(false);
 
-        lineNumberPanel.setStartLine(state.startLine());
+        long latestStartLine = fileManager.getStartLineForChunk(loadedChunkIndex);
+        lineNumberPanel.setStartLine(latestStartLine > 0 ? latestStartLine : state.startLine());
         updateTitle(state.fileName() + (isCurrentlyPreview ? " [PREVIEW]" : ""));
 
         int maxScrollRange = state.totalChunks() * SCROLL_RESOLUTION;
@@ -6542,27 +6573,20 @@ public class AdvancedTextEditorPanel extends JPanel {
 
     private void jumpToLocalLine(long absoluteTargetLine) {
         long startLine = lineNumberPanel.getStartLine();
-        long targetRealLineLocal = absoluteTargetLine - startLine;
+        long targetLineLocal = absoluteTargetLine - startLine;
 
-        if (targetRealLineLocal >= 0) {
+        if (targetLineLocal >= 0) {
             try {
                 Document doc = textArea.getDocument();
                 Element root = doc.getDefaultRootElement();
-                int realLineCount = 0;
-
-                for (int i = 0; i < root.getElementCount(); i++) {
-                    if (realLineCount == targetRealLineLocal) {
-                        int offset = root.getElement(i).getStartOffset();
-                        textArea.setCaretPosition(offset);
-                        textArea.requestFocus();
-                        return;
-                    }
-
-                    int endOff = root.getElement(i).getEndOffset();
-                    if (!(endOff >= 2 && "\u200B".equals(doc.getText(endOff - 2, 1)))) {
-                        realLineCount++;
-                    }
+                int elemCount = root.getElementCount();
+                if (elemCount <= 0) {
+                    return;
                 }
+                int targetIdx = (int) Math.min(elemCount - 1, targetLineLocal);
+                int offset = root.getElement(targetIdx).getStartOffset();
+                textArea.setCaretPosition(offset);
+                textArea.requestFocus();
             } catch (Exception e) {
             }
         }
