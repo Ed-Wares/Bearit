@@ -1181,6 +1181,7 @@ public class AdvancedTextEditorPanel extends JPanel {
         isNavigating = true;
         try {
             Document newDoc = createWrappedDocument(-1, startCol);
+            newDoc.putProperty("bearit.hiddenBoundaryNewline", hiddenBoundaryNewline);
             newDoc.insertString(0, unwrapped, null);
             newDoc.addDocumentListener(editorDocumentListener);
             newDoc.addUndoableEditListener(e -> {
@@ -2249,26 +2250,21 @@ public class AdvancedTextEditorPanel extends JPanel {
                 long totalCount = 0;
                 Pattern p = getSearchPattern(target);
                 int totalGlobalChunks = targets.stream().mapToInt(e -> e.fileManager.getTotalChunks()).sum();
-                int chunksProcessed = 0;
+                int[] chunksProcessed = { 0 };
 
                 for (AdvancedTextEditorPanel editor : targets) {
-                    int totalChunks = editor.fileManager.getTotalChunks();
-                    for (int i = 0; i < totalChunks; i++) {
-                        if (isCancelled())
-                            return totalCount;
-                        String content = editor.fileManager.getChunkContent(i);
-                        Matcher m = p.matcher(content);
-                        while (m.find()) {
-                            if (isCancelled())
-                                return totalCount;
-                            if (LargeFileManager.isMatchInColumnRange(content, m.start(), m.end(), fMinCol, fMaxCol)) {
-                                totalCount++;
-                            }
-                        }
-                        chunksProcessed++;
-                        if (totalGlobalChunks > 0)
-                            publish((int) (((double) chunksProcessed / totalGlobalChunks) * 100));
-                    }
+                    if (isCancelled())
+                        return totalCount;
+                    int editorChunks = editor.fileManager.getTotalChunks();
+                    totalCount += editor.fileManager.countGlobalMatches(p, fMinCol, fMaxCol,
+                            pct -> {
+                                int currentBase = chunksProcessed[0];
+                                double localContrib = (pct / 100.0) * editorChunks;
+                                if (totalGlobalChunks > 0)
+                                    publish((int) (((currentBase + localContrib) / totalGlobalChunks) * 100));
+                            },
+                            () -> isCancelled());
+                    chunksProcessed[0] += editorChunks;
                 }
                 return totalCount;
             }
@@ -3681,6 +3677,8 @@ public class AdvancedTextEditorPanel extends JPanel {
         Document doc = documentCache.get(loadedChunkIndex);
 
         if (doc != null && !isCurrentlyPreview) {
+            Object hbn = doc.getProperty("bearit.hiddenBoundaryNewline");
+            hiddenBoundaryNewline = (hbn instanceof String) ? (String) hbn : "";
             textArea.setDocument(doc);
         } else {
             Document newDoc;
@@ -3729,6 +3727,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             textArea.setDocument(newDoc);
 
             if (!isCurrentlyPreview) {
+                newDoc.putProperty("bearit.hiddenBoundaryNewline", hiddenBoundaryNewline);
                 documentCache.put(loadedChunkIndex, newDoc);
             }
         }
@@ -6145,6 +6144,69 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
     }
 
+    // --- Cross-Chunk Bridging Match State ---
+    // When a search match starts near the end of chunk i and extends into the beginning of chunk i + 1,
+    // the portion in chunk i (startInChunk..endInChunk) is selected in textArea and endInNextChunk records
+    // how many characters at the start of chunk i + 1 belong to the same match.
+    private int activeBridgeChunkIndex = -1;
+    private int activeBridgeStartInChunk = -1;
+    private int activeBridgeEndInChunk = -1;
+    private int activeBridgeEndInNextChunk = 0;
+
+    private void setActiveBridge(int chunkIdx, int startInChunk, int endInChunk, int endInNextChunk) {
+        this.activeBridgeChunkIndex = chunkIdx;
+        this.activeBridgeStartInChunk = startInChunk;
+        this.activeBridgeEndInChunk = endInChunk;
+        this.activeBridgeEndInNextChunk = Math.max(0, endInNextChunk);
+    }
+
+    void clearActiveBridge() {
+        this.activeBridgeChunkIndex = -1;
+        this.activeBridgeStartInChunk = -1;
+        this.activeBridgeEndInChunk = -1;
+        this.activeBridgeEndInNextChunk = 0;
+    }
+
+    boolean isBridgeSelectionActive(int rawStart, int rawEnd) {
+        return activeBridgeChunkIndex == loadedChunkIndex
+                && activeBridgeEndInNextChunk > 0
+                && rawStart == activeBridgeStartInChunk
+                && rawEnd == activeBridgeEndInChunk;
+    }
+
+    int getActiveBridgeEndInNextChunk() {
+        return activeBridgeEndInNextChunk;
+    }
+
+    private String getNextChunkHeadForView(int chunkIdx) {
+        if (chunkIdx + 1 >= fileManager.getTotalChunks()) {
+            return "";
+        }
+        try {
+            String head = fileManager.getChunkHead(chunkIdx + 1, LargeFileManager.SEARCH_BRIDGE_WINDOW);
+            if (head.isEmpty()) {
+                return "";
+            }
+            return isBinaryMode() ? encodeBinaryForView(head) : stripControlAndFormatChars(head);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private void selectMatchInLoadedChunk(int rawStart, int rawLen, int endInNextChunk) {
+        int docLen = textArea.getDocument().getLength();
+        int visualStart = Math.min(rawToVisualIndex(rawStart), docLen);
+        int visualEnd = Math.min(rawToVisualIndex(rawStart + rawLen), docLen);
+        textArea.setCaretPosition(visualStart);
+        textArea.moveCaretPosition(visualEnd);
+        textArea.requestFocusInWindow();
+        if (endInNextChunk > 0) {
+            setActiveBridge(loadedChunkIndex, visualToRawIndex(visualStart), visualToRawIndex(visualEnd), endInNextChunk);
+        } else {
+            clearActiveBridge();
+        }
+    }
+
     public void performFind(String target, boolean searchForward) {
         if (target == null || target.isEmpty())
             return;
@@ -6174,60 +6236,53 @@ public class AdvancedTextEditorPanel extends JPanel {
         final AdvancedTextEditorPanel activeEditor = tempActive;
         final int activeIndex = fTargets.indexOf(activeEditor);
 
-        // Synchronous check in the CURRENTLY ACTIVE editor's loaded chunk
+        // Synchronous check in the CURRENTLY ACTIVE editor's loaded chunk (including any match
+        // that starts near the end of the loaded chunk and bridges into the next chunk).
         int visualCaret = fForward ? activeEditor.textArea.getCaretPosition()
                 : activeEditor.textArea.getSelectionStart();
         String selected = activeEditor.textArea.getSelectedText();
+        String rawText = activeEditor.textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
+        String nextHeadForView = activeEditor.getNextChunkHeadForView(activeEditor.loadedChunkIndex);
+        String boundaryAndNextHead = activeEditor.hiddenBoundaryNewline + nextHeadForView;
+        int nextChunkInitialSkip = 0;
 
         if (fForward) {
             if (selected != null) {
                 String strippedSelection = selected.replace("\u200B\n", "").replace("\u200B", "");
-                if (fPattern.matcher(strippedSelection).matches()) {
+                int rawSelStart = activeEditor.visualToRawIndex(activeEditor.textArea.getSelectionStart());
+                int rawSelEnd = activeEditor.visualToRawIndex(activeEditor.textArea.getSelectionEnd());
+                if (activeEditor.isBridgeSelectionActive(rawSelStart, rawSelEnd)) {
+                    int endInNext = Math.min(nextHeadForView.length(), activeEditor.activeBridgeEndInNextChunk);
+                    String bridgedSel = strippedSelection + activeEditor.hiddenBoundaryNewline
+                            + nextHeadForView.substring(0, endInNext);
+                    if (fPattern.matcher(bridgedSel).matches()) {
+                        visualCaret = activeEditor.textArea.getSelectionEnd();
+                        nextChunkInitialSkip = activeEditor.activeBridgeEndInNextChunk;
+                    }
+                } else if (fPattern.matcher(strippedSelection).matches()) {
                     visualCaret = activeEditor.textArea.getSelectionEnd();
                 }
             }
             int rawCaret = activeEditor.visualToRawIndex(visualCaret);
-            String rawText = activeEditor.textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
-            Matcher m = fPattern.matcher(rawText);
-
-            boolean found = m.find(rawCaret);
-            while (found) {
-                if (LargeFileManager.isMatchInColumnRange(rawText, m.start(), m.end(), fMinCol, fMaxCol)) {
-                    int visualStart = Math.min(activeEditor.rawToVisualIndex(m.start()),
-                            activeEditor.textArea.getDocument().getLength());
-                    int visualEnd = Math.min(activeEditor.rawToVisualIndex(m.end()),
-                            activeEditor.textArea.getDocument().getLength());
-                    activeEditor.textArea.setCaretPosition(visualStart);
-                    activeEditor.textArea.moveCaretPosition(visualEnd);
-                    activeEditor.textArea.requestFocusInWindow();
-                    setSearchDialogEnabled(true);
-                    return;
-                }
-                found = m.find();
+            LargeFileManager.ChunkMatch cm = LargeFileManager.findFirstMatchInChunk(
+                    fPattern, rawText, boundaryAndNextHead, rawCaret, fMinCol, fMaxCol);
+            if (cm != null) {
+                int consumedInNext = cm.isBridging()
+                        ? Math.max(0, cm.endInNextChunk() - activeEditor.hiddenBoundaryNewline.length())
+                        : 0;
+                activeEditor.selectMatchInLoadedChunk(cm.startInChunk(), cm.lengthInChunk(), consumedInNext);
+                setSearchDialogEnabled(true);
+                return;
             }
         } else {
             int rawCaret = activeEditor.visualToRawIndex(visualCaret);
-            String rawText = activeEditor.textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
-            String searchableRawText = rawText.substring(0, rawCaret);
-            Matcher m = fPattern.matcher(searchableRawText);
-
-            int lastIdx = -1;
-            int lastLen = 0;
-            while (m.find()) {
-                if (LargeFileManager.isMatchInColumnRange(searchableRawText, m.start(), m.end(), fMinCol, fMaxCol)) {
-                    lastIdx = m.start();
-                    lastLen = m.end() - m.start();
-                }
-            }
-
-            if (lastIdx != -1) {
-                int visualStart = Math.min(activeEditor.rawToVisualIndex(lastIdx),
-                        activeEditor.textArea.getDocument().getLength());
-                int visualEnd = Math.min(activeEditor.rawToVisualIndex(lastIdx + lastLen),
-                        activeEditor.textArea.getDocument().getLength());
-                activeEditor.textArea.setCaretPosition(visualStart);
-                activeEditor.textArea.moveCaretPosition(visualEnd);
-                activeEditor.textArea.requestFocusInWindow();
+            LargeFileManager.ChunkMatch cm = LargeFileManager.findLastMatchInChunk(
+                    fPattern, rawText, boundaryAndNextHead, rawCaret, fMinCol, fMaxCol);
+            if (cm != null) {
+                int consumedInNext = cm.isBridging()
+                        ? Math.max(0, cm.endInNextChunk() - activeEditor.hiddenBoundaryNewline.length())
+                        : 0;
+                activeEditor.selectMatchInLoadedChunk(cm.startInChunk(), cm.lengthInChunk(), consumedInNext);
                 setSearchDialogEnabled(true);
                 return;
             }
@@ -6239,10 +6294,11 @@ public class AdvancedTextEditorPanel extends JPanel {
         final String fCommitText = activeEditor.getCommitText();
         final boolean fWasDirty = activeEditor.isDirty;
         activeEditor.isDirty = false;
+        final int fNextChunkInitialSkip = nextChunkInitialSkip;
 
         class MatchResult {
             AdvancedTextEditorPanel editor;
-            int chunkIdx, foundIdx, foundLen;
+            int chunkIdx, foundIdx, foundLen, endInNextChunk;
         }
 
         activeSearchWorker = new SwingWorker<MatchResult, Integer>() {
@@ -6289,36 +6345,33 @@ public class AdvancedTextEditorPanel extends JPanel {
                             return null;
 
                         String content = editor.fileManager.getChunkContent(i);
-                        Matcher mc = fPattern.matcher(content);
+                        String c1Head = (i + 1 < totalChunks)
+                                ? editor.fileManager.getChunkHead(i + 1, LargeFileManager.SEARCH_BRIDGE_WINDOW)
+                                : "";
 
                         if (fForward) {
-                            while (mc.find()) {
-                                if (LargeFileManager.isMatchInColumnRange(content, mc.start(), mc.end(), fMinCol, fMaxCol)) {
-                                    MatchResult res = new MatchResult();
-                                    res.editor = editor;
-                                    res.chunkIdx = i;
-                                    res.foundIdx = mc.start();
-                                    res.foundLen = mc.end() - mc.start();
-                                    return res;
-                                }
-                            }
-                        } else {
-                            int tempIdx = -1;
-                            int tempLen = 0;
-                            while (mc.find()) {
-                                if (isCancelled())
-                                    return null;
-                                if (LargeFileManager.isMatchInColumnRange(content, mc.start(), mc.end(), fMinCol, fMaxCol)) {
-                                    tempIdx = mc.start();
-                                    tempLen = mc.end() - mc.start();
-                                }
-                            }
-                            if (tempIdx != -1) {
+                            int fromIdx = (count == 0 && i == startChunk) ? fNextChunkInitialSkip : 0;
+                            LargeFileManager.ChunkMatch cm = LargeFileManager.findFirstMatchInChunk(
+                                    fPattern, content, c1Head, fromIdx, fMinCol, fMaxCol);
+                            if (cm != null) {
                                 MatchResult res = new MatchResult();
                                 res.editor = editor;
                                 res.chunkIdx = i;
-                                res.foundIdx = tempIdx;
-                                res.foundLen = tempLen;
+                                res.foundIdx = cm.startInChunk();
+                                res.foundLen = cm.lengthInChunk();
+                                res.endInNextChunk = cm.endInNextChunk();
+                                return res;
+                            }
+                        } else {
+                            LargeFileManager.ChunkMatch cm = LargeFileManager.findLastMatchInChunk(
+                                    fPattern, content, c1Head, content.length(), fMinCol, fMaxCol);
+                            if (cm != null) {
+                                MatchResult res = new MatchResult();
+                                res.editor = editor;
+                                res.chunkIdx = i;
+                                res.foundIdx = cm.startInChunk();
+                                res.foundLen = cm.lengthInChunk();
+                                res.endInNextChunk = cm.endInNextChunk();
                                 return res;
                             }
                         }
@@ -6350,13 +6403,8 @@ public class AdvancedTextEditorPanel extends JPanel {
                     if (result != null) {
                         activateEditorTab(result.editor);
                         result.editor.triggerAsyncLoad(result.chunkIdx, 0, -1, false, () -> {
-                            int visualStart = Math.min(result.editor.rawToVisualIndex(result.foundIdx),
-                                    result.editor.textArea.getDocument().getLength());
-                            int visualEnd = Math.min(result.editor.rawToVisualIndex(result.foundIdx + result.foundLen),
-                                    result.editor.textArea.getDocument().getLength());
-                            result.editor.textArea.setCaretPosition(visualStart);
-                            result.editor.textArea.moveCaretPosition(visualEnd);
-                            result.editor.textArea.requestFocusInWindow();
+                            result.editor.selectMatchInLoadedChunk(
+                                    result.foundIdx, result.foundLen, result.endInNextChunk);
                         });
                     } else {
                         String msg = (chkAllTabs != null && chkAllTabs.isSelected())
@@ -6378,6 +6426,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                             int targetChunk = fForward ? 0 : Math.max(0, targetEditor.fileManager.getTotalChunks() - 1);
 
                             targetEditor.triggerAsyncLoad(targetChunk, (fForward ? 1 : -1), -1, false, () -> {
+                                targetEditor.clearActiveBridge();
                                 targetEditor.textArea.setCaretPosition(
                                         fForward ? 0 : targetEditor.textArea.getDocument().getLength());
                                 // Recursively execute the search again now that we are positioned!
@@ -6396,30 +6445,61 @@ public class AdvancedTextEditorPanel extends JPanel {
         activeSearchWorker.execute();
     }
 
-    private void performReplace(String target, String replacement) {
+    public void performReplace(String target, String replacement) {
         if (target == null || target.isEmpty())
             return;
 
         String selected = textArea.getSelectedText();
-        if (selected != null) {
+        if (selected != null && !isCurrentlyPreview) {
             String strippedSelection = selected.replace("\u200B\n", "").replace("\u200B", "");
             Pattern p = getSearchPattern(target);
-            if (p.matcher(strippedSelection).matches() && !isCurrentlyPreview) {
-                int[] colRange = getSearchColumnRange();
-                int minCol = colRange[0];
-                int maxCol = colRange[1];
-                
-                int startOffset = textArea.getSelectionStart();
-                int endOffset = textArea.getSelectionEnd();
-                String rawText = textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
-                int rawStart = visualToRawIndex(startOffset);
-                int rawEnd = visualToRawIndex(endOffset);
-                
+            int[] colRange = getSearchColumnRange();
+            int minCol = colRange[0];
+            int maxCol = colRange[1];
+
+            int startOffset = textArea.getSelectionStart();
+            int endOffset = textArea.getSelectionEnd();
+            String rawText = textArea.getText().replace("\u200B\n", "").replace("\u200B", "");
+            int rawStart = visualToRawIndex(startOffset);
+            int rawEnd = visualToRawIndex(endOffset);
+            String rep = (chkRegex != null && chkRegex.isSelected()) ? replacement
+                    : Matcher.quoteReplacement(replacement);
+
+            if (isBridgeSelectionActive(rawStart, rawEnd)) {
+                int endInNext = activeBridgeEndInNextChunk;
+                String nextHead = getNextChunkHeadForView(loadedChunkIndex);
+                if (nextHead.length() >= endInNext) {
+                    String boundaryAndNext = hiddenBoundaryNewline + nextHead;
+                    String bridgedSelection = strippedSelection + hiddenBoundaryNewline
+                            + nextHead.substring(0, endInNext);
+                    int combinedEnd = rawEnd + hiddenBoundaryNewline.length() + endInNext;
+                    if (p.matcher(bridgedSelection).matches()
+                            && LargeFileManager.isMatchInColumnRange(rawText, boundaryAndNext, rawStart, combinedEnd, minCol, maxCol)) {
+                        Matcher m = p.matcher(bridgedSelection);
+                        String replaced = m.replaceFirst(rep);
+                        hiddenBoundaryNewline = "";
+                        textArea.replaceSelection(replaced);
+                        Document curDoc = textArea.getDocument();
+                        if (curDoc != null) {
+                            curDoc.putProperty("bearit.hiddenBoundaryNewline", "");
+                        }
+                        try {
+                            fileManager.commitCurrentChunk(getCommitText());
+                            isDirty = false;
+                            fileManager.trimLeadingCharsFromChunk(loadedChunkIndex + 1, endInNext);
+                            final int curIdx = loadedChunkIndex;
+                            documentCache.keySet().removeIf(k -> k > curIdx);
+                            setUnsavedChanges(true);
+                        } catch (Exception ignored) {
+                        }
+                        clearActiveBridge();
+                    }
+                }
+            } else if (p.matcher(strippedSelection).matches()) {
                 if (LargeFileManager.isMatchInColumnRange(rawText, rawStart, rawEnd, minCol, maxCol)) {
-                    String rep = (chkRegex != null && chkRegex.isSelected()) ? replacement
-                            : Matcher.quoteReplacement(replacement);
                     Matcher m = p.matcher(strippedSelection);
                     textArea.replaceSelection(m.replaceFirst(rep));
+                    clearActiveBridge();
                 }
             }
         }
@@ -6703,6 +6783,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             textArea.setCaretPosition(0);
 
             if (!isCurrentlyPreview) {
+                newDoc.putProperty("bearit.hiddenBoundaryNewline", hiddenBoundaryNewline);
                 documentCache.put(loadedChunkIndex, newDoc);
             }
         }

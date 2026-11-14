@@ -566,6 +566,25 @@ public class LargeFileManager {
         return generateChunkState(currentChunkIndex, requestPreview);
     }
 
+    /** Maximum number of characters inspected across a chunk seam for bridging search/replace matches. */
+    public static final int SEARCH_BRIDGE_WINDOW = 65536;
+
+    /**
+     * Represents a search match that starts in a chunk at {@code startInChunk}.
+     * When {@code endInNextChunk == 0}, the match is wholly within the chunk ({@code startInChunk..endInChunk}).
+     * When {@code endInNextChunk > 0}, the match bridges from {@code startInChunk..endInChunk} (the end of the
+     * current chunk) into {@code 0..endInNextChunk} at the beginning of the next chunk.
+     */
+    public record ChunkMatch(int startInChunk, int endInChunk, int endInNextChunk) {
+        public boolean isBridging() {
+            return endInNextChunk > 0;
+        }
+
+        public int lengthInChunk() {
+            return endInChunk - startInChunk;
+        }
+    }
+
     public String getChunkContent(int index) throws IOException {
         if (dirtyChunks.containsKey(index)) {
             return Files.readString(dirtyChunks.get(index).toPath(), getActiveCharset());
@@ -584,67 +603,455 @@ public class LargeFileManager {
         return "";
     }
 
-    public long countGlobalMatches(String target) throws IOException {
-        long count = 0;
-        int virtualTotalChunks = getTotalChunks();
-        for (int i = 0; i < virtualTotalChunks; i++) {
-            String chunkContent = getChunkContent(i);
-            int index = 0;
-            while ((index = chunkContent.indexOf(target, index)) != -1) {
-                count++;
-                index += target.length();
+    /**
+     * Reads at most {@code maxChars} characters from the start of chunk {@code index} without loading
+     * the entire 25 MB chunk when only a boundary prefix is needed for cross-chunk search/replace.
+     */
+    public String getChunkHead(int index, int maxChars) throws IOException {
+        if (index < 0 || index >= getTotalChunks() || maxChars <= 0) {
+            return "";
+        }
+        ChunkState preloaded = preloadCache.get(index);
+        if (preloaded != null && !preloaded.isPreview()) {
+            String s = preloaded.content();
+            return s.length() <= maxChars ? s : s.substring(0, maxChars);
+        }
+        long byteCap = Math.min((long) CHUNK_SIZE, (long) maxChars * 4L + 64L);
+        if (dirtyChunks.containsKey(index)) {
+            File df = dirtyChunks.get(index);
+            long len = df.length();
+            if (len <= 0) return "";
+            int toRead = (int) Math.min(len, byteCap);
+            try (FileChannel ch = FileChannel.open(df.toPath(), StandardOpenOption.READ)) {
+                ByteBuffer buf = ByteBuffer.allocate(toRead);
+                ch.read(buf);
+                String s = new String(buf.array(), getActiveCharset());
+                return s.length() <= maxChars ? s : s.substring(0, maxChars);
+            }
+        } else if (currentFile != null && currentFile.exists()) {
+            long[] boundaries = getChunkBoundaries(index);
+            long chunkBytes = boundaries[1] - boundaries[0];
+            if (chunkBytes <= 0) return "";
+            int toRead = (int) Math.min(chunkBytes, byteCap);
+            try (FileChannel ch = FileChannel.open(currentFile.toPath(), StandardOpenOption.READ)) {
+                ByteBuffer buf = ByteBuffer.allocate(toRead);
+                ch.position(boundaries[0]);
+                ch.read(buf);
+                String s = new String(buf.array(), getActiveCharset());
+                return s.length() <= maxChars ? s : s.substring(0, maxChars);
             }
         }
-        return count;
+        return "";
+    }
+
+    /**
+     * Removes the first {@code charsToTrim} characters from chunk {@code index} and persists the
+     * updated chunk in {@code dirtyChunks}. Used when a single-step replace replaces a match that
+     * bridged from chunk {@code index - 1} into the start of chunk {@code index}.
+     */
+    public void trimLeadingCharsFromChunk(int index, int charsToTrim) throws IOException {
+        if (charsToTrim <= 0 || index < 0 || index >= getTotalChunks()) {
+            return;
+        }
+        String content = getChunkContent(index);
+        String updated = (charsToTrim >= content.length()) ? "" : content.substring(charsToTrim);
+        writeDirtyChunkText(index, updated);
+    }
+
+    private void writeDirtyChunkText(int index, String content) throws IOException {
+        File tempFile = File.createTempFile("bearit_chunk_" + index + "_", ".tmp");
+        tempFile.deleteOnExit();
+        Files.writeString(tempFile.toPath(), content, getActiveCharset());
+        dirtyChunks.put(index, tempFile);
+        preloadCache.remove(index);
+        previewCache.remove(index);
+        chunkStartColumnCache.keySet().removeIf(k -> k > index);
+    }
+
+    public long countGlobalMatches(String target) throws IOException {
+        if (target == null || target.isEmpty()) {
+            return 0;
+        }
+        return countGlobalMatches(Pattern.compile(Pattern.quote(target)), -1, -1, null, null);
+    }
+
+    public long countGlobalMatches(Pattern pattern, int minCol, int maxCol,
+            Consumer<Integer> progressPublisher, Supplier<Boolean> isCancelled) throws IOException {
+        long totalCount = 0;
+        int virtualTotalChunks = getTotalChunks();
+        int skipPrefix = 0;
+
+        for (int i = 0; i < virtualTotalChunks; i++) {
+            if (isCancelled != null && isCancelled.get()) {
+                return totalCount;
+            }
+            String c0 = getChunkContent(i);
+            String c1Head = (i + 1 < virtualTotalChunks) ? getChunkHead(i + 1, SEARCH_BRIDGE_WINDOW) : "";
+            int nextSkipPrefix = 0;
+            int fromIndex = Math.min(skipPrefix, c0.length());
+
+            if (c1Head.isEmpty() || c0.length() - fromIndex <= SEARCH_BRIDGE_WINDOW * 2) {
+                String combined = c1Head.isEmpty() ? c0 : (c0 + c1Head);
+                Matcher m = pattern.matcher(combined);
+                boolean found = (fromIndex < c0.length()) && m.find(fromIndex);
+                while (found) {
+                    if (isCancelled != null && isCancelled.get()) {
+                        return totalCount;
+                    }
+                    if (m.start() >= c0.length()) {
+                        break;
+                    }
+                    if (isMatchInColumnRange(c0, c1Head, m.start(), m.end(), minCol, maxCol)) {
+                        totalCount++;
+                        if (m.end() > c0.length()) {
+                            nextSkipPrefix = m.end() - c0.length();
+                            break;
+                        }
+                    }
+                    found = m.find();
+                }
+            } else {
+                int seamCut = c0.length() - SEARCH_BRIDGE_WINDOW;
+                int tailStart = Math.max(fromIndex, seamCut);
+                Matcher m0 = pattern.matcher(c0);
+                boolean found = m0.find(fromIndex);
+                while (found) {
+                    if (isCancelled != null && isCancelled.get()) {
+                        return totalCount;
+                    }
+                    if (m0.start() >= seamCut || m0.end() == c0.length()) {
+                        tailStart = m0.start();
+                        break;
+                    }
+                    if (isMatchInColumnRange(c0, c1Head, m0.start(), m0.end(), minCol, maxCol)) {
+                        totalCount++;
+                    }
+                    tailStart = Math.max(seamCut, m0.end());
+                    found = m0.find();
+                }
+
+                String tailCombined = c0.substring(tailStart) + c1Head;
+                int c0TailLen = c0.length() - tailStart;
+                Matcher mTail = pattern.matcher(tailCombined);
+                while (mTail.find()) {
+                    if (isCancelled != null && isCancelled.get()) {
+                        return totalCount;
+                    }
+                    if (mTail.start() >= c0TailLen) {
+                        break;
+                    }
+                    int absStart = tailStart + mTail.start();
+                    int absEnd = tailStart + mTail.end();
+                    if (isMatchInColumnRange(c0, c1Head, absStart, absEnd, minCol, maxCol)) {
+                        totalCount++;
+                        if (absEnd > c0.length()) {
+                            nextSkipPrefix = absEnd - c0.length();
+                            break;
+                        }
+                    }
+                }
+            }
+
+            skipPrefix = nextSkipPrefix;
+            if (progressPublisher != null && virtualTotalChunks > 0) {
+                progressPublisher.accept((int) (((i + 1) * 100.0) / virtualTotalChunks));
+            }
+        }
+        return totalCount;
     }
 
     public static boolean isMatchInColumnRange(String content, int matchStart, int matchEnd, int minCol, int maxCol) {
+        return isMatchInColumnRange(content, "", matchStart, matchEnd, minCol, maxCol);
+    }
+
+    public static boolean isMatchInColumnRange(String c0, String c1Head, int matchStart, int matchEnd, int minCol, int maxCol) {
         if (minCol < 0 || maxCol < 0) return true; // Disabled
-        
-        int lineStart = content.lastIndexOf('\n', matchStart - 1) + 1;
+
+        int lineStart = c0.lastIndexOf('\n', matchStart - 1) + 1;
         int startCol = matchStart - lineStart;
-        
-        int lineStartForEnd = content.lastIndexOf('\n', matchEnd - 1) + 1;
-        int endCol = matchEnd - lineStartForEnd;
-        
+
+        int endCol;
+        if (matchEnd <= c0.length()) {
+            int lineStartForEnd = c0.lastIndexOf('\n', matchEnd - 1) + 1;
+            endCol = matchEnd - lineStartForEnd;
+        } else {
+            int endInC1 = matchEnd - c0.length();
+            int nlInC1 = (c1Head != null) ? c1Head.lastIndexOf('\n', endInC1 - 1) : -1;
+            if (nlInC1 >= 0) {
+                endCol = endInC1 - (nlInC1 + 1);
+            } else {
+                int lineStartForEnd = c0.lastIndexOf('\n', c0.length() - 1) + 1;
+                endCol = (c0.length() - lineStartForEnd) + endInC1;
+            }
+        }
+
         return startCol >= minCol && endCol <= maxCol;
+    }
+
+    /**
+     * Finds the first match starting in {@code c0} at or after {@code fromIndex}, including matches
+     * that start near the end of {@code c0} and bridge into {@code c1Head}.
+     */
+    public static ChunkMatch findFirstMatchInChunk(Pattern pattern, String c0, String c1Head,
+            int fromIndex, int minCol, int maxCol) {
+        if (c0 == null || c0.isEmpty() || fromIndex >= c0.length()) {
+            return null;
+        }
+        int startIdx = Math.max(0, fromIndex);
+        String head = (c1Head == null) ? "" : c1Head;
+
+        if (head.isEmpty() || c0.length() - startIdx <= SEARCH_BRIDGE_WINDOW * 2) {
+            String combined = head.isEmpty() ? c0 : (c0 + head);
+            Matcher m = pattern.matcher(combined);
+            boolean found = m.find(startIdx);
+            while (found) {
+                if (m.start() >= c0.length()) {
+                    return null;
+                }
+                if (isMatchInColumnRange(c0, head, m.start(), m.end(), minCol, maxCol)) {
+                    if (m.end() <= c0.length()) {
+                        return new ChunkMatch(m.start(), m.end(), 0);
+                    }
+                    return new ChunkMatch(m.start(), c0.length(), m.end() - c0.length());
+                }
+                found = m.find();
+            }
+            return null;
+        }
+
+        int seamCut = c0.length() - SEARCH_BRIDGE_WINDOW;
+        int tailStart = Math.max(startIdx, seamCut);
+        Matcher m0 = pattern.matcher(c0);
+        boolean found = m0.find(startIdx);
+        while (found) {
+            if (m0.start() >= seamCut || m0.end() == c0.length()) {
+                tailStart = m0.start();
+                break;
+            }
+            if (isMatchInColumnRange(c0, head, m0.start(), m0.end(), minCol, maxCol)) {
+                return new ChunkMatch(m0.start(), m0.end(), 0);
+            }
+            tailStart = Math.max(seamCut, m0.end());
+            found = m0.find();
+        }
+
+        String tailCombined = c0.substring(tailStart) + head;
+        int c0TailLen = c0.length() - tailStart;
+        Matcher mTail = pattern.matcher(tailCombined);
+        while (mTail.find()) {
+            if (mTail.start() >= c0TailLen) {
+                return null;
+            }
+            int absStart = tailStart + mTail.start();
+            int absEnd = tailStart + mTail.end();
+            if (isMatchInColumnRange(c0, head, absStart, absEnd, minCol, maxCol)) {
+                if (absEnd <= c0.length()) {
+                    return new ChunkMatch(absStart, absEnd, 0);
+                }
+                return new ChunkMatch(absStart, c0.length(), absEnd - c0.length());
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Finds the last match starting in {@code c0} strictly before {@code maxStartExclusive}, including
+     * matches near the end of {@code c0} that bridge into {@code c1Head}. Non-bridging matches must end
+     * at or before {@code maxStartExclusive}.
+     */
+    public static ChunkMatch findLastMatchInChunk(Pattern pattern, String c0, String c1Head,
+            int maxStartExclusive, int minCol, int maxCol) {
+        if (c0 == null || c0.isEmpty() || maxStartExclusive <= 0) {
+            return null;
+        }
+        int clampedMaxStart = Math.min(maxStartExclusive, c0.length());
+        String head = (c1Head == null) ? "" : c1Head;
+
+        if (head.isEmpty() || c0.length() <= SEARCH_BRIDGE_WINDOW * 2) {
+            String combined = head.isEmpty() ? c0.substring(0, clampedMaxStart) : (c0 + head);
+            Matcher m = pattern.matcher(combined);
+            ChunkMatch last = null;
+            while (m.find()) {
+                if (m.start() >= clampedMaxStart) {
+                    break;
+                }
+                if (m.end() <= c0.length() && m.end() > clampedMaxStart) {
+                    continue;
+                }
+                if (isMatchInColumnRange(c0, head, m.start(), m.end(), minCol, maxCol)) {
+                    last = (m.end() <= c0.length())
+                            ? new ChunkMatch(m.start(), m.end(), 0)
+                            : new ChunkMatch(m.start(), c0.length(), m.end() - c0.length());
+                }
+            }
+            return last;
+        }
+
+        // Check the tail window (+ c1Head) first when maxStartExclusive reaches the tail window
+        int seamCut = c0.length() - SEARCH_BRIDGE_WINDOW;
+        if (clampedMaxStart > seamCut) {
+            String tailCombined = c0.substring(seamCut) + head;
+            Matcher mTail = pattern.matcher(tailCombined);
+            ChunkMatch lastTail = null;
+            while (mTail.find()) {
+                int absStart = seamCut + mTail.start();
+                int absEnd = seamCut + mTail.end();
+                if (absStart >= clampedMaxStart) {
+                    break;
+                }
+                if (absEnd <= c0.length() && absEnd > clampedMaxStart) {
+                    continue;
+                }
+                if (isMatchInColumnRange(c0, head, absStart, absEnd, minCol, maxCol)) {
+                    lastTail = (absEnd <= c0.length())
+                            ? new ChunkMatch(absStart, absEnd, 0)
+                            : new ChunkMatch(absStart, c0.length(), absEnd - c0.length());
+                }
+            }
+            if (lastTail != null) {
+                return lastTail;
+            }
+        }
+
+        String prefix = c0.substring(0, Math.min(clampedMaxStart, seamCut));
+        Matcher m0 = pattern.matcher(prefix);
+        ChunkMatch last = null;
+        while (m0.find()) {
+            if (isMatchInColumnRange(c0, head, m0.start(), m0.end(), minCol, maxCol)) {
+                last = new ChunkMatch(m0.start(), m0.end(), 0);
+            }
+        }
+        return last;
+    }
+
+    private static String evaluateReplacement(Matcher m, int matcherAppendPos, String replacement, StringBuilder scratch) {
+        scratch.setLength(0);
+        m.appendReplacement(scratch, replacement);
+        int prefixLen = m.start() - matcherAppendPos;
+        return scratch.substring(Math.max(0, prefixLen));
     }
 
     public int replaceAllGlobal(Pattern pattern, String replacement, int minCol, int maxCol, Consumer<Integer> progressPublisher, Supplier<Boolean> isCancelled) throws IOException {
         int totalMatches = 0;
         int virtualTotalChunks = getTotalChunks();
+        int skipPrefix = 0;
+        StringBuilder evalScratch = new StringBuilder();
 
         for (int i = 0; i < virtualTotalChunks; i++) {
             if (isCancelled != null && isCancelled.get()) {
                 return totalMatches;
             }
 
-            String chunkContent = getChunkContent(i);
-            Matcher m = pattern.matcher(chunkContent);
-            
-            StringBuffer sb = new StringBuffer(); 
+            String c0 = getChunkContent(i);
+            String c1Head = (i + 1 < virtualTotalChunks) ? getChunkHead(i + 1, SEARCH_BRIDGE_WINDOW) : "";
+            int fromIndex = Math.min(skipPrefix, c0.length());
+            int nextSkipPrefix = 0;
             int chunkMatches = 0;
-            
-            while (m.find()) {
-                if (isCancelled != null && isCancelled.get()) {
-                    return totalMatches;
+            int lastAppend = fromIndex;
+            StringBuilder out = null;
+
+            if (c1Head.isEmpty() || c0.length() - fromIndex <= SEARCH_BRIDGE_WINDOW * 2) {
+                String combined = c1Head.isEmpty() ? c0 : (c0 + c1Head);
+                Matcher m = pattern.matcher(combined);
+                boolean found = (fromIndex < c0.length()) && m.find(fromIndex);
+                int matcherAppendPos = 0;
+                while (found) {
+                    if (isCancelled != null && isCancelled.get()) {
+                        return totalMatches;
+                    }
+                    if (m.start() >= c0.length()) {
+                        break;
+                    }
+                    if (isMatchInColumnRange(c0, c1Head, m.start(), m.end(), minCol, maxCol)) {
+                        String evalRep = evaluateReplacement(m, matcherAppendPos, replacement, evalScratch);
+                        matcherAppendPos = m.end();
+                        if (out == null) {
+                            out = new StringBuilder(c0.length());
+                        }
+                        out.append(c0, lastAppend, m.start());
+                        out.append(evalRep);
+                        chunkMatches++;
+                        if (m.end() > c0.length()) {
+                            lastAppend = c0.length();
+                            nextSkipPrefix = m.end() - c0.length();
+                            break;
+                        }
+                        lastAppend = m.end();
+                    }
+                    found = m.find();
                 }
-                if (isMatchInColumnRange(chunkContent, m.start(), m.end(), minCol, maxCol)) {
-                    m.appendReplacement(sb, replacement);
-                    chunkMatches++;
+            } else {
+                int seamCut = c0.length() - SEARCH_BRIDGE_WINDOW;
+                int tailStart = Math.max(fromIndex, seamCut);
+                Matcher m0 = pattern.matcher(c0);
+                boolean found = m0.find(fromIndex);
+                int matcherAppendPos0 = 0;
+                while (found) {
+                    if (isCancelled != null && isCancelled.get()) {
+                        return totalMatches;
+                    }
+                    if (m0.start() >= seamCut || m0.end() == c0.length()) {
+                        tailStart = m0.start();
+                        break;
+                    }
+                    if (isMatchInColumnRange(c0, c1Head, m0.start(), m0.end(), minCol, maxCol)) {
+                        String evalRep = evaluateReplacement(m0, matcherAppendPos0, replacement, evalScratch);
+                        matcherAppendPos0 = m0.end();
+                        if (out == null) {
+                            out = new StringBuilder(c0.length());
+                        }
+                        out.append(c0, lastAppend, m0.start());
+                        out.append(evalRep);
+                        chunkMatches++;
+                        lastAppend = m0.end();
+                    }
+                    tailStart = Math.max(seamCut, m0.end());
+                    found = m0.find();
+                }
+
+                String tailCombined = c0.substring(tailStart) + c1Head;
+                int c0TailLen = c0.length() - tailStart;
+                Matcher mTail = pattern.matcher(tailCombined);
+                int matcherAppendPosTail = 0;
+                while (mTail.find()) {
+                    if (isCancelled != null && isCancelled.get()) {
+                        return totalMatches;
+                    }
+                    if (mTail.start() >= c0TailLen) {
+                        break;
+                    }
+                    int absStart = tailStart + mTail.start();
+                    int absEnd = tailStart + mTail.end();
+                    if (isMatchInColumnRange(c0, c1Head, absStart, absEnd, minCol, maxCol)) {
+                        String evalRep = evaluateReplacement(mTail, matcherAppendPosTail, replacement, evalScratch);
+                        matcherAppendPosTail = mTail.end();
+                        if (out == null) {
+                            out = new StringBuilder(c0.length());
+                        }
+                        out.append(c0, lastAppend, absStart);
+                        out.append(evalRep);
+                        chunkMatches++;
+                        if (absEnd > c0.length()) {
+                            lastAppend = c0.length();
+                            nextSkipPrefix = absEnd - c0.length();
+                            break;
+                        }
+                        lastAppend = absEnd;
+                    }
                 }
             }
-            m.appendTail(sb);
-            
-            if (chunkMatches > 0) {
+
+            if (chunkMatches > 0 || skipPrefix > 0) {
+                if (out == null) {
+                    out = new StringBuilder(Math.max(0, c0.length() - fromIndex));
+                }
+                out.append(c0, lastAppend, c0.length());
                 totalMatches += chunkMatches;
-                File tempFile = File.createTempFile("bearit_chunk_" + i + "_", ".tmp");
-                tempFile.deleteOnExit();
-                Files.writeString(tempFile.toPath(), sb.toString(), getActiveCharset());
-                dirtyChunks.put(i, tempFile);
+                writeDirtyChunkText(i, out.toString());
             }
-            
-            if (progressPublisher != null) {
+
+            skipPrefix = nextSkipPrefix;
+            if (progressPublisher != null && virtualTotalChunks > 0) {
                 int percent = (int) (((i + 1) * 100.0) / virtualTotalChunks);
                 progressPublisher.accept(percent);
             }

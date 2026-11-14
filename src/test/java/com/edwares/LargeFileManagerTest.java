@@ -228,5 +228,100 @@ public class LargeFileManagerTest {
         // Assert
         byte[] resultingData = Files.readAllBytes(largeFile.toPath());
         assertEquals(99, resultingData[resultingData.length - 1], "The un-dirtied second chunk must transfer cleanly during the save channel stream");
-    }    
+    }
+
+    @Test
+    void testCrossChunkBridgeCountAndReplaceAll(@TempDir Path tempDir) throws IOException {
+        int originalChunkSize = LargeFileManager.CHUNK_SIZE;
+        LargeFileManager.CHUNK_SIZE = 600 * 1024;
+        try {
+            // Force a hard-cut boundary at CHUNK_SIZE + 500*1024 (no newlines)
+            int cutOffset = LargeFileManager.CHUNK_SIZE + 500 * 1024;
+            String target = "and efficiently. 949276 ";
+            // Place "an" at the end of chunk 0 (cutOffset - 2 .. cutOffset) and
+            // "d efficiently. 949276 " at the start of chunk 1 (cutOffset .. cutOffset + 22)
+            String prefix = "x".repeat(cutOffset - 2) + "an";
+            String suffix = "d efficiently. 949276 " + "y".repeat(200) + target + "z".repeat(200);
+
+            File testFile = tempDir.resolve("bridge_search.txt").toFile();
+            Files.writeString(testFile.toPath(), prefix + suffix);
+
+            fileManager.setFile(testFile);
+            assertEquals(2, fileManager.getTotalChunks());
+            assertTrue(fileManager.getChunkContent(0).endsWith("an"), "Chunk 0 must end with 'an'");
+            assertTrue(fileManager.getChunkContent(1).startsWith("d efficiently. 949276 "),
+                    "Chunk 1 must start with 'd efficiently. 949276 '");
+
+            // 1. Count must find both the bridging occurrence and the occurrence inside chunk 1
+            assertEquals(2, fileManager.countGlobalMatches(target),
+                    "countGlobalMatches must count the match bridging chunk 0 and chunk 1 as well as the match in chunk 1");
+
+            // 2. Replace All must replace both occurrences cleanly across chunks
+            Pattern p = Pattern.compile(Pattern.quote(target));
+            int replaced = fileManager.replaceAllGlobal(p, "[REPLACED]", -1, -1, null, null);
+            assertEquals(2, replaced, "replaceAllGlobal must replace both the bridging match and the in-chunk match");
+
+            String combinedAfter = fileManager.getChunkContent(0) + fileManager.getChunkContent(1);
+            assertFalse(combinedAfter.contains(target), "No original target strings should remain after Replace All");
+            assertEquals("x".repeat(cutOffset - 2) + "[REPLACED]" + "y".repeat(200) + "[REPLACED]" + "z".repeat(200),
+                    combinedAfter);
+        } finally {
+            LargeFileManager.CHUNK_SIZE = originalChunkSize;
+        }
+    }
+
+    @Test
+    void testCrossChunkBridgeFindNextPrevAndSingleReplace(@TempDir Path tempDir) throws Exception {
+        int originalChunkSize = LargeFileManager.CHUNK_SIZE;
+        LargeFileManager.CHUNK_SIZE = 600 * 1024;
+        try {
+            int cutOffset = LargeFileManager.CHUNK_SIZE + 500 * 1024;
+            String target = "and efficiently. 949276 ";
+            String prefix = "x".repeat(cutOffset - 2) + "an";
+            String suffix = "d efficiently. 949276 " + "y".repeat(100) + target + "z".repeat(100);
+
+            File testFile = tempDir.resolve("bridge_editor_find.txt").toFile();
+            Files.writeString(testFile.toPath(), prefix + suffix);
+
+            AdvancedTextEditorPanel[] panelHolder = new AdvancedTextEditorPanel[1];
+            javax.swing.SwingUtilities.invokeAndWait(() -> {
+                AdvancedTextEditorPanel panel = new AdvancedTextEditorPanel();
+                panel.loadFile(testFile);
+                panel.getTextArea().setCaretPosition(0);
+                panelHolder[0] = panel;
+            });
+            AdvancedTextEditorPanel panel = panelHolder[0];
+
+            // 1. Find Next from start of chunk 0 should find the bridging match at the end of chunk 0
+            javax.swing.SwingUtilities.invokeAndWait(() -> panel.performFind(target, true));
+            javax.swing.SwingUtilities.invokeAndWait(() -> {
+                assertEquals("an", panel.getTextArea().getSelectedText(),
+                        "Bridging match should select 'an' at the end of chunk 0");
+                assertEquals(22, panel.getActiveBridgeEndInNextChunk(),
+                        "Bridging match should record 22 characters consumed in chunk 1");
+            });
+
+            // 2. Single-step Replace on the active bridging match should replace across both chunks
+            // and advance to the next match in chunk 1
+            javax.swing.SwingUtilities.invokeAndWait(() -> panel.performReplace(target, "FAST_BRIDGE "));
+            long deadline = System.currentTimeMillis() + 10_000;
+            while (System.currentTimeMillis() < deadline) {
+                String sel = panel.getTextArea().getSelectedText();
+                if (target.equals(sel != null ? sel.replace("\u200B\n", "").replace("\u200B", "") : null)) {
+                    break;
+                }
+                Thread.sleep(20);
+            }
+            javax.swing.SwingUtilities.invokeAndWait(() -> {
+                String sel = panel.getTextArea().getSelectedText();
+                assertNotNull(sel, "After replacing the bridging match, performReplace should select the next match in chunk 1");
+                assertEquals(target, sel.replace("\u200B\n", "").replace("\u200B", ""));
+                assertEquals(0, panel.getActiveBridgeEndInNextChunk(),
+                        "The second match is wholly inside chunk 1 (not bridging)");
+            });
+            panel.getFileManager().stopIndexer();
+        } finally {
+            LargeFileManager.CHUNK_SIZE = originalChunkSize;
+        }
+    }
 }
