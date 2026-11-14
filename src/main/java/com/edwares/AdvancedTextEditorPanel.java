@@ -1132,17 +1132,120 @@ public class AdvancedTextEditorPanel extends JPanel {
     }
 
     public void setEditorMaxLineLength(int maxLineLength) {
-        this.editorMaxLineLength = maxLineLength;
+        int clamped = BearitProperties.clampMaxLineLength(maxLineLength);
+        if (clamped == this.editorMaxLineLength) {
+            return;
+        }
+        this.editorMaxLineLength = clamped;
+        // Every cached chunk document was wrapped with the old length; rebuild them on demand
+        documentCache.clear();
+        rewrapCurrentDocument();
+    }
+
+    /**
+     * Re-applies soft wrapping to the visible document using the current max line length, preserving
+     * the text, caret position, and dirty/unsaved state. Undo history is reset because document
+     * offsets change when wrap markers are added or removed.
+     */
+    private void rewrapCurrentDocument() {
+        if (textArea == null || isCurrentlyPreview || isLoadingChunk) {
+            return;
+        }
+        Document oldDoc = textArea.getDocument();
+        if (oldDoc == null) {
+            return;
+        }
+        if (oldDoc.getLength() == 0) {
+            documentCache.put(loadedChunkIndex, oldDoc);
+            return;
+        }
+        String raw;
+        try {
+            raw = oldDoc.getText(0, oldDoc.getLength());
+        } catch (BadLocationException e) {
+            return;
+        }
+        int oldCaret = textArea.getCaretPosition();
+        int rawCaret = 0;
+        for (int i = 0; i < oldCaret && i < raw.length(); i++) {
+            if (raw.charAt(i) != '\u200B' && !(raw.charAt(i) == '\n' && i > 0 && raw.charAt(i - 1) == '\u200B')) {
+                rawCaret++;
+            }
+        }
+        String unwrapped = raw.replace("\u200B\n", "").replace("\u200B", "");
+
+        Object startColProp = oldDoc.getProperty(CHUNK_START_COLUMN_PROP);
+        long startCol = (startColProp instanceof Long) ? (Long) startColProp : 0L;
+
+        boolean prevNavigating = isNavigating;
+        isNavigating = true;
+        try {
+            Document newDoc = createWrappedDocument(-1, startCol);
+            newDoc.insertString(0, unwrapped, null);
+            newDoc.addDocumentListener(editorDocumentListener);
+            newDoc.addUndoableEditListener(e -> {
+                if (!isNavigating && !isCurrentlyPreview) {
+                    globalUndoManager.addEdit(new ChunkAwareEdit(loadedChunkIndex, e.getEdit()));
+                }
+            });
+            textArea.setDocument(newDoc);
+            documentCache.put(loadedChunkIndex, newDoc);
+            globalUndoManager.discardAllEdits();
+
+            // Map the unwrapped caret offset back into the re-wrapped document
+            String wrapped = newDoc.getText(0, newDoc.getLength());
+            int newCaret = 0;
+            int seen = 0;
+            while (newCaret < wrapped.length() && seen < rawCaret) {
+                char c = wrapped.charAt(newCaret);
+                boolean marker = c == '\u200B'
+                        || (c == '\n' && newCaret > 0 && wrapped.charAt(newCaret - 1) == '\u200B');
+                if (!marker) {
+                    seen++;
+                }
+                newCaret++;
+            }
+            textArea.setCaretPosition(Math.min(newCaret, newDoc.getLength()));
+        } catch (BadLocationException ignored) {
+        } finally {
+            isNavigating = prevNavigating;
+        }
+
+        if (lineNumberPanel != null) {
+            lineNumberPanel.adjustMetricSizing();
+            lineNumberPanel.repaint();
+        }
+        if (showColumnRuler && columnRulerPanel != null) {
+            columnRulerPanel.repaint();
+        }
+        textArea.revalidate();
+        textArea.repaint();
+        updateCursorStatus();
     }
 
     private Document createWrappedDocument() {
-        return createWrappedDocument(-1);
+        return createWrappedDocument(-1, 0L);
     }
+
+    private Document createWrappedDocument(int customMaxLineLength) {
+        return createWrappedDocument(customMaxLineLength, 0L);
+    }
+
+    /** Document property holding the logical column at which the chunk's first character sits. */
+    static final String CHUNK_START_COLUMN_PROP = "bearit.chunkStartColumn";
+    /** Document property holding a fixed custom wrap length (used for scrollbar preview documents). */
+    static final String WRAP_LENGTH_PROP = "bearit.wrapLength";
 
     // Optimization: Support a custom soft-wrap length so scrollbar preview chunks in no-wrap mode
     // can wrap at 200 chars to fill the vertical viewport and scroll smoothly during fast thumb dragging.
-    private Document createWrappedDocument(int customMaxLineLength) {
+    // chunkStartColumn: column of the first character within its logical line (non-zero when a chunk
+    // boundary cuts through a long line) so wrap points stay aligned across chunk boundaries.
+    private Document createWrappedDocument(int customMaxLineLength, long chunkStartColumn) {
         Document newDoc = new PlainDocument();
+        newDoc.putProperty(CHUNK_START_COLUMN_PROP, Math.max(0L, chunkStartColumn));
+        if (customMaxLineLength > 0) {
+            newDoc.putProperty(WRAP_LENGTH_PROP, customMaxLineLength);
+        }
         ((AbstractDocument) newDoc).setDocumentFilter(new DocumentFilter() {
             private boolean shouldBlock(FilterBypass fb) {
                 if (!readOnlyMode) return false;
@@ -1182,11 +1285,49 @@ public class AdvancedTextEditorPanel extends JPanel {
                 int lineIdx = root.getElementIndex(offset);
                 int lineStart = root.getElement(lineIdx).getStartOffset();
                 int charsBefore = offset - lineStart;
+                if (lineIdx == 0) {
+                    // The first line may continue a line from the previous chunk; keep wrap points aligned
+                    charsBefore += computeFirstLineColumnShift(fb.getDocument(), maxLen);
+                }
 
                 return LargeFileManager.forceWrapLongLinesDynamic(text, maxLen, charsBefore);
             }
         });
         return newDoc;
+    }
+
+    /**
+     * Returns how many columns of the logical line precede the first character of {@code doc}
+     * (modulo the wrap length), i.e. the column the document's first line starts at. Non-zero only for
+     * chunks that begin in the middle of a long line.
+     */
+    static int computeFirstLineColumnShift(Document doc, int fallbackMaxLen) {
+        if (doc == null) return 0;
+        Object sc = doc.getProperty(CHUNK_START_COLUMN_PROP);
+        if (!(sc instanceof Long) || (Long) sc <= 0) return 0;
+        Object wl = doc.getProperty(WRAP_LENGTH_PROP);
+        int maxLen = (wl instanceof Integer && (Integer) wl > 0) ? (Integer) wl : fallbackMaxLen;
+        if (maxLen <= 0) return 0;
+        return (int) ((Long) sc % maxLen);
+    }
+
+    /** Column shift to add to displayed column numbers for the given document line. */
+    int getLineColumnShift(int docLine) {
+        if (docLine != 0 || textArea == null) return 0;
+        return computeFirstLineColumnShift(textArea.getDocument(), getEditorMaxLineLength());
+    }
+
+    /** Resolves the start column for a chunk being loaded (cache-only for scrollbar previews). */
+    private long resolveChunkStartColumn(LargeFileManager.ChunkState state, int maxChunksToScan) {
+        if (state == null || isBinaryMode()) return 0;
+        try {
+            long col = state.isPreview()
+                    ? fileManager.getCachedChunkStartColumn(state.chunkIndex())
+                    : fileManager.getChunkStartColumn(state.chunkIndex(), maxChunksToScan);
+            return Math.max(0, col);
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     // --- True Line Bound Calculation (Scans Past Soft-Wrap \u200B Markers) ---
@@ -1736,7 +1877,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             int col = dot - textArea.getLineStartOffset(localLine);
 
             int colOffset = oneBasedColumnIndex ? 1 : 0;
-            col += colOffset;
+            col += colOffset + getLineColumnShift(localLine);
 
             long absDot = currentChunkStartOffset + dot;
             long absMark = currentChunkStartOffset + mark;
@@ -1750,8 +1891,12 @@ public class AdvancedTextEditorPanel extends JPanel {
                 
                 int startOffset = Math.min(dot, mark);
                 int endOffset = Math.max(dot, mark);
-                int startCol = startOffset - textArea.getLineStartOffset(textArea.getLineOfOffset(startOffset)) + colOffset;
-                int endCol = endOffset - textArea.getLineStartOffset(textArea.getLineOfOffset(endOffset)) + colOffset;
+                int startLineIdx = textArea.getLineOfOffset(startOffset);
+                int endLineIdx = textArea.getLineOfOffset(endOffset);
+                int startCol = startOffset - textArea.getLineStartOffset(startLineIdx) + colOffset
+                        + getLineColumnShift(startLineIdx);
+                int endCol = endOffset - textArea.getLineStartOffset(endLineIdx) + colOffset
+                        + getLineColumnShift(endLineIdx);
                 
                 lblCursorInfo.setText(String.format("| Line: %d | Col: %d - %d | Sel: %d - %d (width: %d)", absoluteLine, startCol, endCol,
                         selStart, selEnd, width));
@@ -1837,6 +1982,11 @@ public class AdvancedTextEditorPanel extends JPanel {
         boolean wasDirty = isDirty && !isCurrentlyPreview;
         String commitText = wasDirty ? getCommitText() : "";
         isDirty = false;
+        if (wasDirty) {
+            // Edits can move where following chunks start within their line (soft-wrap alignment)
+            final int editedChunk = loadedChunkIndex;
+            documentCache.keySet().removeIf(key -> key > editedChunk);
+        }
 
         new SwingWorker<Integer, Void>() {
             @Override
@@ -3277,6 +3427,11 @@ public class AdvancedTextEditorPanel extends JPanel {
         boolean wasDirty = isDirty && !isCurrentlyPreview;
         String currentText = wasDirty ? getCommitText() : "";
         isDirty = false;
+        if (wasDirty) {
+            // Edits can move where following chunks start within their line (soft-wrap alignment)
+            final int editedChunk = loadedChunkIndex;
+            documentCache.keySet().removeIf(key -> key > editedChunk);
+        }
 
         final int finalTarget = targetChunk;
         final Document cachedDoc = (!requestPreview) ? documentCache.get(finalTarget) : null;
@@ -3301,7 +3456,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                     int wrapLen = (state.isPreview() && !textArea.getLineWrap())
                             ? Math.min(getEditorMaxLineLength(), 200)
                             : getEditorMaxLineLength();
-                    Document newDoc = createWrappedDocument(wrapLen);
+                    Document newDoc = createWrappedDocument(wrapLen, resolveChunkStartColumn(state, Integer.MAX_VALUE));
                     String content = state.content();
                     String boundaryNewline = "";
                     if (!isBinaryMode() && state.hasNext()) {
@@ -3536,7 +3691,7 @@ public class AdvancedTextEditorPanel extends JPanel {
                 int wrapLen = (isCurrentlyPreview && !textArea.getLineWrap())
                         ? Math.min(getEditorMaxLineLength(), 200)
                         : getEditorMaxLineLength();
-                newDoc = createWrappedDocument(wrapLen);
+                newDoc = createWrappedDocument(wrapLen, resolveChunkStartColumn(state, 2));
                 try {
                     String content = state.content();
                     // Strip the trailing newline used strictly for chunk file boundaries
@@ -5661,17 +5816,19 @@ public class AdvancedTextEditorPanel extends JPanel {
         }
 
         // Populates lineSegment with the current caret line's characters and returns
-        // [rowStartCol, rowEndCol, curColOffsetFromLineStart].
+        // [rowStartCol, rowEndCol, curColOffsetFromLineStart, lineColumnShift].
         private int[] loadCurrentLineBounds(int leftInset) {
             int rowStartCol = 0;
             int rowEndCol = 0;
             int curColOffset = 0;
+            int lineShift = 0;
             try {
                 Document doc = textArea.getDocument();
                 int docLen = doc.getLength();
                 int dot = (textArea.getCaret() != null) ? Math.max(0, Math.min(docLen, textArea.getCaret().getDot())) : 0;
                 Element root = doc.getDefaultRootElement();
                 int lineIdx = root.getElementIndex(dot);
+                lineShift = parent.getLineColumnShift(lineIdx);
                 Element lineElem = root.getElement(lineIdx);
                 int lineStart = lineElem.getStartOffset();
                 int lineEnd = Math.min(docLen, lineElem.getEndOffset());
@@ -5709,7 +5866,7 @@ public class AdvancedTextEditorPanel extends JPanel {
             } catch (Exception e) {
                 lineSegment.count = 0;
             }
-            return new int[] { rowStartCol, rowEndCol, curColOffset };
+            return new int[] { rowStartCol, rowEndCol, curColOffset, lineShift };
         }
 
         int getRegularTickHeight() {
@@ -5769,7 +5926,9 @@ public class AdvancedTextEditorPanel extends JPanel {
 
         int getCurrentCursorDisplayColumn() {
             int colBase = parent.oneBasedColumnIndex ? 1 : 0;
-            return getCurrentCursorColumnOffset(null) + colBase;
+            Insets ins = textArea.getInsets();
+            int[] bounds = loadCurrentLineBounds((ins != null) ? ins.left : 0);
+            return bounds[2] + colBase + bounds[3];
         }
 
         @Override
@@ -5853,10 +6012,11 @@ public class AdvancedTextEditorPanel extends JPanel {
             int rowStartCol = bounds[0];
             int rowEndCol = bounds[1];
             int curColOffset = bounds[2];
+            int lineShift = bounds[3];
             char[] arr = lineSegment.array;
             int off = lineSegment.offset;
 
-            int colBase = parent.oneBasedColumnIndex ? 1 : 0;
+            int colBase = (parent.oneBasedColumnIndex ? 1 : 0) + lineShift;
             int curDisplayCol = curColOffset + colBase;
 
             // Pre-compute the current cursor column's X coordinate so we can prevent label collisions
@@ -6508,7 +6668,14 @@ public class AdvancedTextEditorPanel extends JPanel {
      * and absorbs the 3-5 second processing penalty in the background!
      */
     public javax.swing.text.Document buildDocumentOffThread(String text) throws javax.swing.text.BadLocationException {
-        javax.swing.text.Document newDoc = createWrappedDocument();
+        long startCol = 0;
+        if (!isBinaryMode()) {
+            try {
+                startCol = Math.max(0, fileManager.getChunkStartColumn(loadedChunkIndex));
+            } catch (Exception ignored) {
+            }
+        }
+        javax.swing.text.Document newDoc = createWrappedDocument(-1, startCol);
         // Insert the massive string without triggering UI repaints or Undo history
         newDoc.insertString(0, text, null);
         return newDoc;

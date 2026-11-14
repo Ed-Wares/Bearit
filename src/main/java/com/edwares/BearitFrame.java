@@ -2209,6 +2209,9 @@ public class BearitFrame extends JFrame {
         viewMenu.add(eolMenuItem);
         viewMenu.add(oneBasedColumnMenuItem);
         viewMenu.add(columnRulerMenuItem);
+        JMenuItem maxLineLengthItem = new JMenuItem("Set Max Line Length...");
+        maxLineLengthItem.addActionListener(e -> showMaxLineLengthDialog());
+        viewMenu.add(maxLineLengthItem);
         viewMenu.addSeparator();
         viewMenu.add(readOnlyMenuItem);
         
@@ -2636,5 +2639,33 @@ public class BearitFrame extends JFrame {
                 this::updateGlobalFont
         );
         dialog.setVisible(true);
+    }
+
+    private void showMaxLineLengthDialog() {
+        MaxLineLengthDialog dialog = new MaxLineLengthDialog(
+                this,
+                BearitProperties.getInstance().getMaxLineLength(),
+                this::setGlobalMaxLineLength
+        );
+        dialog.setVisible(true);
+    }
+
+    /**
+     * Saves the max line length to bearit.properties and re-wraps every open text editor with it.
+     */
+    public void setGlobalMaxLineLength(int maxLineLength) {
+        int clamped = BearitProperties.clampMaxLineLength(maxLineLength);
+        BearitProperties props = BearitProperties.getInstance();
+        props.setMaxLineLength(clamped);
+        props.save();
+
+        for (int i = 0; i < tabbedPane.getTabCount(); i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            if (c instanceof AdvancedTextEditorPanel) {
+                ((AdvancedTextEditorPanel) c).setEditorMaxLineLength(clamped);
+            } else if (c instanceof BearitTextHexWrapper) {
+                ((BearitTextHexWrapper) c).getHiddenTextEditor().setEditorMaxLineLength(clamped);
+            }
+        }
     }
 }

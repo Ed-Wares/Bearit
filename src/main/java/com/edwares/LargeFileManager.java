@@ -48,6 +48,9 @@ public class LargeFileManager {
     private final Map<Integer, String> previewCache = new ConcurrentHashMap<>();
     private final Map<Integer, Long> lineOffsetCache = new ConcurrentHashMap<>();    
     private final Map<Integer, Long> chunkLineDeltas = new ConcurrentHashMap<>(); // ADD THIS
+    // Logical column (in displayed characters) at which each chunk begins within its line. Non-zero
+    // only when a chunk starts in the middle of a line (hard-cut boundaries in very long lines).
+    private final Map<Integer, Long> chunkStartColumnCache = new ConcurrentHashMap<>();
 
     public record ChunkState(
         String content, 
@@ -382,6 +385,9 @@ public class LargeFileManager {
         
         dirtyChunks.put(currentChunkIndex, tempFile);
         preloadCache.remove(currentChunkIndex); 
+        // Edited text can change where every following chunk begins within its line
+        final int editedChunk = currentChunkIndex;
+        chunkStartColumnCache.keySet().removeIf(key -> key > editedChunk);
         
         // --- Calculate Line Delta for instant UI updates ---
         if (lineOffsetCache.containsKey(currentChunkIndex) && lineOffsetCache.containsKey(currentChunkIndex + 1)) {
@@ -397,6 +403,7 @@ public class LargeFileManager {
         previewCache.clear();
         lineOffsetCache.clear();
         chunkLineDeltas.clear();
+        chunkStartColumnCache.clear();
     }
 
     public void clearCachesForEncodingChange() {
@@ -420,6 +427,7 @@ public class LargeFileManager {
         boundaryCache.clear();
         previewCache.clear();
         lineOffsetCache.clear();
+        chunkStartColumnCache.clear();
         
         // Optimization: Reuse a single RandomAccessFile and 256 KB read buffer across all chunks,
         // populate previewCache from the first read pass without extra seeks/allocations,
@@ -433,6 +441,10 @@ public class LargeFileManager {
                 Charset charset = getActiveCharset();
                 java.util.concurrent.atomic.AtomicInteger latestCompletedChunk = new java.util.concurrent.atomic.AtomicInteger(-1);
                 java.util.concurrent.atomic.AtomicBoolean uiUpdatePending = new java.util.concurrent.atomic.AtomicBoolean(false);
+                // Track the running logical column so each chunk's start column is known without extra I/O
+                final boolean utf8 = isUtf8(charset);
+                final boolean trackColumns = !isBinaryMode && isAsciiCompatible(charset) && dirtyChunks.isEmpty();
+                long runningColumn = 0;
                 
                 for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
                     if (Thread.currentThread().isInterrupted()) break;
@@ -442,12 +454,16 @@ public class LargeFileManager {
                     long end = bounds[1];
                     
                     lineOffsetCache.put(chunkIdx, currentGlobalLine);
+                    if (trackColumns) {
+                        chunkStartColumnCache.put(chunkIdx, Math.max(0, runningColumn));
+                    }
                     
                     raf.seek(start);
                     long bytesRead = 0;
                     long chunkLen = end - start;
                     long linesInChunk = 0;
                     boolean previewBuilt = false;
+                    boolean bomChecked = (chunkIdx != 0 || !utf8);
                     
                     while (bytesRead < chunkLen) {
                         if (Thread.currentThread().isInterrupted()) return;
@@ -463,8 +479,26 @@ public class LargeFileManager {
                             previewCache.put(chunkIdx, previewStr);
                             previewBuilt = true;
                         }
-                        for (int i = 0; i < read; i++) {
-                            if (buffer[i] == '\n') linesInChunk++;
+                        if (trackColumns) {
+                            if (!bomChecked) {
+                                bomChecked = true;
+                                if (start == 0 && hasUtf8Bom(buffer, read)) {
+                                    runningColumn = -1; // The BOM is not displayed in the editor
+                                }
+                            }
+                            for (int i = 0; i < read; i++) {
+                                byte b = buffer[i];
+                                if (b == '\n') {
+                                    linesInChunk++;
+                                    runningColumn = 0;
+                                } else {
+                                    runningColumn += displayedCharWeight(b, utf8);
+                                }
+                            }
+                        } else {
+                            for (int i = 0; i < read; i++) {
+                                if (buffer[i] == '\n') linesInChunk++;
+                            }
                         }
                         bytesRead += read;
                     }
@@ -829,6 +863,193 @@ public class LargeFileManager {
         long[] bounds = new long[]{start, end};
         boundaryCache.put(index, bounds);
         return bounds;
+    }
+
+    // --- Chunk Start Column Tracking ---
+    // Chunks are cut at newlines when possible, but very long lines (minified files, fixed-length
+    // records without newlines) are hard-cut mid-line. To keep soft-wrap points (max line length)
+    // and column numbers continuous across chunks, every chunk knows the logical column of its first
+    // character within its line.
+
+    /**
+     * Returns the cached start column of a chunk, 0 for the first chunk / binary mode, or -1 if it
+     * has not been computed yet. Never performs I/O.
+     */
+    public long getCachedChunkStartColumn(int index) {
+        if (index <= 0 || isBinaryMode) return 0;
+        Long v = chunkStartColumnCache.get(index);
+        return v != null ? v : -1;
+    }
+
+    /**
+     * Returns the number of displayed characters between the start of the logical line and the first
+     * character of chunk {@code index} (0 when the chunk starts on a fresh line).
+     */
+    public long getChunkStartColumn(int index) throws IOException {
+        return getChunkStartColumn(index, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Same as {@link #getChunkStartColumn(int)} but gives up (returning -1) if more than
+     * {@code maxChunksToScan} previous chunks would have to be scanned. Results are memoized.
+     */
+    public long getChunkStartColumn(int index, int maxChunksToScan) throws IOException {
+        if (index <= 0 || isBinaryMode) return 0;
+        Long cached = chunkStartColumnCache.get(index);
+        if (cached != null) return cached;
+
+        // Walk backwards until a chunk containing a newline, a cached value, or the file start is found.
+        // Each entry is {chunkIndex k, displayed char count of chunk k-1} where S(k) = S(k-1) + count.
+        java.util.ArrayList<long[]> chain = new java.util.ArrayList<>();
+        int k = index;
+        int scanned = 0;
+        long value;
+        while (true) {
+            if (k <= 0) {
+                value = 0;
+                break;
+            }
+            Long c = chunkStartColumnCache.get(k);
+            if (c != null) {
+                value = c;
+                break;
+            }
+            if (scanned >= maxChunksToScan) return -1;
+            long[] tail = scanChunkTail(k - 1);
+            scanned++;
+            if (tail[0] == 1) {
+                value = tail[1];
+                chunkStartColumnCache.put(k, value);
+                break;
+            }
+            chain.add(new long[]{k, tail[1]});
+            k--;
+        }
+        for (int j = chain.size() - 1; j >= 0; j--) {
+            long[] e = chain.get(j);
+            value += e[1];
+            chunkStartColumnCache.put((int) e[0], value);
+        }
+        return value;
+    }
+
+    /**
+     * Scans chunk {@code idx} backwards from its end.
+     * @return {1, displayed chars after the last newline} if the chunk contains a newline,
+     *         otherwise {0, displayed chars in the whole chunk}
+     */
+    private long[] scanChunkTail(int idx) throws IOException {
+        Charset cs = getActiveCharset();
+        boolean utf8 = isUtf8(cs);
+        boolean asciiCompatible = isAsciiCompatible(cs);
+
+        if (dirtyChunks.containsKey(idx)) {
+            byte[] data = Files.readAllBytes(dirtyChunks.get(idx).toPath());
+            return asciiCompatible
+                    ? scanTailBytes(data, data.length, utf8, idx == 0)
+                    : scanTailDecoded(new String(data, cs));
+        }
+        if (currentFile == null || !currentFile.exists()) return new long[]{1, 0};
+
+        long[] b = getChunkBoundaries(idx);
+        long start = b[0];
+        long end = b[1];
+        if (end <= start) return new long[]{0, 0};
+
+        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(currentFile, "r")) {
+            if (!asciiCompatible) {
+                byte[] data = new byte[(int) Math.min(Integer.MAX_VALUE - 8, end - start)];
+                raf.seek(start);
+                raf.readFully(data);
+                return scanTailDecoded(new String(data, cs));
+            }
+            byte[] buf = new byte[256 * 1024];
+            long pos = end;
+            long chars = 0;
+            while (pos > start) {
+                if (Thread.currentThread().isInterrupted()) {
+                    throw new java.io.InterruptedIOException("Chunk column scan interrupted");
+                }
+                int len = (int) Math.min(buf.length, pos - start);
+                pos -= len;
+                raf.seek(pos);
+                raf.readFully(buf, 0, len);
+                for (int i = len - 1; i >= 0; i--) {
+                    byte x = buf[i];
+                    if (x == '\n') return new long[]{1, chars};
+                    chars += displayedCharWeight(x, utf8);
+                }
+            }
+            if (start == 0 && utf8) {
+                byte[] head = new byte[3];
+                raf.seek(0);
+                int n = raf.read(head, 0, 3);
+                if (hasUtf8Bom(head, n)) chars--; // BOM is not displayed
+            }
+            return new long[]{0, Math.max(0, chars)};
+        }
+    }
+
+    private static long[] scanTailBytes(byte[] data, int len, boolean utf8, boolean mayHaveBom) {
+        long chars = 0;
+        for (int i = len - 1; i >= 0; i--) {
+            byte x = data[i];
+            if (x == '\n') return new long[]{1, chars};
+            chars += displayedCharWeight(x, utf8);
+        }
+        if (mayHaveBom && utf8 && hasUtf8Bom(data, len)) chars--;
+        return new long[]{0, Math.max(0, chars)};
+    }
+
+    private static long[] scanTailDecoded(String s) {
+        long chars = 0;
+        for (int i = s.length() - 1; i >= 0; i--) {
+            char c = s.charAt(i);
+            if (c == '\n') return new long[]{1, chars};
+            chars += displayedCharWeight(c);
+        }
+        return new long[]{0, chars};
+    }
+
+    static boolean isUtf8(Charset cs) {
+        return cs != null && "UTF-8".equalsIgnoreCase(cs.name());
+    }
+
+    /** True when '\n' is the single byte 0x0A and other characters never contain that byte. */
+    static boolean isAsciiCompatible(Charset cs) {
+        if (cs == null) return false;
+        if (isUtf8(cs)) return true;
+        try {
+            byte[] nl = "\n".getBytes(cs);
+            return cs.newEncoder().maxBytesPerChar() <= 1.0f && nl.length == 1 && nl[0] == '\n';
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    static boolean hasUtf8Bom(byte[] buf, int len) {
+        return len >= 3 && (buf[0] & 0xFF) == 0xEF && (buf[1] & 0xFF) == 0xBB && (buf[2] & 0xFF) == 0xBF;
+    }
+
+    /**
+     * Number of editor characters a raw byte contributes (mirrors the control-character stripping
+     * applied before text is shown): UTF-8 continuation bytes count 0, 4-byte lead bytes count 2
+     * (surrogate pair), stripped control characters count 0.
+     */
+    static int displayedCharWeight(byte b, boolean utf8) {
+        int u = b & 0xFF;
+        if (u < 0x20) return (u == '\t' || u == '\r') ? 1 : 0;
+        if (u == 0x7F) return 0;
+        if (!utf8 || u < 0x80) return 1;
+        if (u < 0xC0) return 0;
+        return (u >= 0xF0) ? 2 : 1;
+    }
+
+    static int displayedCharWeight(char c) {
+        if (c < 0x20) return (c == '\t' || c == '\r') ? 1 : 0;
+        if (c >= 0x20 && c < 0x7F) return 1;
+        int type = Character.getType(c);
+        return (type == Character.CONTROL || type == Character.FORMAT) ? 0 : 1;
     }
 
     public byte[] getChunkBytes(int index) throws IOException {

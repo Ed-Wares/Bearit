@@ -290,16 +290,29 @@ public class BearitProperties {
         if (index >= 0 && index < MAX_CUSTOM_TOOLS) { customToolNames[index] = name; }
     }
 
+    /** Smallest allowed editor max line length. */
+    public static final int MIN_MAX_LINE_LENGTH = 1;
+    /** Largest allowed editor max line length. */
+    public static final int MAX_MAX_LINE_LENGTH = 15001;
+    /** Default editor max line length. */
+    public static final int DEFAULT_MAX_LINE_LENGTH = 15000;
+
+    /** Clamps a max line length value into the allowed range {@code 1..15001}. */
+    public static int clampMaxLineLength(int length) {
+        return Math.max(MIN_MAX_LINE_LENGTH, Math.min(MAX_MAX_LINE_LENGTH, length));
+    }
+
     public int getMaxLineLength() {
         try {
-            return Integer.parseInt(props.getProperty("max.line.length", "15000"));
+            return clampMaxLineLength(Integer.parseInt(
+                    props.getProperty("max.line.length", String.valueOf(DEFAULT_MAX_LINE_LENGTH)).trim()));
         } catch (NumberFormatException e) {
-            return 15000;
+            return DEFAULT_MAX_LINE_LENGTH;
         }
     }
 
     public void setMaxLineLength(int length) {
-        props.setProperty("max.line.length", String.valueOf(length));
+        props.setProperty("max.line.length", String.valueOf(clampMaxLineLength(length)));
     }
 
     public java.util.List<String> getSearchHistory() {
