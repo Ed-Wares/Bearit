@@ -16,6 +16,7 @@ public class FontPickerDialogTest {
         AtomicInteger appliedSize = new AtomicInteger(-1);
 
         SwingUtilities.invokeAndWait(() -> {
+            FontPickerDialog.clearFontCacheForTesting();
             FontPickerDialog dialog = new FontPickerDialog(
                     null,
                     "SansSerif",
@@ -31,23 +32,56 @@ public class FontPickerDialogTest {
                 assertTrue(dialog.isResizable(), "Choose Font dialog must be resizable");
                 assertEquals(new java.awt.Color(74, 136, 199), dialog.getFontList().getSelectionBackground(),
                         "Selected font highlight color should be Color(74, 136, 199)");
+                // Immediately after construction (before or during background load), initial font is selected
+                assertEquals("SansSerif", dialog.getSelectedFontLabel().getText(),
+                        "Selected font label next to Preview: must match initial font immediately");
+
+                // Wait for background font loading to complete and populate the list
+                dialog.waitForFontsLoaded(5000);
+                assertTrue(dialog.isFontsLoaded(), "Font list should finish loading in the background");
+
                 assertEquals(dialog.getFontList().getSelectedValue(), dialog.getSelectedFontLabel().getText(),
                         "Selected font label next to Preview: must match selected font");
 
-                // Verify the cell renderer actually paints the blue highlight background (not overridden by L&F)
+                // Verify the cell renderer displays the font name + sample test string in that font
+                // and paints the blue highlight background (not overridden by L&F)
                 javax.swing.JList<String> list = dialog.getFontList();
                 int selIdx = list.getSelectedIndex();
                 assertTrue(selIdx >= 0, "Initial font must be selected in the list");
+                String selectedFontName = list.getSelectedValue();
                 java.awt.Component cellComp = list.getCellRenderer().getListCellRendererComponent(
-                        list, list.getSelectedValue(), selIdx, true, true);
-                cellComp.setSize(200, 24);
+                        list, selectedFontName, selIdx, true, true);
+                assertTrue(cellComp instanceof javax.swing.JLabel, "Cell renderer should return a JLabel");
+                javax.swing.JLabel cellLabel = (javax.swing.JLabel) cellComp;
+                assertTrue(cellLabel.getText().contains(selectedFontName),
+                        "Cell renderer text should contain the font name");
+                assertTrue(cellLabel.getText().contains(FontPickerDialog.LIST_SAMPLE_TEXT),
+                        "Cell renderer text should contain the sample test string");
+                assertEquals(selectedFontName.toLowerCase(), cellLabel.getFont().getName().toLowerCase(),
+                        "Cell renderer should use the row's font for the sample string");
+
+                cellComp.setSize(340, 26);
                 java.awt.image.BufferedImage cellImg = new java.awt.image.BufferedImage(
-                        200, 24, java.awt.image.BufferedImage.TYPE_INT_RGB);
+                        340, 26, java.awt.image.BufferedImage.TYPE_INT_RGB);
                 java.awt.Graphics2D gCell = cellImg.createGraphics();
                 cellComp.paint(gCell);
                 gCell.dispose();
-                assertEquals(new java.awt.Color(74, 136, 199).getRGB(), cellImg.getRGB(2, 2),
+                int expectedBgRgb = new java.awt.Color(74, 136, 199).getRGB();
+                assertEquals(expectedBgRgb, cellImg.getRGB(2, 2),
                         "Selected cell must paint blue highlight background Color(74, 136, 199)");
+
+                // Verify sample test string pixels are drawn on the right side of the cell (x >= 180)
+                boolean foundSampleTextPixel = false;
+                for (int x = 180; x < 335 && !foundSampleTextPixel; x++) {
+                    for (int y = 2; y < 24; y++) {
+                        if (cellImg.getRGB(x, y) != expectedBgRgb) {
+                            foundSampleTextPixel = true;
+                            break;
+                        }
+                    }
+                }
+                assertTrue(foundSampleTextPixel,
+                        "Cell renderer should paint the sample test string next to the font name");
 
                 int totalFonts = dialog.getFontList().getModel().getSize();
                 assertTrue(totalFonts > 1, "Font list should contain available system fonts");

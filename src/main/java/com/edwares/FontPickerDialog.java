@@ -8,7 +8,12 @@ import java.awt.*;
 import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 
 /**
@@ -16,8 +21,11 @@ import java.util.function.BiConsumer;
  *
  * <p>Features:
  * <ul>
+ *   <li>Asynchronous background loading of system font families and sample {@link Font} instances so opening
+ *       the dialog never blocks or freezes the UI thread.</li>
  *   <li>Live case-insensitive font-name filtering via the filter text field above the font list.</li>
- *   <li>Scrollable list of system font families with high-contrast blue selection highlighting
+ *   <li>Scrollable list of system font families displaying each font name alongside a sample test string
+ *       ({@link #LIST_SAMPLE_TEXT}) rendered in that font, with high-contrast blue selection highlighting
  *       ({@code Color(74, 136, 199)}), automatically scrolled to the initial font on open.</li>
  *   <li>Font size spinner constrained to {@code 6..80} pt.</li>
  *   <li>Editable live preview field with the currently selected font name displayed next to {@code Preview:}.</li>
@@ -48,8 +56,19 @@ public class FontPickerDialog extends JDialog {
     public static final String DEFAULT_FONT_NAME = "Monospaced";
     /** Default font size in points applied when resetting the dialog ({@value}). */
     public static final int DEFAULT_FONT_SIZE = 14;
+    /** Sample test string rendered in each font next to its name in the font list ({@value}). */
+    public static final String LIST_SAMPLE_TEXT = "AaBbCc 123";
+    private static final int LIST_SAMPLE_FONT_SIZE = 14;
+    private static final int LIST_CELL_HEIGHT = 26;
 
-    private final String[] allFontNames;
+    private static volatile String[] cachedSystemFontNames = null;
+    private static final ConcurrentHashMap<String, Font> sampleFontCache = new ConcurrentHashMap<>();
+
+    private volatile String[] allFontNames;
+    private volatile boolean fontsLoaded = false;
+    private final CountDownLatch backgroundFetchLatch = new CountDownLatch(1);
+    private Thread fontLoaderThread;
+    private final TitledBorder selectionBorder;
     private final DefaultListModel<String> fontListModel = new DefaultListModel<>();
     private final JList<String> fontList;
     private final JTextField filterField;
@@ -76,10 +95,11 @@ public class FontPickerDialog extends JDialog {
         setResizable(true);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
 
-        this.allFontNames = GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames();
         this.currentSelectedFont = (initialFontName != null && !initialFontName.isEmpty())
                 ? initialFontName
                 : DEFAULT_FONT_NAME;
+        // Seed with the initial font immediately so the dialog opens without blocking the EDT
+        this.allFontNames = new String[] { this.currentSelectedFont };
 
         Font dialogFont = new Font(Font.DIALOG, Font.PLAIN, 14);
         JPanel contentPanel = new JPanel(new BorderLayout(12, 12));
@@ -106,11 +126,23 @@ public class FontPickerDialog extends JDialog {
         Color selFg = Color.WHITE;
         Color normalBg = isDark ? new Color(40, 40, 40) : Color.WHITE;
         Color normalFg = isDark ? new Color(200, 200, 200) : Color.BLACK;
+        Color sampleFg = isDark ? new Color(175, 175, 175) : new Color(70, 70, 70);
         fontList.setCellRenderer(new DefaultListCellRenderer() {
+            private String renderedFontName = "";
+            private Font sampleFont = dialogFont;
+            private boolean selectedCell = false;
+
             @Override
             public Component getListCellRendererComponent(JList<?> list, Object value, int index,
                                                           boolean isSelected, boolean cellHasFocus) {
-                JLabel c = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+                String fontName = value != null ? value.toString() : "";
+                renderedFontName = fontName;
+                sampleFont = getOrCreateSampleFont(fontName);
+                selectedCell = isSelected;
+
+                JLabel c = (JLabel) super.getListCellRendererComponent(
+                        list, fontName + "   " + LIST_SAMPLE_TEXT, index, isSelected, cellHasFocus);
+                c.setFont(sampleFont);
                 c.setOpaque(true);
                 c.setBackground(isSelected ? selBg : normalBg);
                 c.setForeground(isSelected ? selFg : normalFg);
@@ -119,16 +151,43 @@ public class FontPickerDialog extends JDialog {
 
             @Override
             protected void paintComponent(Graphics g) {
-                g.setColor(getBackground());
-                g.fillRect(0, 0, getWidth(), getHeight());
-                setOpaque(false);
-                super.paintComponent(g);
-                setOpaque(true);
+                Graphics2D g2 = (Graphics2D) g.create();
+                try {
+                    g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
+                            RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                    g2.setColor(getBackground());
+                    g2.fillRect(0, 0, getWidth(), getHeight());
+
+                    Insets insets = getInsets();
+                    int leftX = (insets != null ? insets.left : 0) + 6;
+                    FontMetrics nameFm = g2.getFontMetrics(dialogFont);
+                    int nameBaselineY = (getHeight() - nameFm.getHeight()) / 2 + nameFm.getAscent();
+
+                    g2.setColor(getForeground());
+                    g2.setFont(dialogFont);
+                    String nameText = renderedFontName != null ? renderedFontName : "";
+                    g2.drawString(nameText, leftX, nameBaselineY);
+
+                    int nameWidth = nameFm.stringWidth(nameText);
+                    int sampleX = Math.max(leftX + 175, leftX + nameWidth + 16);
+                    Font previewFont = (sampleFont != null) ? sampleFont : dialogFont;
+                    FontMetrics sampleFm = g2.getFontMetrics(previewFont);
+                    int sampleBaselineY = (getHeight() - sampleFm.getHeight()) / 2 + sampleFm.getAscent();
+
+                    g2.setColor(selectedCell ? selFg : sampleFg);
+                    g2.setFont(previewFont);
+                    g2.drawString(LIST_SAMPLE_TEXT, sampleX, sampleBaselineY);
+                } finally {
+                    g2.dispose();
+                }
             }
         });
+        // Fixed cell width & height prevent BasicListUI from measuring all 300+ fonts on the EDT
+        fontList.setPrototypeCellValue("MMMMMMMMMMMMMMMMMMMM   " + LIST_SAMPLE_TEXT);
+        fontList.setFixedCellHeight(LIST_CELL_HEIGHT);
 
         JScrollPane fontScroll = new JScrollPane(fontList);
-        fontScroll.setPreferredSize(new Dimension(280, 220));
+        fontScroll.setPreferredSize(new Dimension(380, 220));
 
         JPanel listContainer = new JPanel(new BorderLayout(0, 8));
         listContainer.setOpaque(false);
@@ -153,10 +212,10 @@ public class FontPickerDialog extends JDialog {
         rightWrapper.add(sizePanel, BorderLayout.NORTH);
 
         JPanel selectionPanel = new JPanel(new BorderLayout(12, 12));
-        TitledBorder border = BorderFactory.createTitledBorder("Font Selection:");
-        border.setTitleFont(dialogFont);
+        selectionBorder = BorderFactory.createTitledBorder("Font Selection (Loading...):");
+        selectionBorder.setTitleFont(dialogFont);
         selectionPanel.setBorder(BorderFactory.createCompoundBorder(
-                border,
+                selectionBorder,
                 BorderFactory.createEmptyBorder(8, 8, 8, 8)
         ));
         selectionPanel.setOpaque(false);
@@ -222,7 +281,7 @@ public class FontPickerDialog extends JDialog {
         contentPanel.add(bottomPanel, BorderLayout.SOUTH);
         setContentPane(contentPanel);
 
-        // --- Populate and Wire Listeners ---
+        // --- Populate Initial Selection and Wire Listeners ---
         applyFontFilter("");
 
         filterField.getDocument().addDocumentListener(new DocumentListener() {
@@ -282,9 +341,12 @@ public class FontPickerDialog extends JDialog {
         fontList.setSelectionBackground(selBg);
         fontList.setSelectionForeground(selFg);
 
-        setMinimumSize(new Dimension(420, 380));
+        setMinimumSize(new Dimension(620, 380));
         pack();
         setLocationRelativeTo(owner);
+
+        // Start loading all system font families and warming sample fonts in the background
+        startBackgroundFontLoad();
 
         // Ensure the initially selected font is scrolled into view once the dialog is laid out and opened
         addWindowListener(new WindowAdapter() {
@@ -298,22 +360,146 @@ public class FontPickerDialog extends JDialog {
         });
     }
 
+    /** Starts a daemon thread to load system font families and pre-warm sample {@link Font} instances off the EDT. */
+    private void startBackgroundFontLoad() {
+        final String targetInitialFont = this.currentSelectedFont;
+        fontLoaderThread = new Thread(() -> {
+            String[] names = cachedSystemFontNames;
+            if (names == null) {
+                names = GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames();
+                cachedSystemFontNames = names;
+            }
+
+            // Warm up the initial font, default font, top viewport rows, and rows around the initial selection
+            warmSampleFont(targetInitialFont);
+            warmSampleFont(DEFAULT_FONT_NAME);
+            int topWarmCount = Math.min(names.length, 15);
+            for (int i = 0; i < topWarmCount && !Thread.currentThread().isInterrupted(); i++) {
+                warmSampleFont(names[i]);
+            }
+            int matchIdx = -1;
+            for (int i = 0; i < names.length; i++) {
+                if (names[i].equalsIgnoreCase(targetInitialFont)) {
+                    matchIdx = i;
+                    break;
+                }
+            }
+            if (matchIdx >= 0) {
+                int start = Math.max(0, matchIdx - 10);
+                int end = Math.min(names.length, matchIdx + 15);
+                for (int i = start; i < end && !Thread.currentThread().isInterrupted(); i++) {
+                    warmSampleFont(names[i]);
+                }
+            }
+
+            this.allFontNames = names;
+            this.backgroundFetchLatch.countDown();
+            SwingUtilities.invokeLater(this::applyLoadedFontsOnEdt);
+
+            // Continue warming remaining sample fonts in the background so scrolling stays smooth
+            for (String fontName : names) {
+                if (Thread.currentThread().isInterrupted()) {
+                    break;
+                }
+                warmSampleFont(fontName);
+            }
+        }, "Bearit-FontLoader");
+        fontLoaderThread.setDaemon(true);
+        fontLoaderThread.start();
+    }
+
+    private static void warmSampleFont(String fontName) {
+        if (fontName != null && !fontName.isEmpty()) {
+            Font f = getOrCreateSampleFont(fontName);
+            f.canDisplay('A');
+        }
+    }
+
+    static Font getOrCreateSampleFont(String fontName) {
+        if (fontName == null || fontName.isEmpty()) {
+            return new Font(Font.DIALOG, Font.PLAIN, LIST_SAMPLE_FONT_SIZE);
+        }
+        return sampleFontCache.computeIfAbsent(fontName,
+                name -> new Font(name, Font.PLAIN, LIST_SAMPLE_FONT_SIZE));
+    }
+
+    private void applyLoadedFontsOnEdt() {
+        if (fontsLoaded) {
+            return;
+        }
+        fontsLoaded = true;
+        selectionBorder.setTitle("Font Selection:");
+        applyFontFilter(filterField.getText());
+        int idx = fontList.getSelectedIndex();
+        if (idx >= 0) {
+            fontList.ensureIndexIsVisible(idx);
+        }
+        repaint();
+    }
+
+    /**
+     * Waits up to {@code timeoutMs} milliseconds for the background font loader to finish and applies
+     * the loaded fonts to the list model on the EDT.
+     */
+    void waitForFontsLoaded(long timeoutMs) {
+        try {
+            backgroundFetchLatch.await(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        if (SwingUtilities.isEventDispatchThread()) {
+            applyLoadedFontsOnEdt();
+        } else {
+            try {
+                SwingUtilities.invokeAndWait(this::applyLoadedFontsOnEdt);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    boolean isFontsLoaded() {
+        return fontsLoaded;
+    }
+
+    static void clearFontCacheForTesting() {
+        cachedSystemFontNames = null;
+        sampleFontCache.clear();
+    }
+
+    @Override
+    public void dispose() {
+        if (fontLoaderThread != null && fontLoaderThread.isAlive()) {
+            fontLoaderThread.interrupt();
+        }
+        super.dispose();
+    }
+
     /** Filters the displayed font list case-insensitively while preserving the active selection if still visible. */
     void applyFontFilter(String filterText) {
+        if (!fontsLoaded && backgroundFetchLatch.getCount() == 0) {
+            fontsLoaded = true;
+            selectionBorder.setTitle("Font Selection:");
+        }
         String query = (filterText == null) ? "" : filterText.trim().toLowerCase(Locale.ROOT);
         String previousSelection = fontList.getSelectedValue() != null
                 ? fontList.getSelectedValue()
                 : currentSelectedFont;
 
-        fontListModel.clear();
+        String[] currentFonts = this.allFontNames;
+        List<String> matches = new ArrayList<>(currentFonts.length);
         String exactMatch = null;
-        for (String fontName : allFontNames) {
+        for (String fontName : currentFonts) {
             if (query.isEmpty() || fontName.toLowerCase(Locale.ROOT).contains(query)) {
-                fontListModel.addElement(fontName);
+                matches.add(fontName);
                 if (previousSelection != null && fontName.equalsIgnoreCase(previousSelection)) {
                     exactMatch = fontName;
                 }
             }
+        }
+
+        fontListModel.clear();
+        if (!matches.isEmpty()) {
+            fontListModel.addAll(matches);
         }
 
         if (exactMatch != null) {
