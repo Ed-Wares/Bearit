@@ -1,24 +1,72 @@
 name: Release Asset Deployment
 
 on:
+  # Automatic: runs when a GitHub Release is published
   release:
     types: [published]
+
+  # Manual: Actions tab -> "Release Asset Deployment" -> "Run workflow".
+  # Rebuilds the source at the chosen tag and attaches the binaries to that tag's existing release.
+  # The workflow files come from the branch picked in "Use workflow from" (e.g. main), so older tags
+  # whose own workflow files are out of date (e.g. the retired macos-14 runner) can still be rebuilt.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to rebuild and attach files to (e.g. 1.2.1)'
+        required: true
+        type: string
 
 permissions:
   contents: write
 
+env:
+  # Release tag for either trigger: the published release's tag, or the manually entered tag
+  RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+
 jobs:
+  # Validate that the tag and its GitHub Release exist before spending time on the build matrix
+  resolve_release:
+    name: Resolve Release Tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Verify Tag and Release Exist
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TAG="$(echo "$RELEASE_TAG" | xargs)"   # trim surrounding whitespace
+          if [ -z "$TAG" ]; then
+            echo "::error::No release tag was provided."
+            exit 1
+          fi
+          if ! gh api "repos/$GH_REPO/git/ref/tags/$TAG" --silent; then
+            echo "::error::Tag '$TAG' does not exist in $GH_REPO."
+            exit 1
+          fi
+          if ! gh release view "$TAG" --json tagName --jq .tagName; then
+            echo "::error::No GitHub Release exists for tag '$TAG'. Create the release first."
+            exit 1
+          fi
+          echo "Resolved release tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
   # Trigger the reusable multi-platform Maven builder matrix
   build_release_binary:
+    needs: resolve_release
     uses: ./.github/workflows/build.yml
     with:
-      git_ref: ${{ github.ref }} 
-      version_string: ${{ github.event.release.tag_name }} 
-      app_version: ${{ github.event.release.tag_name }}
+      git_ref: refs/tags/${{ needs.resolve_release.outputs.tag }}
+      version_string: ${{ needs.resolve_release.outputs.tag }}
+      app_version: ${{ needs.resolve_release.outputs.tag }}
 
   # Extract compiled binaries from all OS matrices and deploy them to the Release asset slot
   upload_to_release:
-    needs: build_release_binary
+    needs: [resolve_release, build_release_binary]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -31,35 +79,43 @@ jobs:
       - name: Download Windows Artifact
         uses: actions/download-artifact@v4
         with:
-          name: compiled-bearit-package-windows-latest-${{ github.event.release.tag_name }}
+          name: compiled-bearit-package-windows-${{ needs.resolve_release.outputs.tag }}
           path: release_payload/
 
       # Fetch macOS Intel Artifacts
       - name: Download macOS Intel Artifact
         uses: actions/download-artifact@v4
         with:
-          name: compiled-bearit-package-macos-15-intel-${{ github.event.release.tag_name }}
+          name: compiled-bearit-package-macos-intel-${{ needs.resolve_release.outputs.tag }}
           path: release_payload/
 
       # Fetch macOS Apple Silicon Artifacts
       - name: Download macOS Apple Silicon Artifact
         uses: actions/download-artifact@v4
         with:
-          name: compiled-bearit-package-macos-14-${{ github.event.release.tag_name }}
+          name: compiled-bearit-package-macos-arm64-${{ needs.resolve_release.outputs.tag }}
           path: release_payload/
 
       # Fetch Linux Artifacts
       - name: Download Ubuntu Artifact
         uses: actions/download-artifact@v4
         with:
-          name: compiled-bearit-package-ubuntu-22.04-${{ github.event.release.tag_name }}
+          name: compiled-bearit-package-linux-${{ needs.resolve_release.outputs.tag }}
           path: release_payload/
 
-      # Publish everything to the user-facing release hub
+      - name: List Release Payload
+        run: ls -la release_payload/
+
+      # Publish everything to the user-facing release hub.
+      # tag_name is required for manual runs (github.ref is then a branch, not a tag).
+      # Existing assets with the same file name are replaced, so re-running is safe.
       - name: Upload Assets to Github Release Page
         uses: softprops/action-gh-release@v2
         with:
-          # This glob pattern grabs the jar, exe, dmg, and AppImage packages simultaneously out of the workspace
+          tag_name: ${{ needs.resolve_release.outputs.tag }}
+          overwrite_files: true
+          fail_on_unmatched_files: false
+          # This glob pattern grabs the jar, exe, dmg, deb and AppImage packages simultaneously out of the workspace
           files: |
             release_payload/*.jar
             release_payload/*.exe

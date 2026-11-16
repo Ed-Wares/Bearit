@@ -26,7 +26,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-latest, macos-15-intel, macos-14] # Spin up virtual machines for all three platform targets simultaneously
+        # 'os' is the GitHub-hosted runner label; 'platform' is a stable id used for step conditions and
+        # artifact names, so a retired runner image only needs its 'os' label updated here.
+        # NOTE: macos-14 runner images were retired by GitHub on 2026-11-02 ("macos-14-arm64-us-default is not supported").
+        include:
+          - os: ubuntu-22.04
+            platform: linux
+          - os: windows-latest
+            platform: windows
+          - os: macos-15-intel
+            platform: macos-intel
+          - os: macos-15
+            platform: macos-arm64
 
 
     steps:
@@ -57,7 +68,7 @@ jobs:
       # Native Bundle Generation using JDK jpackage
       # --- WINDOWS EXE GENERATION ---
       - name: Build Windows Native Executable (EXE)
-        if: matrix.os == 'windows-latest'
+        if: matrix.platform == 'windows'
         run: |
           jpackage --type exe \
             --input target/ \
@@ -77,7 +88,7 @@ jobs:
 
       # This Mac step will now run twice (once for Intel, once for Silicon)
       - name: Build macOS Native Executable (DMG)
-        if: startsWith(matrix.os, 'macos')
+        if: startsWith(matrix.platform, 'macos')
         run: |
           mkdir -p macos_resources
           cat << 'EOF' > macos_resources/Info.plist
@@ -180,7 +191,7 @@ jobs:
 
       # --- LINUX DEB GENERATION ---
       - name: Build Linux Native Executable (DEB)
-        if: matrix.os == 'ubuntu-22.04'
+        if: matrix.platform == 'linux'
         run: |
           mkdir -p linux_resources
           
@@ -235,14 +246,14 @@ jobs:
           cp target/bearit-*.jar final_artifacts/bearit.jar
           
           # Conditionally pull the platform specific installer into the clean root upload directory
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          if [ "${{ matrix.platform }}" = "windows" ]; then
             cp distribution_payload/windows/*.exe final_artifacts/
-          elif [ "${{ matrix.os }}" = "macos-15-intel" ]; then
+          elif [ "${{ matrix.platform }}" = "macos-intel" ]; then
             cp distribution_payload/macos/*.dmg final_artifacts/bearit-macOS-Intel.dmg
-          elif [ "${{ matrix.os }}" = "macos-14" ]; then
-            cp distribution_payload/macos/*.dmg final_artifacts/bearit-macOS-AppleSilicon.dmg          
-          elif [ "${{ matrix.os }}" = "ubuntu-22.04" ]; then
-            cp distribution_payload/linux/*.deb final_artifacts/            
+          elif [ "${{ matrix.platform }}" = "macos-arm64" ]; then
+            cp distribution_payload/macos/*.dmg final_artifacts/bearit-macOS-AppleSilicon.dmg
+          elif [ "${{ matrix.platform }}" = "linux" ]; then
+            cp distribution_payload/linux/*.deb final_artifacts/
           fi
         shell: bash
 
@@ -250,7 +261,7 @@ jobs:
       - name: Archive Compiled Binary Workspace
         uses: actions/upload-artifact@v4
         with:
-          name: compiled-bearit-package-${{ matrix.os }}-${{ inputs.version_string }}
+          name: compiled-bearit-package-${{ matrix.platform }}-${{ inputs.version_string }}
           path: final_artifacts/*
           retention-days: 7
           if-no-files-found: error
